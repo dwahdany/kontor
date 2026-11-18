@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Development signing: hardened runtime without the App Sandbox, so that command line tooling
+	     (the headless screenshot mode with arbitrary output and input paths) can read and write
+	     arbitrary paths. Distribution builds use Kontor.entitlements (sandboxed). -->
+	<key>com.apple.security.network.client</key>
+	<true/>
+	<key>com.apple.security.get-task-allow</key>
+	<true/>
+</dict>
+</plist>

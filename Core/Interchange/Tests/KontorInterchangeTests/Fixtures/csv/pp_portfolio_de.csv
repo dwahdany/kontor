@@ -1,0 +1,7 @@
+Datum;Typ;Wert;Buchungswährung;Bruttobetrag;Währung Bruttobetrag;Wechselkurs;Gebühren;Steuern;Stück;ISIN;WKN;Ticker-Symbol;Wertpapiername;Notiz
+07.01.2019;Kauf;2.946,83;EUR;;;;9,95;;24;IE00B4WXJJ64;A0RL83;EUNH.DE;iShares Core Euro Government Bond UCITS ETF (Dist);
+08.01.2019;Kauf;1.408,43;EUR;;;;;9,95;331;IE00BDFL4P12;A2DK6R;SXRS.DE;iShares Diversified Commodity Swap UCITS ETF;"Sparplan; erste Rate"
+27.04.2022;Kauf;2.676,00;EUR;2.830,54;USD;0,9454;6,00;;20;US0231351067;906866;AMZN;Amazon.com Inc.;
+03.05.2022;Verkauf;1.250,10;EUR;;;;5,90;44,00;10;IE00B4WXJJ64;A0RL83;EUNH.DE;iShares Core Euro Government Bond UCITS ETF (Dist);Teilverkauf
+25.01.2020;Einlieferung;10,00;EUR;;;;;;0,001301;;;BTC;Bitcoin;
+21.11.2020;Auslieferung;100,00;EUR;;;;;;0,00636567;;;BTC;Bitcoin;

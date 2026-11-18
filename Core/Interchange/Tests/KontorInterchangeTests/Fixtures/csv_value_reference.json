@@ -1,0 +1,4806 @@
+{
+"numbers": [
+{
+"text": "97,227.80730 €",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 97228
+},
+{
+"text": "(9.122.793,9 €)",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": -912279390000000
+},
+{
+"text": "938.212997 EUR-",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": -938
+},
+{
+"text": "893,45 EUR",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": 89345000000
+},
+{
+"text": "€ 5.012.845",
+"decimalSeparator": ",",
+"digits": 0,
+"expected": 5012845
+},
+{
+"text": "315'997.909514547 €",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 315998
+},
+{
+"text": "+4",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": 400
+},
+{
+"text": "+€ 394 647,070293137",
+"decimalSeparator": ",",
+"digits": 2,
+"expected": 39464707
+},
+{
+"text": "+75.40613 EUR",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 7540613000
+},
+{
+"text": "+92092.14542124",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 92092
+},
+{
+"text": "+3,547620075 EUR",
+"decimalSeparator": ",",
+"digits": 0,
+"expected": 4
+},
+{
+"text": "+$21,520642",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": 2152064200
+},
+{
+"text": "USD 92'454'411.74476",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 92454412
+},
+{
+"text": "-€ 45 429 850,17",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": -4542985017000000
+},
+{
+"text": "+728337.045847445 €",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 72833704584745
+},
+{
+"text": "+704,268.7485%",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 70426874850000
+},
+{
+"text": "$967.136,75",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": 96713675000000
+},
+{
+"text": "+$5,931.4162998",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": 593142
+},
+{
+"text": "USD 3,97",
+"decimalSeparator": ",",
+"digits": 0,
+"expected": 4
+},
+{
+"text": "-7.202 EUR",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": -7
+},
+{
+"text": "−€ 7806944.69193",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": -780694469
+},
+{
+"text": "+$53 745,8",
+"decimalSeparator": ",",
+"digits": 0,
+"expected": 53746
+},
+{
+"text": "+€ 37,85945266",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": 3785945266
+},
+{
+"text": "$160,697329150",
+"decimalSeparator": ",",
+"digits": 2,
+"expected": 16070
+},
+{
+"text": "+$660 032,666374766",
+"decimalSeparator": ",",
+"digits": 0,
+"expected": 660033
+},
+{
+"text": "65.051,6054 €",
+"decimalSeparator": ",",
+"digits": 2,
+"expected": 6505161
+},
+{
+"text": "USD 84.734026078",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 85
+},
+{
+"text": "8 030,2447%",
+"decimalSeparator": ",",
+"digits": 2,
+"expected": 803024
+},
+{
+"text": "(2.4859 €)",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": -248590000
+},
+{
+"text": "−$714 878,200487183",
+"decimalSeparator": ",",
+"digits": 2,
+"expected": -71487820
+},
+{
+"text": "+€ 7 981 252,347140",
+"decimalSeparator": ",",
+"digits": 2,
+"expected": 798125235
+},
+{
+"text": "+18 701,78 EUR",
+"decimalSeparator": ",",
+"digits": 2,
+"expected": 1870178
+},
+{
+"text": "-USD 871,688,355",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": -871688355
+},
+{
+"text": "+84 €",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": 8400
+},
+{
+"text": "+€ 1,3",
+"decimalSeparator": ",",
+"digits": 0,
+"expected": 1
+},
+{
+"text": "€ 187.262193081",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 18726219308
+},
+{
+"text": "+€ 95.920615",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": 9592
+},
+{
+"text": "$2,2984",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": 229840000
+},
+{
+"text": "8.281,34482357%",
+"decimalSeparator": ",",
+"digits": 0,
+"expected": 8281
+},
+{
+"text": "USD 89384.011897367",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": 8938401
+},
+{
+"text": "USD 778'469'970.026311",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 77846997002631100
+},
+{
+"text": "−USD 718.653459566",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": -71865
+},
+{
+"text": "542.628%",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": 54262800000000
+},
+{
+"text": "−1.061.686,0",
+"decimalSeparator": ",",
+"digits": 0,
+"expected": -1061686
+},
+{
+"text": "88'751'118.06749 €",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": 8875111807
+},
+{
+"text": "+2.534,2156728414",
+"decimalSeparator": ",",
+"digits": 2,
+"expected": 253422
+},
+{
+"text": "+USD 5.50077",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 6
+},
+{
+"text": "+59,490.3203093196%",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 5949032030932
+},
+{
+"text": "−479.41723%",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": -479
+},
+{
+"text": "€ 822,0762008",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": 82207620080
+},
+{
+"text": "+USD 30.1703076",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 30
+},
+{
+"text": "$41063764.0032863831",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 41063764
+},
+{
+"text": "+$93.907",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": 9391
+},
+{
+"text": "671 195 235,04",
+"decimalSeparator": ",",
+"digits": 0,
+"expected": 671195235
+},
+{
+"text": "63.336,4 EUR",
+"decimalSeparator": ",",
+"digits": 2,
+"expected": 6333640
+},
+{
+"text": "€ 32.863.150,6",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": 3286315060000000
+},
+{
+"text": "+94033261.034 €",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 94033261
+},
+{
+"text": "$9.329.544",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": 932954400000000
+},
+{
+"text": "+19,256,420.0064168251 €",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 19256420
+},
+{
+"text": "4461.8",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 446180000000
+},
+{
+"text": "+2.64903 EUR",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 3
+},
+{
+"text": "€ 13050.99",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 1305099000000
+},
+{
+"text": "456,615573 €",
+"decimalSeparator": ",",
+"digits": 2,
+"expected": 45662
+},
+{
+"text": "$545.7901260-",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": -546
+},
+{
+"text": "+$94 631 119,67334",
+"decimalSeparator": ",",
+"digits": 2,
+"expected": 9463111967
+},
+{
+"text": "+6.007,30976 €",
+"decimalSeparator": ",",
+"digits": 0,
+"expected": 6007
+},
+{
+"text": "+USD 1,61",
+"decimalSeparator": ",",
+"digits": 2,
+"expected": 161
+},
+{
+"text": "+91 657 762,8913601 EUR",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": 9165776289136010
+},
+{
+"text": "5,0948687867%",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": 509486879
+},
+{
+"text": "(USD 157437877.590834)",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": -157437878
+},
+{
+"text": "-5.147.124",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": -514712400000000
+},
+{
+"text": "85.5998-",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": -8559980000
+},
+{
+"text": "+823,846.66066283 €",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 82384666066283
+},
+{
+"text": "−88.53134449%",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": -89
+},
+{
+"text": "+230.1998663678 €",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 230
+},
+{
+"text": "$77,26021-",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": -7726021000
+},
+{
+"text": "+3 192 421,91510",
+"decimalSeparator": ",",
+"digits": 0,
+"expected": 3192422
+},
+{
+"text": "USD 7 667,6397103211",
+"decimalSeparator": ",",
+"digits": 2,
+"expected": 766764
+},
+{
+"text": "(98.813.269,28915 EUR)",
+"decimalSeparator": ",",
+"digits": 0,
+"expected": -98813269
+},
+{
+"text": "-181,269.1368760 EUR",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": -18126913687600
+},
+{
+"text": "+€ 51.145.871,17401",
+"decimalSeparator": ",",
+"digits": 2,
+"expected": 5114587117
+},
+{
+"text": "297,1914651 €",
+"decimalSeparator": ",",
+"digits": 0,
+"expected": 297
+},
+{
+"text": "−87 319,2 €",
+"decimalSeparator": ",",
+"digits": 0,
+"expected": -87319
+},
+{
+"text": "-USD 554.317521",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": -554
+},
+{
+"text": "−€ 4.76810337",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": -476810337
+},
+{
+"text": "-USD 24'157'196",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": -2415719600000000
+},
+{
+"text": "-USD 390.666025",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": -391
+},
+{
+"text": "USD 227223.634275-",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": -22722363427500
+},
+{
+"text": "-10.323.179,6 EUR",
+"decimalSeparator": ",",
+"digits": 2,
+"expected": -1032317960
+},
+{
+"text": "€ 42635988.727315900-",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": -4263598873
+},
+{
+"text": "+350 373,248",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": 35037324800000
+},
+{
+"text": "−13,6545789739",
+"decimalSeparator": ",",
+"digits": 0,
+"expected": -14
+},
+{
+"text": "243.0003638",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 243
+},
+{
+"text": "($6.08477)",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": -6
+},
+{
+"text": "−$6 338 734,2917",
+"decimalSeparator": ",",
+"digits": 0,
+"expected": -6338734
+},
+{
+"text": "65.8562",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 66
+},
+{
+"text": "+5,665,378 EUR",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 5665378
+},
+{
+"text": "276,092.7214 €-",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": -276093
+},
+{
+"text": "-4 315,729290581 €",
+"decimalSeparator": ",",
+"digits": 0,
+"expected": -4316
+},
+{
+"text": "9.168979%",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 916897900
+},
+{
+"text": "5,7%",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": 570000000
+},
+{
+"text": "+15 797,447440%",
+"decimalSeparator": ",",
+"digits": 2,
+"expected": 1579745
+},
+{
+"text": "51.116.579,34 €",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": 5111657934000000
+},
+{
+"text": "361.6 EUR",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 36160000000
+},
+{
+"text": "$937.2879502",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 93728795020
+},
+{
+"text": "257,475,476.2684549134 €",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 25747547626845491
+},
+{
+"text": "USD 88.5-",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": -8850000000
+},
+{
+"text": "+€ 8.254165",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": 825
+},
+{
+"text": "+6854280.1",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 6854280
+},
+{
+"text": "(€ 59,136098)",
+"decimalSeparator": ",",
+"digits": 0,
+"expected": -59
+},
+{
+"text": "−59,123198 €",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": -5912319800
+},
+{
+"text": "34,8760 €-",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": -3487600000
+},
+{
+"text": "+€ 5 336,12407478",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": 533612407478
+},
+{
+"text": "762.4776912937 €",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 76247769129
+},
+{
+"text": "−USD 255,17",
+"decimalSeparator": ",",
+"digits": 2,
+"expected": -25517
+},
+{
+"text": "+USD 38.450881305",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": 3845
+},
+{
+"text": "60,681.2864%",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 60681
+},
+{
+"text": "+$0,2464697",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": 24646970
+},
+{
+"text": "2,708775038 EUR-",
+"decimalSeparator": ",",
+"digits": 0,
+"expected": -3
+},
+{
+"text": "(255,740,535.6166340339 €)",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": -25574053561663403
+},
+{
+"text": "+1536.89870 EUR",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 153689870000
+},
+{
+"text": "−7 EUR",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": -7
+},
+{
+"text": "63 004 629,4810997%",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": 6300462948109970
+},
+{
+"text": "+10,8315318 EUR",
+"decimalSeparator": ",",
+"digits": 0,
+"expected": 11
+},
+{
+"text": "0.043662%",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 0
+},
+{
+"text": "USD 2,161.726047",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 2162
+},
+{
+"text": "6922.873359 EUR-",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": -692287335900
+},
+{
+"text": "664,028.9 EUR",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 664029
+},
+{
+"text": "+159861151.108751",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": 15986115111
+},
+{
+"text": "+35.527.896,759862668 €",
+"decimalSeparator": ",",
+"digits": 0,
+"expected": 35527897
+},
+{
+"text": "€ 65,8",
+"decimalSeparator": ",",
+"digits": 0,
+"expected": 66
+},
+{
+"text": "$93.62550",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 9362550000
+},
+{
+"text": "5,8737426-",
+"decimalSeparator": ",",
+"digits": 2,
+"expected": -587
+},
+{
+"text": "-€ 11.905,416461256",
+"decimalSeparator": ",",
+"digits": 2,
+"expected": -1190542
+},
+{
+"text": "43'622'425.7%",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 4362242570000000
+},
+{
+"text": "+USD 4679.4788",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 467947880000
+},
+{
+"text": "$3 293 894,661217504",
+"decimalSeparator": ",",
+"digits": 2,
+"expected": 329389466
+},
+{
+"text": "(9.2409190%)",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": -9
+},
+{
+"text": "56 616,3067425889 €",
+"decimalSeparator": ",",
+"digits": 2,
+"expected": 5661631
+},
+{
+"text": "+374.5911745 €",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": 37459
+},
+{
+"text": "+35.516.429,28 EUR",
+"decimalSeparator": ",",
+"digits": 2,
+"expected": 3551642928
+},
+{
+"text": "+10.543926",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 1054392600
+},
+{
+"text": "595 465,363",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": 59546536300000
+},
+{
+"text": "USD 329.021.502,5",
+"decimalSeparator": ",",
+"digits": 2,
+"expected": 32902150250
+},
+{
+"text": "+3.0478303 EUR",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": 305
+},
+{
+"text": "+2269567%",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 2269567
+},
+{
+"text": "+USD 31,1",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": 3110000000
+},
+{
+"text": "(USD 267391.244162)",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": -26739124
+},
+{
+"text": "+31 170 741 EUR",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": 3117074100000000
+},
+{
+"text": "+36.0407211 EUR",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": 3604
+},
+{
+"text": "$0.586554394",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 58655439
+},
+{
+"text": "USD 90,413336934",
+"decimalSeparator": ",",
+"digits": 0,
+"expected": 90
+},
+{
+"text": "-77,997374419%",
+"decimalSeparator": ",",
+"digits": 2,
+"expected": -7800
+},
+{
+"text": "−€ 595'191.8040829",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": -59519180
+},
+{
+"text": "$140283.788",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 14028378800000
+},
+{
+"text": "+USD 24'248'903.8034",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": 2424890380
+},
+{
+"text": "+81.41930 €",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": 8142
+},
+{
+"text": "$61,726780",
+"decimalSeparator": ",",
+"digits": 2,
+"expected": 6173
+},
+{
+"text": "$8.275,4582569926",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": 827545825699
+},
+{
+"text": "+USD 98.867,677",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": 9886767700000
+},
+{
+"text": "-$65'850'853.9335321",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": -6585085393
+},
+{
+"text": "+€ 14.9210167",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 15
+},
+{
+"text": "−716,702,371.53278785",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": -71670237153278785
+},
+{
+"text": "3,844 €",
+"decimalSeparator": ",",
+"digits": 0,
+"expected": 4
+},
+{
+"text": "-€ 63997198.564",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": -6399719856
+},
+{
+"text": "-€ 243.43534",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": -24343534000
+},
+{
+"text": "+562399721.4021174283 €",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 562399721
+},
+{
+"text": "51'807.4%",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 5180740000000
+},
+{
+"text": "€ 0.48722",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 48722000
+},
+{
+"text": "7'158'939.07747148",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 7158939
+},
+{
+"text": "+$8316.683788532",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 8317
+},
+{
+"text": "+171,468.7583574337",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 171469
+},
+{
+"text": "+USD 771544.7020368923",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 77154470203689
+},
+{
+"text": "−228.7927257",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": -22879
+},
+{
+"text": "700,630.93184%",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": 70063093
+},
+{
+"text": "389'553.23686 €",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": 38955324
+},
+{
+"text": "USD 769",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 769
+},
+{
+"text": "€ 8.816.166,716353619-",
+"decimalSeparator": ",",
+"digits": 2,
+"expected": -881616672
+},
+{
+"text": "€ 5'578'167.4752-",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": -5578167
+},
+{
+"text": "81,5414295 €",
+"decimalSeparator": ",",
+"digits": 2,
+"expected": 8154
+},
+{
+"text": "-$7.359.275,9909",
+"decimalSeparator": ",",
+"digits": 2,
+"expected": -735927599
+},
+{
+"text": "733303.0085%",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 73330300850000
+},
+{
+"text": "−707.543962297%",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": -70754396230
+},
+{
+"text": "$752 848,5504",
+"decimalSeparator": ",",
+"digits": 2,
+"expected": 75284855
+},
+{
+"text": "9'944.1%",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 994410000000
+},
+{
+"text": "-140 628,6079559 EUR",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": -14062860795590
+},
+{
+"text": "17 558 350,5%-",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": -1755835050000000
+},
+{
+"text": "+6,2%",
+"decimalSeparator": ",",
+"digits": 0,
+"expected": 6
+},
+{
+"text": "$34-",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": -3400000000
+},
+{
+"text": "8'455'964.741328795",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 845596474132880
+},
+{
+"text": "+€ 4.472.966,06",
+"decimalSeparator": ",",
+"digits": 2,
+"expected": 447296606
+},
+{
+"text": "65 794 499,355761%",
+"decimalSeparator": ",",
+"digits": 0,
+"expected": 65794499
+},
+{
+"text": "8734.2556154%",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 8734
+},
+{
+"text": "+86,21376563",
+"decimalSeparator": ",",
+"digits": 0,
+"expected": 86
+},
+{
+"text": "+4599.963952 EUR",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 4600
+},
+{
+"text": "+785 €",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": 78500
+},
+{
+"text": "USD 57.15298091",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 5715298091
+},
+{
+"text": "60 €",
+"decimalSeparator": ",",
+"digits": 0,
+"expected": 60
+},
+{
+"text": "+$6,163.10137",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 6163
+},
+{
+"text": "+3'865.231",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": 386523
+},
+{
+"text": "27'394'978 EUR-",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": -2739497800000000
+},
+{
+"text": "(4,393,316.58 EUR)",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": -439331658
+},
+{
+"text": "+708.979.889,26273%",
+"decimalSeparator": ",",
+"digits": 0,
+"expected": 708979889
+},
+{
+"text": "+18 646,7 EUR",
+"decimalSeparator": ",",
+"digits": 0,
+"expected": 18647
+},
+{
+"text": "USD 279'850",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 279850
+},
+{
+"text": "23,582,005.24536004",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 23582005
+},
+{
+"text": "−USD 98,460,671.589157768",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": -9846067158915777
+},
+{
+"text": "€ 6 985,0155",
+"decimalSeparator": ",",
+"digits": 2,
+"expected": 698502
+},
+{
+"text": "32,42",
+"decimalSeparator": ",",
+"digits": 0,
+"expected": 32
+},
+{
+"text": "+€ 650 003,2",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": 65000320000000
+},
+{
+"text": "USD 1,980,580.467631-",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": -198058046763100
+},
+{
+"text": "+268 137 331,6275 EUR",
+"decimalSeparator": ",",
+"digits": 2,
+"expected": 26813733163
+},
+{
+"text": "-83,319.52619996 EUR",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": -8331952619996
+},
+{
+"text": "$701'880'561.8307715",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 701880562
+},
+{
+"text": "20,652.1659582 EUR",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 2065216595820
+},
+{
+"text": "944.24%",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 94424000000
+},
+{
+"text": "$423.02259304",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 423
+},
+{
+"text": "+650.4217521 EUR",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 650
+},
+{
+"text": "USD 61694214.9-",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": -6169421490
+},
+{
+"text": "+13,4 EUR",
+"decimalSeparator": ",",
+"digits": 2,
+"expected": 1340
+},
+{
+"text": "+8,234,899.6 EUR",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": 823489960
+},
+{
+"text": "$2",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": 200
+},
+{
+"text": "83'908'244.63718897 EUR-",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": -8390824464
+},
+{
+"text": "+842 123,93378 €",
+"decimalSeparator": ",",
+"digits": 2,
+"expected": 84212393
+},
+{
+"text": "546.5459 €",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 547
+},
+{
+"text": "USD 9'695'288.2055-",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": -969528821
+},
+{
+"text": "924'752.339472%",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 92475233947200
+},
+{
+"text": "728,846014952%",
+"decimalSeparator": ",",
+"digits": 2,
+"expected": 72885
+},
+{
+"text": "+€ 45.942.995,85",
+"decimalSeparator": ",",
+"digits": 0,
+"expected": 45942996
+},
+{
+"text": "-10935246",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": -10935246
+},
+{
+"text": "625,918.784895%",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 625919
+},
+{
+"text": "+207.850329 EUR",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 208
+},
+{
+"text": "€ 4.936.032",
+"decimalSeparator": ",",
+"digits": 0,
+"expected": 4936032
+},
+{
+"text": "257.146,372399977 EUR",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": 25714637239998
+},
+{
+"text": "($743,488358682)",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": -74348835868
+},
+{
+"text": "+61,199,033 €",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 6119903300000000
+},
+{
+"text": "USD 0.3-",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": -30
+},
+{
+"text": "972.352 EUR",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 972
+},
+{
+"text": "726.5962639890%",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 727
+},
+{
+"text": "-€ 18,832636672",
+"decimalSeparator": ",",
+"digits": 2,
+"expected": -1883
+},
+{
+"text": "(€ 35,992.8691)",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": -3599286910000
+},
+{
+"text": "14,85",
+"decimalSeparator": ",",
+"digits": 2,
+"expected": 1485
+},
+{
+"text": "3149109.825",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 3149110
+},
+{
+"text": "936,452.6410",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 93645264100000
+},
+{
+"text": "+USD 4,26595",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": 426595000
+},
+{
+"text": "+$681,393874",
+"decimalSeparator": ",",
+"digits": 2,
+"expected": 68139
+},
+{
+"text": "+90,270.8448 EUR",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 9027084480000
+},
+{
+"text": "+$7,943.0459875798",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 794304598758
+},
+{
+"text": "+€ 757.438.029,5377",
+"decimalSeparator": ",",
+"digits": 0,
+"expected": 757438030
+},
+{
+"text": "1'641'623.431226355 EUR",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": 164162343
+},
+{
+"text": "623 251,0890888866 €",
+"decimalSeparator": ",",
+"digits": 0,
+"expected": 623251
+},
+{
+"text": "+7.862,5",
+"decimalSeparator": ",",
+"digits": 2,
+"expected": 786250
+},
+{
+"text": "+543,870%",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": 54387000000
+},
+{
+"text": "255'160'342.10302 €",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 255160342
+},
+{
+"text": "+604.283,394 €",
+"decimalSeparator": ",",
+"digits": 0,
+"expected": 604283
+},
+{
+"text": "469.931689 €",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 46993168900
+},
+{
+"text": "+8.177,464845997",
+"decimalSeparator": ",",
+"digits": 0,
+"expected": 8177
+},
+{
+"text": "(USD 19.190916041)",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": -1919
+},
+{
+"text": "-€ 756'760.4871284",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": -75676048712840
+},
+{
+"text": "583,1524944 €",
+"decimalSeparator": ",",
+"digits": 0,
+"expected": 583
+},
+{
+"text": "-1154237.2066145%",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": -115423720661450
+},
+{
+"text": "-361 922,88612 EUR",
+"decimalSeparator": ",",
+"digits": 2,
+"expected": -36192289
+},
+{
+"text": "€ 2931723.5",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 2931724
+},
+{
+"text": "+3.21224",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 3
+},
+{
+"text": "9324.8299082%-",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": -932482990820
+},
+{
+"text": "+98,887.3732 EUR",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": 9888737
+},
+{
+"text": "+501481507.59328033",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 50148150759328033
+},
+{
+"text": "+554.391604130 €",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 55439160413
+},
+{
+"text": "538 219 520,0%",
+"decimalSeparator": ",",
+"digits": 2,
+"expected": 53821952000
+},
+{
+"text": "+€ 312 927 672,82823943",
+"decimalSeparator": ",",
+"digits": 2,
+"expected": 31292767283
+},
+{
+"text": "+745.704,9836 EUR",
+"decimalSeparator": ",",
+"digits": 2,
+"expected": 74570498
+},
+{
+"text": "€ 20.400957525-",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": -2040095753
+},
+{
+"text": "4,162046776 EUR",
+"decimalSeparator": ",",
+"digits": 2,
+"expected": 416
+},
+{
+"text": "-3.729,87404162 EUR",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": -372987404162
+},
+{
+"text": "€ 30,864.50",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 3086450000000
+},
+{
+"text": "€ 3.04012875-",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": -3
+},
+{
+"text": "5 731 957,8%",
+"decimalSeparator": ",",
+"digits": 0,
+"expected": 5731958
+},
+{
+"text": "+485.6998 €",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": 48570
+},
+{
+"text": "561,33737",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": 56133737000
+},
+{
+"text": "92,676,530.194176111",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 9267653019417611
+},
+{
+"text": "84.671.385,7 EUR",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": 8467138570000000
+},
+{
+"text": "100,856852814%",
+"decimalSeparator": ",",
+"digits": 0,
+"expected": 101
+},
+{
+"text": "€ 11'276.849595557",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 11277
+},
+{
+"text": "2'082'916.9",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 2082917
+},
+{
+"text": "−44.270018%",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": -44
+},
+{
+"text": "1513255.84811706 €",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 1513256
+},
+{
+"text": "-USD 77.247,1903084",
+"decimalSeparator": ",",
+"digits": 0,
+"expected": -77247
+},
+{
+"text": "−1'648'786.1093%",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": -1648786
+},
+{
+"text": "+3'054.84",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 305484000000
+},
+{
+"text": "-6.765.362,9%",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": -676536290000000
+},
+{
+"text": "+944240486.1953086 EUR",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 94424048619530860
+},
+{
+"text": "+€ 11'703.0097799",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": 1170301
+},
+{
+"text": "+€ 11810625",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": 1181062500
+},
+{
+"text": "+358.0686",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 35806860000
+},
+{
+"text": "+847,016,686.25 €",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": 84701668625
+},
+{
+"text": "+USD 759'872'446.2",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": 75987244620
+},
+{
+"text": "$16.4",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": 1640
+},
+{
+"text": "(USD 498.116,58)",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": -49811658000000
+},
+{
+"text": "(USD 178024226.953520161)",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": -17802422695
+},
+{
+"text": "USD 673'345.43880311",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": 67334544
+},
+{
+"text": "$285'870.3987901736-",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": -285870
+},
+{
+"text": "+5 671 890,45914197",
+"decimalSeparator": ",",
+"digits": 0,
+"expected": 5671890
+},
+{
+"text": "60,4141%",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": 6041410000
+},
+{
+"text": "388.496186141%",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 38849618614
+},
+{
+"text": "−38,5",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": -3850000000
+},
+{
+"text": "+208.349042102%",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 20834904210
+},
+{
+"text": "+USD 65.443",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": 6544
+},
+{
+"text": "USD 83,997906248",
+"decimalSeparator": ",",
+"digits": 0,
+"expected": 84
+},
+{
+"text": "+€ 56.3642",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 5636420000
+},
+{
+"text": "1.729,006913 €-",
+"decimalSeparator": ",",
+"digits": 2,
+"expected": -172901
+},
+{
+"text": "+4,198.660958518 EUR",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 419866095852
+},
+{
+"text": "4 493 445,3 EUR",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": 449344530000000
+},
+{
+"text": "$388.3687177296",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 38836871773
+},
+{
+"text": "+568'741.989%",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 568742
+},
+{
+"text": "96.9092502085%",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 9690925021
+},
+{
+"text": "USD 566,128.1324680253",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 566128
+},
+{
+"text": "+26.11925850",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 2611925850
+},
+{
+"text": "44,668 €",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 44668
+},
+{
+"text": "€ 185.087,5666193758",
+"decimalSeparator": ",",
+"digits": 0,
+"expected": 185088
+},
+{
+"text": "-839.31 €",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": -83931000000
+},
+{
+"text": "(174295398.0064 EUR)",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": -174295398
+},
+{
+"text": "USD 5,2857463",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": 528574630
+},
+{
+"text": "9 256,32 €-",
+"decimalSeparator": ",",
+"digits": 2,
+"expected": -925632
+},
+{
+"text": "+USD 87441149.17570",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": 8744114918
+},
+{
+"text": "76.721,73184537",
+"decimalSeparator": ",",
+"digits": 0,
+"expected": 76722
+},
+{
+"text": "75766908.40854%",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 7576690840854000
+},
+{
+"text": "342 807 755,88792 EUR",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": 34280775588792000
+},
+{
+"text": "120.175.743,82393 €",
+"decimalSeparator": ",",
+"digits": 0,
+"expected": 120175744
+},
+{
+"text": "+$22,1990323479",
+"decimalSeparator": ",",
+"digits": 0,
+"expected": 22
+},
+{
+"text": "USD 3256.1146",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 3256
+},
+{
+"text": "+USD 238,5",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": 23850000000
+},
+{
+"text": "962'362.2773%",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 962362
+},
+{
+"text": "+14127963.196247911%",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 14127963
+},
+{
+"text": "(354,2121)",
+"decimalSeparator": ",",
+"digits": 0,
+"expected": -354
+},
+{
+"text": "USD 7,377,175.278138414",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 7377175
+},
+{
+"text": "USD 8.128",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 812800000
+},
+{
+"text": "89,0 €",
+"decimalSeparator": ",",
+"digits": 0,
+"expected": 89
+},
+{
+"text": "+9 984 965,5503619330%",
+"decimalSeparator": ",",
+"digits": 0,
+"expected": 9984966
+},
+{
+"text": "($1 752,031166)",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": -175203116600
+},
+{
+"text": "+USD 7690.9",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 769090000000
+},
+{
+"text": "3,278,527.5%",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 327852750000000
+},
+{
+"text": "€ 37 455,6236",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": 3745562360000
+},
+{
+"text": "+USD 92.659",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 9265900000
+},
+{
+"text": "$5'187.804799",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 5188
+},
+{
+"text": "−3.268.467,61",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": -326846761000000
+},
+{
+"text": "-112 €",
+"decimalSeparator": ",",
+"digits": 2,
+"expected": -11200
+},
+{
+"text": "+$3 428 486,92380368",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": 342848692380368
+},
+{
+"text": "-54'821'771.70222",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": -54821772
+},
+{
+"text": "(84'993.9014 EUR)",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": -84994
+},
+{
+"text": "+€ 9225819.6707802",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 9225820
+},
+{
+"text": "21,266,639.7%",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 21266640
+},
+{
+"text": "1363.15019281",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 136315019281
+},
+{
+"text": "(€ 23,748319040)",
+"decimalSeparator": ",",
+"digits": 2,
+"expected": -2375
+},
+{
+"text": "−670'730.97884880 €",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": -67073098
+},
+{
+"text": "USD 641,090.5524705258",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 64109055247053
+},
+{
+"text": "+686'591'730.793%",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 68659173079300000
+},
+{
+"text": "+208,9084 EUR",
+"decimalSeparator": ",",
+"digits": 2,
+"expected": 20891
+},
+{
+"text": "−9.274,69471",
+"decimalSeparator": ",",
+"digits": 2,
+"expected": -927469
+},
+{
+"text": "10.8 EUR",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": 1080
+},
+{
+"text": "+164,82568 EUR",
+"decimalSeparator": ",",
+"digits": 2,
+"expected": 16483
+},
+{
+"text": "+60109.277 EUR",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 6010927700000
+},
+{
+"text": "+952'040.455831947%",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 952040
+},
+{
+"text": "757.444,2%",
+"decimalSeparator": ",",
+"digits": 2,
+"expected": 75744420
+},
+{
+"text": "31,491,616.65 €",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": 3149161665
+},
+{
+"text": "(56,00016 EUR)",
+"decimalSeparator": ",",
+"digits": 2,
+"expected": -5600
+},
+{
+"text": "−$766 094,283",
+"decimalSeparator": ",",
+"digits": 2,
+"expected": -76609428
+},
+{
+"text": "+770359216.0857 EUR",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 77035921608570000
+},
+{
+"text": "637 397 822,05",
+"decimalSeparator": ",",
+"digits": 2,
+"expected": 63739782205
+},
+{
+"text": "+8'861.1 EUR",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 886110000000
+},
+{
+"text": "USD 227.064,522989-",
+"decimalSeparator": ",",
+"digits": 2,
+"expected": -22706452
+},
+{
+"text": "−$913.332.867,6398614810",
+"decimalSeparator": ",",
+"digits": 2,
+"expected": -91333286764
+},
+{
+"text": "+USD 606'751.3555029",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 60675135550290
+},
+{
+"text": "€ 432.3",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 432
+},
+{
+"text": "(€ 53,786673193)",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": -5378667319
+},
+{
+"text": "€ 7.3806",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 7
+},
+{
+"text": "€ 61.940983-",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": -62
+},
+{
+"text": "USD 74,467,627.1",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 7446762710000000
+},
+{
+"text": "+71590841.477031441 EUR",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 71590841
+},
+{
+"text": "(631 185,7964765)",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": -63118579647650
+},
+{
+"text": "26 556,48 EUR-",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": -2655648000000
+},
+{
+"text": "4,749 EUR",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": 474900000
+},
+{
+"text": "+$7,570,403.3962992",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": 757040340
+},
+{
+"text": "+€ 467,4577",
+"decimalSeparator": ",",
+"digits": 0,
+"expected": 467
+},
+{
+"text": "+76.7",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 77
+},
+{
+"text": "9,49922 €",
+"decimalSeparator": ",",
+"digits": 0,
+"expected": 9
+},
+{
+"text": "+3,7 €",
+"decimalSeparator": ",",
+"digits": 2,
+"expected": 370
+},
+{
+"text": "+61,6144906 EUR",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": 6161449060
+},
+{
+"text": "+USD 643 652,600",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": 64365260000000
+},
+{
+"text": "(860843.084450)",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": -86084308
+},
+{
+"text": "−USD 513'714.348",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": -513714
+},
+{
+"text": "+$45'244'871",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 45244871
+},
+{
+"text": "-7620704.284480 EUR",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": -762070428448000
+},
+{
+"text": "+1 929 171,832586 €",
+"decimalSeparator": ",",
+"digits": 2,
+"expected": 192917183
+},
+{
+"text": "+890478991",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 890478991
+},
+{
+"text": "−43,677,436.450%",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": -4367743645000000
+},
+{
+"text": "USD 754.731.024,6215",
+"decimalSeparator": ",",
+"digits": 0,
+"expected": 754731025
+},
+{
+"text": "-10.29",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": -10
+},
+{
+"text": "−2.646.479,74362",
+"decimalSeparator": ",",
+"digits": 0,
+"expected": -2646480
+},
+{
+"text": "€ 778'532'727.9",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 77853272790000000
+},
+{
+"text": "+USD 948,70707489",
+"decimalSeparator": ",",
+"digits": 2,
+"expected": 94871
+},
+{
+"text": "-$92164479.54639",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": -92164480
+},
+{
+"text": "USD 998,008044-",
+"decimalSeparator": ",",
+"digits": 0,
+"expected": -998
+},
+{
+"text": "+$74.25300152",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": 7425
+},
+{
+"text": "USD 82.235",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 82
+},
+{
+"text": "(5526.032)",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": -552603200000
+},
+{
+"text": "$55,5601",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": 5556010000
+},
+{
+"text": "(787.701008098 EUR)",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": -788
+},
+{
+"text": "(28.127,781 €)",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": -2812778100000
+},
+{
+"text": "2'587'343.06%",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 2587343
+},
+{
+"text": "+213'699.02 EUR",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": 21369902
+},
+{
+"text": "4,630 EUR",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": 463000
+},
+{
+"text": "($392.5577)",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": -393
+},
+{
+"text": "11.459,4289387387 EUR",
+"decimalSeparator": ",",
+"digits": 0,
+"expected": 11459
+},
+{
+"text": "(29710.7524)",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": -29711
+},
+{
+"text": "+9.280,5193 €",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": 928051930000
+},
+{
+"text": "4'107'585.091617 €",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 410758509161700
+},
+{
+"text": "($5,290.7243907397)",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": -5291
+},
+{
+"text": "$377086054.6590",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": 37708605466
+},
+{
+"text": "+3,351 €",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 335100000000
+},
+{
+"text": "+€ 793.244,79078",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": 79324479078000
+},
+{
+"text": "+32,116,762.43 €",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 32116762
+},
+{
+"text": "-80'768.1174868912 EUR",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": -8076812
+},
+{
+"text": "-49'636.689060 €",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": -49637
+},
+{
+"text": "42.851%",
+"decimalSeparator": ",",
+"digits": 0,
+"expected": 42851
+},
+{
+"text": "$20,045.94377",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 20046
+},
+{
+"text": "-€ 52'848'086",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": -5284808600
+},
+{
+"text": "+265,583,547.5399098844 EUR",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 265583548
+},
+{
+"text": "$27,031",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": 2703100
+},
+{
+"text": "+191,303 EUR",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": 19130300000
+},
+{
+"text": "+852522073.2015258700 €",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": 85252207320
+},
+{
+"text": "€ 5399890.2515993",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 539989025159930
+},
+{
+"text": "(26 461 079,5595896 EUR)",
+"decimalSeparator": ",",
+"digits": 2,
+"expected": -2646107956
+},
+{
+"text": "99,038,403.547385 €",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 9903840354738500
+},
+{
+"text": "3,873 EUR",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": 387300000
+},
+{
+"text": "+$82'556.695",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 82557
+},
+{
+"text": "+99,191930691%",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": 9919193069
+},
+{
+"text": "+6'223.4087",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": 622341
+},
+{
+"text": "9.3 €",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 9
+},
+{
+"text": "+223700.205913%",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 22370020591300
+},
+{
+"text": "3.818.191,4974 EUR",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": 381819149740000
+},
+{
+"text": "(439559.62)",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": -43955962
+},
+{
+"text": "67,280,037.5687348023 €",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 67280038
+},
+{
+"text": "$7634468.4033504844-",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": -763446840335048
+},
+{
+"text": "+USD 689.842,86",
+"decimalSeparator": ",",
+"digits": 2,
+"expected": 68984286
+},
+{
+"text": "+$2468.333",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": 246833
+},
+{
+"text": "2.5848 €",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 258480000
+},
+{
+"text": "$52 167,1894862614-",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": -5216718948626
+},
+{
+"text": "€ 235592",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": 23559200
+},
+{
+"text": "€ 895'419.371297-",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": -89541937
+},
+{
+"text": "+$2.53373",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 3
+},
+{
+"text": "+5.6121657",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 561216570
+},
+{
+"text": "5.2",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": 520
+},
+{
+"text": "+3,648.355",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": 364836
+},
+{
+"text": "$439'675.500111048",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": 43967550
+},
+{
+"text": "65'359'478.54603 EUR",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": 6535947855
+},
+{
+"text": "+$824,65483609",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": 82465483609
+},
+{
+"text": "4.452,43110 €",
+"decimalSeparator": ",",
+"digits": 2,
+"expected": 445243
+},
+{
+"text": "€ 40,0",
+"decimalSeparator": ",",
+"digits": 2,
+"expected": 4000
+},
+{
+"text": "−€ 366.3007581",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": -36630
+},
+{
+"text": "€ 24748801.587",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": 2474880159
+},
+{
+"text": "USD 466.34508509-",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": -46635
+},
+{
+"text": "€ 17'590.1-",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": -1759010000000
+},
+{
+"text": "+20,869.68837109",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 2086968837109
+},
+{
+"text": "(USD 938148884.3724091574)",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": -938148884
+},
+{
+"text": "-55962.77 EUR",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": -5596277
+},
+{
+"text": "845 404,251%-",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": -84540425100000
+},
+{
+"text": "€ 3 520 798",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": 352079800000000
+},
+{
+"text": "+9'231'336 €",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 923133600000000
+},
+{
+"text": "-49.58732 EUR",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": -4959
+},
+{
+"text": "($811,525,850.57966621)",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": -81152585058
+},
+{
+"text": "+€ 16,7",
+"decimalSeparator": ",",
+"digits": 2,
+"expected": 1670
+},
+{
+"text": "+757.428,525%",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": 75742852500000
+},
+{
+"text": "$43650742.2-",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": -43650742
+},
+{
+"text": "+9 869,2086186",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": 986920861860
+},
+{
+"text": "5.053.719,093681290 €",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": 505371909368129
+},
+{
+"text": "+3,409 EUR",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": 340900000
+},
+{
+"text": "€ 16,313,740.755807",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": 1631374076
+},
+{
+"text": "USD 44,018",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 4401800000000
+},
+{
+"text": "95387256.638474550 EUR",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 9538725663847455
+},
+{
+"text": "90.05028 EUR",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 90
+},
+{
+"text": "-USD 757'268",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": -75726800000000
+},
+{
+"text": "93.550.189,68789241",
+"decimalSeparator": ",",
+"digits": 0,
+"expected": 93550190
+},
+{
+"text": "361 EUR",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": 36100000000
+},
+{
+"text": "+95.825.553,2 EUR",
+"decimalSeparator": ",",
+"digits": 2,
+"expected": 9582555320
+},
+{
+"text": "86973261.9 EUR",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 86973262
+},
+{
+"text": "5,904.461703",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": 5904
+},
+{
+"text": "€ 65'147.189107-",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": -6514719
+},
+{
+"text": "−28,749,074.3921 €",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": -2874907439
+},
+{
+"text": "+$24.799",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": 2480
+},
+{
+"text": "$39.2779",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 3927790000
+},
+{
+"text": "(77.051)",
+"decimalSeparator": ".",
+"digits": 0,
+"expected": -77
+},
+{
+"text": "97.752.989,438535666 €",
+"decimalSeparator": ",",
+"digits": 8,
+"expected": 9775298943853567
+},
+{
+"text": "−USD 884 587 269,4086932",
+"decimalSeparator": ",",
+"digits": 2,
+"expected": -88458726941
+},
+{
+"text": "USD 47524341.5035951",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 4752434150359510
+},
+{
+"text": "USD 853725.7560",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 85372575600000
+},
+{
+"text": "$77.347",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 7734700000
+},
+{
+"text": "+4.94699819%",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": 495
+},
+{
+"text": "+USD 777760.449683751",
+"decimalSeparator": ".",
+"digits": 2,
+"expected": 77776045
+},
+{
+"text": "−6.351894517",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": -635189452
+},
+{
+"text": "USD 818.7612534795",
+"decimalSeparator": ".",
+"digits": 8,
+"expected": 81876125348
+}
+],
+"dates": [
+{
+"text": "03-19-2028",
+"order": "monthDayYear",
+"day": "2028-03-19",
+"minuteOfDay": null
+},
+{
+"text": "2042-12-20",
+"order": "yearMonthDay",
+"day": "2042-12-20",
+"minuteOfDay": null
+},
+{
+"text": "2012.08.01 12:12",
+"order": "yearMonthDay",
+"day": "2012-08-01",
+"minuteOfDay": 732
+},
+{
+"text": "8.5.07 21:51",
+"order": "monthDayYear",
+"day": "2007-08-05",
+"minuteOfDay": 1311
+},
+{
+"text": "04-14-2037",
+"order": "monthDayYear",
+"day": "2037-04-14",
+"minuteOfDay": null
+},
+{
+"text": "25.08.2034",
+"order": "dayMonthYear",
+"day": "2034-08-25",
+"minuteOfDay": null
+},
+{
+"text": "26.9.2038",
+"order": "dayMonthYear",
+"day": "2038-09-26",
+"minuteOfDay": null
+},
+{
+"text": "1998/11/10",
+"order": "yearMonthDay",
+"day": "1998-11-10",
+"minuteOfDay": null
+},
+{
+"text": "1990/07/16",
+"order": "yearMonthDay",
+"day": "1990-07-16",
+"minuteOfDay": null
+},
+{
+"text": "2022.06.19T02:05:00",
+"order": "yearMonthDay",
+"day": "2022-06-19",
+"minuteOfDay": 125
+},
+{
+"text": "12-19-30 20:12",
+"order": "monthDayYear",
+"day": "2030-12-19",
+"minuteOfDay": 1212
+},
+{
+"text": "3-31-23 04:52",
+"order": "monthDayYear",
+"day": "2023-03-31",
+"minuteOfDay": 292
+},
+{
+"text": "04/11/1994",
+"order": "dayMonthYear",
+"day": "1994-11-04",
+"minuteOfDay": null
+},
+{
+"text": "25.03.31T23:11:00",
+"order": "dayMonthYear",
+"day": "2031-03-25",
+"minuteOfDay": 1391
+},
+{
+"text": "10/15/09 02:52",
+"order": "monthDayYear",
+"day": "2009-10-15",
+"minuteOfDay": 172
+},
+{
+"text": "30.10.05 01:55",
+"order": "dayMonthYear",
+"day": "2005-10-30",
+"minuteOfDay": 115
+},
+{
+"text": "7/1/1996 06:20:17",
+"order": "dayMonthYear",
+"day": "1996-01-07",
+"minuteOfDay": 380
+},
+{
+"text": "29/05/2029",
+"order": "dayMonthYear",
+"day": "2029-05-29",
+"minuteOfDay": null
+},
+{
+"text": "08.24.2044",
+"order": "monthDayYear",
+"day": "2044-08-24",
+"minuteOfDay": null
+},
+{
+"text": "2040-09-14T19:11:00",
+"order": "yearMonthDay",
+"day": "2040-09-14",
+"minuteOfDay": 1151
+},
+{
+"text": "11/02/2015 18:48:17",
+"order": "monthDayYear",
+"day": "2015-11-02",
+"minuteOfDay": 1128
+},
+{
+"text": "27.5.1998",
+"order": "dayMonthYear",
+"day": "1998-05-27",
+"minuteOfDay": null
+},
+{
+"text": "1/20/03",
+"order": "monthDayYear",
+"day": "2003-01-20",
+"minuteOfDay": null
+},
+{
+"text": "03.10.2018",
+"order": "monthDayYear",
+"day": "2018-03-10",
+"minuteOfDay": null
+},
+{
+"text": "2024.04.27T20:29:00",
+"order": "yearMonthDay",
+"day": "2024-04-27",
+"minuteOfDay": 1229
+},
+{
+"text": "4.11.2040T16:16:00",
+"order": "dayMonthYear",
+"day": "2040-11-04",
+"minuteOfDay": 976
+},
+{
+"text": "01.12.1997",
+"order": "dayMonthYear",
+"day": "1997-12-01",
+"minuteOfDay": null
+},
+{
+"text": "17-09-19 04:20:17",
+"order": "dayMonthYear",
+"day": "2019-09-17",
+"minuteOfDay": 260
+},
+{
+"text": "2019.02.09",
+"order": "yearMonthDay",
+"day": "2019-02-09",
+"minuteOfDay": null
+},
+{
+"text": "09-05-2011",
+"order": "monthDayYear",
+"day": "2011-09-05",
+"minuteOfDay": null
+},
+{
+"text": "10.17.2035",
+"order": "monthDayYear",
+"day": "2035-10-17",
+"minuteOfDay": null
+},
+{
+"text": "10.11.32T00:25:00",
+"order": "monthDayYear",
+"day": "2032-10-11",
+"minuteOfDay": 25
+},
+{
+"text": "8/6/1998T17:33:00",
+"order": "dayMonthYear",
+"day": "1998-06-08",
+"minuteOfDay": 1053
+},
+{
+"text": "2002/05/26",
+"order": "yearMonthDay",
+"day": "2002-05-26",
+"minuteOfDay": null
+},
+{
+"text": "12.3.1998",
+"order": "dayMonthYear",
+"day": "1998-03-12",
+"minuteOfDay": null
+},
+{
+"text": "10.25.2035 00:32",
+"order": "monthDayYear",
+"day": "2035-10-25",
+"minuteOfDay": 32
+},
+{
+"text": "28.07.04",
+"order": "dayMonthYear",
+"day": "2004-07-28",
+"minuteOfDay": null
+},
+{
+"text": "12/18/2023",
+"order": "monthDayYear",
+"day": "2023-12-18",
+"minuteOfDay": null
+},
+{
+"text": "1-3-35 00:19:17",
+"order": "monthDayYear",
+"day": "2035-01-03",
+"minuteOfDay": 19
+},
+{
+"text": "5-13-97T01:35:00",
+"order": "monthDayYear",
+"day": "1997-05-13",
+"minuteOfDay": 95
+},
+{
+"text": "20/08/1997T20:15:00",
+"order": "dayMonthYear",
+"day": "1997-08-20",
+"minuteOfDay": 1215
+},
+{
+"text": "12-25-1993",
+"order": "monthDayYear",
+"day": "1993-12-25",
+"minuteOfDay": null
+},
+{
+"text": "2023-06-18 10:11:17",
+"order": "yearMonthDay",
+"day": "2023-06-18",
+"minuteOfDay": 611
+},
+{
+"text": "12/05/2021T11:42:00",
+"order": "monthDayYear",
+"day": "2021-12-05",
+"minuteOfDay": 702
+},
+{
+"text": "2035-12-20",
+"order": "yearMonthDay",
+"day": "2035-12-20",
+"minuteOfDay": null
+},
+{
+"text": "2037/12/20",
+"order": "yearMonthDay",
+"day": "2037-12-20",
+"minuteOfDay": null
+},
+{
+"text": "1991-12-07",
+"order": "yearMonthDay",
+"day": "1991-12-07",
+"minuteOfDay": null
+},
+{
+"text": "1.3.2027",
+"order": "dayMonthYear",
+"day": "2027-03-01",
+"minuteOfDay": null
+},
+{
+"text": "09-09-2033 23:34",
+"order": "monthDayYear",
+"day": "2033-09-09",
+"minuteOfDay": 1414
+},
+{
+"text": "2/6/2031 07:01",
+"order": "dayMonthYear",
+"day": "2031-06-02",
+"minuteOfDay": 421
+},
+{
+"text": "02/09/08T17:08:00",
+"order": "dayMonthYear",
+"day": "2008-09-02",
+"minuteOfDay": 1028
+},
+{
+"text": "5.7.2022",
+"order": "dayMonthYear",
+"day": "2022-07-05",
+"minuteOfDay": null
+},
+{
+"text": "2007-10-26",
+"order": "yearMonthDay",
+"day": "2007-10-26",
+"minuteOfDay": null
+},
+{
+"text": "5/11/03 14:58",
+"order": "monthDayYear",
+"day": "2003-05-11",
+"minuteOfDay": 898
+},
+{
+"text": "16-1-2035",
+"order": "dayMonthYear",
+"day": "2035-01-16",
+"minuteOfDay": null
+},
+{
+"text": "4-2-2001 00:33",
+"order": "dayMonthYear",
+"day": "2001-02-04",
+"minuteOfDay": 33
+},
+{
+"text": "2013.05.12",
+"order": "yearMonthDay",
+"day": "2013-05-12",
+"minuteOfDay": null
+},
+{
+"text": "01-09-2013T22:29:00",
+"order": "monthDayYear",
+"day": "2013-01-09",
+"minuteOfDay": 1349
+},
+{
+"text": "4.6.2009 12:11:17",
+"order": "dayMonthYear",
+"day": "2009-06-04",
+"minuteOfDay": 731
+},
+{
+"text": "2014-05-11",
+"order": "yearMonthDay",
+"day": "2014-05-11",
+"minuteOfDay": null
+},
+{
+"text": "2020-05-18 14:26",
+"order": "yearMonthDay",
+"day": "2020-05-18",
+"minuteOfDay": 866
+},
+{
+"text": "06-28-2028 18:26",
+"order": "monthDayYear",
+"day": "2028-06-28",
+"minuteOfDay": 1106
+},
+{
+"text": "06-15-2023",
+"order": "monthDayYear",
+"day": "2023-06-15",
+"minuteOfDay": null
+},
+{
+"text": "2040/11/17 18:01:17",
+"order": "yearMonthDay",
+"day": "2040-11-17",
+"minuteOfDay": 1081
+},
+{
+"text": "10/25/35",
+"order": "monthDayYear",
+"day": "2035-10-25",
+"minuteOfDay": null
+},
+{
+"text": "2043-12-18 21:17:17",
+"order": "yearMonthDay",
+"day": "2043-12-18",
+"minuteOfDay": 1277
+},
+{
+"text": "2020.10.01T14:44:00",
+"order": "yearMonthDay",
+"day": "2020-10-01",
+"minuteOfDay": 884
+},
+{
+"text": "1990/10/04",
+"order": "yearMonthDay",
+"day": "1990-10-04",
+"minuteOfDay": null
+},
+{
+"text": "2-7-2023",
+"order": "dayMonthYear",
+"day": "2023-07-02",
+"minuteOfDay": null
+},
+{
+"text": "10-15-02T07:43:00",
+"order": "monthDayYear",
+"day": "2002-10-15",
+"minuteOfDay": 463
+},
+{
+"text": "2-28-29 00:24:17",
+"order": "monthDayYear",
+"day": "2029-02-28",
+"minuteOfDay": 24
+},
+{
+"text": "31/05/2027",
+"order": "dayMonthYear",
+"day": "2027-05-31",
+"minuteOfDay": null
+},
+{
+"text": "1994.01.21 23:21",
+"order": "yearMonthDay",
+"day": "1994-01-21",
+"minuteOfDay": 1401
+},
+{
+"text": "23/3/2016T19:21:00",
+"order": "dayMonthYear",
+"day": "2016-03-23",
+"minuteOfDay": 1161
+},
+{
+"text": "03-03-93",
+"order": "dayMonthYear",
+"day": "1993-03-03",
+"minuteOfDay": null
+},
+{
+"text": "10.26.1994 11:59",
+"order": "monthDayYear",
+"day": "1994-10-26",
+"minuteOfDay": 719
+},
+{
+"text": "08/19/2025",
+"order": "monthDayYear",
+"day": "2025-08-19",
+"minuteOfDay": null
+},
+{
+"text": "2043.12.16 00:06",
+"order": "yearMonthDay",
+"day": "2043-12-16",
+"minuteOfDay": 6
+},
+{
+"text": "10.21.96",
+"order": "monthDayYear",
+"day": "1996-10-21",
+"minuteOfDay": null
+},
+{
+"text": "2007-06-05 04:09:17",
+"order": "yearMonthDay",
+"day": "2007-06-05",
+"minuteOfDay": 249
+},
+{
+"text": "1.20.92",
+"order": "monthDayYear",
+"day": "1992-01-20",
+"minuteOfDay": null
+},
+{
+"text": "14/12/34 08:46:17",
+"order": "dayMonthYear",
+"day": "2034-12-14",
+"minuteOfDay": 526
+},
+{
+"text": "11/30/04T09:20:00",
+"order": "monthDayYear",
+"day": "2004-11-30",
+"minuteOfDay": 560
+},
+{
+"text": "2040-10-20 22:44:17",
+"order": "yearMonthDay",
+"day": "2040-10-20",
+"minuteOfDay": 1364
+},
+{
+"text": "2030.01.30",
+"order": "yearMonthDay",
+"day": "2030-01-30",
+"minuteOfDay": null
+},
+{
+"text": "2009.10.09",
+"order": "yearMonthDay",
+"day": "2009-10-09",
+"minuteOfDay": null
+},
+{
+"text": "21/8/2001",
+"order": "dayMonthYear",
+"day": "2001-08-21",
+"minuteOfDay": null
+},
+{
+"text": "8-24-98 19:23",
+"order": "monthDayYear",
+"day": "1998-08-24",
+"minuteOfDay": 1163
+},
+{
+"text": "2027/05/31",
+"order": "yearMonthDay",
+"day": "2027-05-31",
+"minuteOfDay": null
+},
+{
+"text": "13-2-2035",
+"order": "dayMonthYear",
+"day": "2035-02-13",
+"minuteOfDay": null
+},
+{
+"text": "1/24/22 17:21",
+"order": "monthDayYear",
+"day": "2022-01-24",
+"minuteOfDay": 1041
+},
+{
+"text": "28.3.2005T13:48:00",
+"order": "dayMonthYear",
+"day": "2005-03-28",
+"minuteOfDay": 828
+},
+{
+"text": "1992.08.27",
+"order": "yearMonthDay",
+"day": "1992-08-27",
+"minuteOfDay": null
+},
+{
+"text": "10/02/38",
+"order": "dayMonthYear",
+"day": "2038-02-10",
+"minuteOfDay": null
+},
+{
+"text": "28.04.2034",
+"order": "dayMonthYear",
+"day": "2034-04-28",
+"minuteOfDay": null
+},
+{
+"text": "05-08-21",
+"order": "dayMonthYear",
+"day": "2021-08-05",
+"minuteOfDay": null
+},
+{
+"text": "2021/04/18",
+"order": "yearMonthDay",
+"day": "2021-04-18",
+"minuteOfDay": null
+},
+{
+"text": "11-25-00 17:37",
+"order": "monthDayYear",
+"day": "2000-11-25",
+"minuteOfDay": 1057
+},
+{
+"text": "20-12-1993",
+"order": "dayMonthYear",
+"day": "1993-12-20",
+"minuteOfDay": null
+},
+{
+"text": "1992.03.13",
+"order": "yearMonthDay",
+"day": "1992-03-13",
+"minuteOfDay": null
+},
+{
+"text": "26/07/2042 10:21",
+"order": "dayMonthYear",
+"day": "2042-07-26",
+"minuteOfDay": 621
+},
+{
+"text": "01-08-2011T18:15:00",
+"order": "monthDayYear",
+"day": "2011-01-08",
+"minuteOfDay": 1095
+},
+{
+"text": "1-31-13",
+"order": "monthDayYear",
+"day": "2013-01-31",
+"minuteOfDay": null
+},
+{
+"text": "2009-09-03T19:22:00",
+"order": "yearMonthDay",
+"day": "2009-09-03",
+"minuteOfDay": 1162
+},
+{
+"text": "12.17.2012T05:33:00",
+"order": "monthDayYear",
+"day": "2012-12-17",
+"minuteOfDay": 333
+},
+{
+"text": "18.3.2017",
+"order": "dayMonthYear",
+"day": "2017-03-18",
+"minuteOfDay": null
+},
+{
+"text": "2017.06.18 20:20",
+"order": "yearMonthDay",
+"day": "2017-06-18",
+"minuteOfDay": 1220
+},
+{
+"text": "1996-06-29",
+"order": "yearMonthDay",
+"day": "1996-06-29",
+"minuteOfDay": null
+},
+{
+"text": "2035-07-07",
+"order": "yearMonthDay",
+"day": "2035-07-07",
+"minuteOfDay": null
+},
+{
+"text": "07/23/2025 18:57",
+"order": "monthDayYear",
+"day": "2025-07-23",
+"minuteOfDay": 1137
+},
+{
+"text": "09/22/2041 20:13",
+"order": "monthDayYear",
+"day": "2041-09-22",
+"minuteOfDay": 1213
+},
+{
+"text": "11/03/31 10:08:17",
+"order": "dayMonthYear",
+"day": "2031-03-11",
+"minuteOfDay": 608
+},
+{
+"text": "8.15.92",
+"order": "monthDayYear",
+"day": "1992-08-15",
+"minuteOfDay": null
+},
+{
+"text": "4-11-44",
+"order": "monthDayYear",
+"day": "2044-04-11",
+"minuteOfDay": null
+},
+{
+"text": "8/6/1999T14:34:00",
+"order": "dayMonthYear",
+"day": "1999-06-08",
+"minuteOfDay": 874
+},
+{
+"text": "10/11/2006 16:02:17",
+"order": "dayMonthYear",
+"day": "2006-11-10",
+"minuteOfDay": 962
+},
+{
+"text": "2037.08.30",
+"order": "yearMonthDay",
+"day": "2037-08-30",
+"minuteOfDay": null
+},
+{
+"text": "3/6/95",
+"order": "monthDayYear",
+"day": "1995-03-06",
+"minuteOfDay": null
+},
+{
+"text": "2030-12-16",
+"order": "yearMonthDay",
+"day": "2030-12-16",
+"minuteOfDay": null
+},
+{
+"text": "01/01/2042",
+"order": "dayMonthYear",
+"day": "2042-01-01",
+"minuteOfDay": null
+},
+{
+"text": "2039/03/22 06:03:17",
+"order": "yearMonthDay",
+"day": "2039-03-22",
+"minuteOfDay": 363
+},
+{
+"text": "2037-01-11",
+"order": "yearMonthDay",
+"day": "2037-01-11",
+"minuteOfDay": null
+},
+{
+"text": "30/08/2010 21:41",
+"order": "dayMonthYear",
+"day": "2010-08-30",
+"minuteOfDay": 1301
+},
+{
+"text": "2001-01-24",
+"order": "yearMonthDay",
+"day": "2001-01-24",
+"minuteOfDay": null
+},
+{
+"text": "08/03/2044",
+"order": "dayMonthYear",
+"day": "2044-03-08",
+"minuteOfDay": null
+},
+{
+"text": "4.24.03",
+"order": "monthDayYear",
+"day": "2003-04-24",
+"minuteOfDay": null
+},
+{
+"text": "08-25-2035 03:15",
+"order": "monthDayYear",
+"day": "2035-08-25",
+"minuteOfDay": 195
+},
+{
+"text": "10-21-2003",
+"order": "monthDayYear",
+"day": "2003-10-21",
+"minuteOfDay": null
+},
+{
+"text": "2017/08/31 07:45",
+"order": "yearMonthDay",
+"day": "2017-08-31",
+"minuteOfDay": 465
+},
+{
+"text": "8-10-40",
+"order": "monthDayYear",
+"day": "2040-08-10",
+"minuteOfDay": null
+},
+{
+"text": "04/06/32",
+"order": "dayMonthYear",
+"day": "2032-06-04",
+"minuteOfDay": null
+},
+{
+"text": "10/26/2008",
+"order": "monthDayYear",
+"day": "2008-10-26",
+"minuteOfDay": null
+},
+{
+"text": "11-02-19",
+"order": "dayMonthYear",
+"day": "2019-02-11",
+"minuteOfDay": null
+},
+{
+"text": "3.1.39",
+"order": "monthDayYear",
+"day": "2039-03-01",
+"minuteOfDay": null
+},
+{
+"text": "3-16-21 07:09",
+"order": "monthDayYear",
+"day": "2021-03-16",
+"minuteOfDay": 429
+},
+{
+"text": "8.22.40",
+"order": "monthDayYear",
+"day": "2040-08-22",
+"minuteOfDay": null
+},
+{
+"text": "06/11/2014",
+"order": "dayMonthYear",
+"day": "2014-11-06",
+"minuteOfDay": null
+},
+{
+"text": "2014/10/11 06:16",
+"order": "yearMonthDay",
+"day": "2014-10-11",
+"minuteOfDay": 376
+},
+{
+"text": "2.6.2036",
+"order": "dayMonthYear",
+"day": "2036-06-02",
+"minuteOfDay": null
+},
+{
+"text": "11/10/2017",
+"order": "dayMonthYear",
+"day": "2017-10-11",
+"minuteOfDay": null
+},
+{
+"text": "20.10.2020",
+"order": "dayMonthYear",
+"day": "2020-10-20",
+"minuteOfDay": null
+},
+{
+"text": "20-08-2008",
+"order": "dayMonthYear",
+"day": "2008-08-20",
+"minuteOfDay": null
+},
+{
+"text": "08/18/2027",
+"order": "monthDayYear",
+"day": "2027-08-18",
+"minuteOfDay": null
+},
+{
+"text": "5-7-18",
+"order": "monthDayYear",
+"day": "2018-05-07",
+"minuteOfDay": null
+},
+{
+"text": "21.08.2018",
+"order": "dayMonthYear",
+"day": "2018-08-21",
+"minuteOfDay": null
+},
+{
+"text": "2018/11/20",
+"order": "yearMonthDay",
+"day": "2018-11-20",
+"minuteOfDay": null
+},
+{
+"text": "2023-07-09",
+"order": "yearMonthDay",
+"day": "2023-07-09",
+"minuteOfDay": null
+},
+{
+"text": "2010-03-26",
+"order": "yearMonthDay",
+"day": "2010-03-26",
+"minuteOfDay": null
+},
+{
+"text": "1996-09-13",
+"order": "yearMonthDay",
+"day": "1996-09-13",
+"minuteOfDay": null
+},
+{
+"text": "5-17-21T07:32:00",
+"order": "monthDayYear",
+"day": "2021-05-17",
+"minuteOfDay": 452
+},
+{
+"text": "2026/06/14",
+"order": "yearMonthDay",
+"day": "2026-06-14",
+"minuteOfDay": null
+},
+{
+"text": "6.23.94",
+"order": "monthDayYear",
+"day": "1994-06-23",
+"minuteOfDay": null
+},
+{
+"text": "22/01/31",
+"order": "dayMonthYear",
+"day": "2031-01-22",
+"minuteOfDay": null
+},
+{
+"text": "30/09/2009 04:10:17",
+"order": "dayMonthYear",
+"day": "2009-09-30",
+"minuteOfDay": 250
+},
+{
+"text": "7.14.00",
+"order": "monthDayYear",
+"day": "2000-07-14",
+"minuteOfDay": null
+},
+{
+"text": "2016/10/11 09:49",
+"order": "yearMonthDay",
+"day": "2016-10-11",
+"minuteOfDay": 589
+},
+{
+"text": "4.23.37 10:36",
+"order": "monthDayYear",
+"day": "2037-04-23",
+"minuteOfDay": 636
+},
+{
+"text": "5.2.09",
+"order": "monthDayYear",
+"day": "2009-05-02",
+"minuteOfDay": null
+},
+{
+"text": "7.6.05 02:41",
+"order": "monthDayYear",
+"day": "2005-07-06",
+"minuteOfDay": 161
+},
+{
+"text": "5-26-37 04:14",
+"order": "monthDayYear",
+"day": "2037-05-26",
+"minuteOfDay": 254
+},
+{
+"text": "07/28/2021 06:36",
+"order": "monthDayYear",
+"day": "2021-07-28",
+"minuteOfDay": 396
+},
+{
+"text": "05.10.2044 12:19:17",
+"order": "monthDayYear",
+"day": "2044-05-10",
+"minuteOfDay": 739
+},
+{
+"text": "15-7-2030",
+"order": "dayMonthYear",
+"day": "2030-07-15",
+"minuteOfDay": null
+},
+{
+"text": "2/16/93",
+"order": "monthDayYear",
+"day": "1993-02-16",
+"minuteOfDay": null
+},
+{
+"text": "1996/02/22",
+"order": "yearMonthDay",
+"day": "1996-02-22",
+"minuteOfDay": null
+},
+{
+"text": "10-6-2004 09:45",
+"order": "dayMonthYear",
+"day": "2004-06-10",
+"minuteOfDay": 585
+},
+{
+"text": "23.07.2008",
+"order": "dayMonthYear",
+"day": "2008-07-23",
+"minuteOfDay": null
+},
+{
+"text": "14.05.2031",
+"order": "dayMonthYear",
+"day": "2031-05-14",
+"minuteOfDay": null
+},
+{
+"text": "07/10/04",
+"order": "dayMonthYear",
+"day": "2004-10-07",
+"minuteOfDay": null
+},
+{
+"text": "12-23-07",
+"order": "monthDayYear",
+"day": "2007-12-23",
+"minuteOfDay": null
+},
+{
+"text": "21.12.2031",
+"order": "dayMonthYear",
+"day": "2031-12-21",
+"minuteOfDay": null
+},
+{
+"text": "03-18-1992 02:47:17",
+"order": "monthDayYear",
+"day": "1992-03-18",
+"minuteOfDay": 167
+},
+{
+"text": "2001/03/10 19:09:17",
+"order": "yearMonthDay",
+"day": "2001-03-10",
+"minuteOfDay": 1149
+},
+{
+"text": "2031.07.27",
+"order": "yearMonthDay",
+"day": "2031-07-27",
+"minuteOfDay": null
+},
+{
+"text": "9.6.2015 23:59:17",
+"order": "dayMonthYear",
+"day": "2015-06-09",
+"minuteOfDay": 1439
+},
+{
+"text": "01-01-2008T02:42:00",
+"order": "monthDayYear",
+"day": "2008-01-01",
+"minuteOfDay": 162
+},
+{
+"text": "10.07.2038",
+"order": "monthDayYear",
+"day": "2038-10-07",
+"minuteOfDay": null
+},
+{
+"text": "7/19/30",
+"order": "monthDayYear",
+"day": "2030-07-19",
+"minuteOfDay": null
+},
+{
+"text": "13/02/2007",
+"order": "dayMonthYear",
+"day": "2007-02-13",
+"minuteOfDay": null
+},
+{
+"text": "3.14.23",
+"order": "monthDayYear",
+"day": "2023-03-14",
+"minuteOfDay": null
+},
+{
+"text": "9.21.08 09:35",
+"order": "monthDayYear",
+"day": "2008-09-21",
+"minuteOfDay": 575
+},
+{
+"text": "07.20.2031",
+"order": "monthDayYear",
+"day": "2031-07-20",
+"minuteOfDay": null
+},
+{
+"text": "2017.01.23",
+"order": "yearMonthDay",
+"day": "2017-01-23",
+"minuteOfDay": null
+},
+{
+"text": "2014.01.28",
+"order": "yearMonthDay",
+"day": "2014-01-28",
+"minuteOfDay": null
+},
+{
+"text": "2013-05-30",
+"order": "yearMonthDay",
+"day": "2013-05-30",
+"minuteOfDay": null
+},
+{
+"text": "02-16-2002",
+"order": "monthDayYear",
+"day": "2002-02-16",
+"minuteOfDay": null
+},
+{
+"text": "1-20-92",
+"order": "monthDayYear",
+"day": "1992-01-20",
+"minuteOfDay": null
+},
+{
+"text": "04-05-39",
+"order": "dayMonthYear",
+"day": "2039-05-04",
+"minuteOfDay": null
+},
+{
+"text": "10-03-2025T18:28:00",
+"order": "monthDayYear",
+"day": "2025-10-03",
+"minuteOfDay": 1108
+},
+{
+"text": "2030.08.07",
+"order": "yearMonthDay",
+"day": "2030-08-07",
+"minuteOfDay": null
+},
+{
+"text": "10.1.2017 07:26",
+"order": "dayMonthYear",
+"day": "2017-01-10",
+"minuteOfDay": 446
+},
+{
+"text": "12.02.2027",
+"order": "monthDayYear",
+"day": "2027-12-02",
+"minuteOfDay": null
+},
+{
+"text": "2013/06/29 14:42:17",
+"order": "yearMonthDay",
+"day": "2013-06-29",
+"minuteOfDay": 882
+},
+{
+"text": "09-11-2023",
+"order": "monthDayYear",
+"day": "2023-09-11",
+"minuteOfDay": null
+},
+{
+"text": "05.06.1993",
+"order": "monthDayYear",
+"day": "1993-05-06",
+"minuteOfDay": null
+},
+{
+"text": "8.11.2027",
+"order": "dayMonthYear",
+"day": "2027-11-08",
+"minuteOfDay": null
+},
+{
+"text": "2044/09/13",
+"order": "yearMonthDay",
+"day": "2044-09-13",
+"minuteOfDay": null
+},
+{
+"text": "2027/04/26",
+"order": "yearMonthDay",
+"day": "2027-04-26",
+"minuteOfDay": null
+},
+{
+"text": "11-11-30 09:05:17",
+"order": "dayMonthYear",
+"day": "2030-11-11",
+"minuteOfDay": 545
+},
+{
+"text": "04-19-2028 20:40",
+"order": "monthDayYear",
+"day": "2028-04-19",
+"minuteOfDay": 1240
+},
+{
+"text": "2026.08.09",
+"order": "yearMonthDay",
+"day": "2026-08-09",
+"minuteOfDay": null
+},
+{
+"text": "9/22/99",
+"order": "monthDayYear",
+"day": "1999-09-22",
+"minuteOfDay": null
+},
+{
+"text": "2018/01/07",
+"order": "yearMonthDay",
+"day": "2018-01-07",
+"minuteOfDay": null
+},
+{
+"text": "10-13-21 04:11",
+"order": "monthDayYear",
+"day": "2021-10-13",
+"minuteOfDay": 251
+},
+{
+"text": "2006-08-28",
+"order": "yearMonthDay",
+"day": "2006-08-28",
+"minuteOfDay": null
+},
+{
+"text": "12/11/29 07:48",
+"order": "dayMonthYear",
+"day": "2029-11-12",
+"minuteOfDay": 468
+},
+{
+"text": "9-22-99",
+"order": "monthDayYear",
+"day": "1999-09-22",
+"minuteOfDay": null
+},
+{
+"text": "07.20.2024",
+"order": "monthDayYear",
+"day": "2024-07-20",
+"minuteOfDay": null
+},
+{
+"text": "12/27/2039",
+"order": "monthDayYear",
+"day": "2039-12-27",
+"minuteOfDay": null
+},
+{
+"text": "7-4-26 15:15:17",
+"order": "monthDayYear",
+"day": "2026-07-04",
+"minuteOfDay": 915
+},
+{
+"text": "04-10-2000",
+"order": "monthDayYear",
+"day": "2000-04-10",
+"minuteOfDay": null
+},
+{
+"text": "30/03/2034",
+"order": "dayMonthYear",
+"day": "2034-03-30",
+"minuteOfDay": null
+},
+{
+"text": "12.12.2010",
+"order": "dayMonthYear",
+"day": "2010-12-12",
+"minuteOfDay": null
+},
+{
+"text": "1997-07-15",
+"order": "yearMonthDay",
+"day": "1997-07-15",
+"minuteOfDay": null
+},
+{
+"text": "04.18.2016",
+"order": "monthDayYear",
+"day": "2016-04-18",
+"minuteOfDay": null
+},
+{
+"text": "12-08-19",
+"order": "dayMonthYear",
+"day": "2019-08-12",
+"minuteOfDay": null
+},
+{
+"text": "25/08/93",
+"order": "dayMonthYear",
+"day": "1993-08-25",
+"minuteOfDay": null
+},
+{
+"text": "11.05.2002",
+"order": "monthDayYear",
+"day": "2002-11-05",
+"minuteOfDay": null
+},
+{
+"text": "08/22/2010",
+"order": "monthDayYear",
+"day": "2010-08-22",
+"minuteOfDay": null
+},
+{
+"text": "2035/06/30",
+"order": "yearMonthDay",
+"day": "2035-06-30",
+"minuteOfDay": null
+},
+{
+"text": "2035-12-15",
+"order": "yearMonthDay",
+"day": "2035-12-15",
+"minuteOfDay": null
+},
+{
+"text": "06-10-96",
+"order": "dayMonthYear",
+"day": "1996-10-06",
+"minuteOfDay": null
+},
+{
+"text": "04.23.1993",
+"order": "monthDayYear",
+"day": "1993-04-23",
+"minuteOfDay": null
+},
+{
+"text": "20/07/2030",
+"order": "dayMonthYear",
+"day": "2030-07-20",
+"minuteOfDay": null
+},
+{
+"text": "2004-03-16 18:38:17",
+"order": "yearMonthDay",
+"day": "2004-03-16",
+"minuteOfDay": 1118
+},
+{
+"text": "10.9.2008 08:03:17",
+"order": "dayMonthYear",
+"day": "2008-09-10",
+"minuteOfDay": 483
+},
+{
+"text": "2025.10.19",
+"order": "yearMonthDay",
+"day": "2025-10-19",
+"minuteOfDay": null
+},
+{
+"text": "10-09-04",
+"order": "dayMonthYear",
+"day": "2004-09-10",
+"minuteOfDay": null
+},
+{
+"text": "4.2.2020T09:01:00",
+"order": "dayMonthYear",
+"day": "2020-02-04",
+"minuteOfDay": 541
+},
+{
+"text": "18/06/44",
+"order": "dayMonthYear",
+"day": "2044-06-18",
+"minuteOfDay": null
+},
+{
+"text": "7.1.42 01:17:17",
+"order": "monthDayYear",
+"day": "2042-07-01",
+"minuteOfDay": 77
+},
+{
+"text": "09/24/2033",
+"order": "monthDayYear",
+"day": "2033-09-24",
+"minuteOfDay": null
+},
+{
+"text": "6.23.21",
+"order": "monthDayYear",
+"day": "2021-06-23",
+"minuteOfDay": null
+},
+{
+"text": "10/4/40",
+"order": "monthDayYear",
+"day": "2040-10-04",
+"minuteOfDay": null
+},
+{
+"text": "10.21.11",
+"order": "monthDayYear",
+"day": "2011-10-21",
+"minuteOfDay": null
+},
+{
+"text": "2037/07/18",
+"order": "yearMonthDay",
+"day": "2037-07-18",
+"minuteOfDay": null
+},
+{
+"text": "2016/12/31 13:02:17",
+"order": "yearMonthDay",
+"day": "2016-12-31",
+"minuteOfDay": 782
+},
+{
+"text": "2011-09-16 07:33",
+"order": "yearMonthDay",
+"day": "2011-09-16",
+"minuteOfDay": 453
+},
+{
+"text": "2041-07-05 16:06:17",
+"order": "yearMonthDay",
+"day": "2041-07-05",
+"minuteOfDay": 966
+},
+{
+"text": "09/10/2026",
+"order": "dayMonthYear",
+"day": "2026-10-09",
+"minuteOfDay": null
+},
+{
+"text": "8-7-19",
+"order": "monthDayYear",
+"day": "2019-08-07",
+"minuteOfDay": null
+},
+{
+"text": "2006/08/26",
+"order": "yearMonthDay",
+"day": "2006-08-26",
+"minuteOfDay": null
+},
+{
+"text": "09/12/1990 17:08:17",
+"order": "dayMonthYear",
+"day": "1990-12-09",
+"minuteOfDay": 1028
+},
+{
+"text": "2004-05-20 08:10",
+"order": "yearMonthDay",
+"day": "2004-05-20",
+"minuteOfDay": 490
+},
+{
+"text": "29/05/16",
+"order": "dayMonthYear",
+"day": "2016-05-29",
+"minuteOfDay": null
+},
+{
+"text": "14.7.2024",
+"order": "dayMonthYear",
+"day": "2024-07-14",
+"minuteOfDay": null
+},
+{
+"text": "24.06.2004",
+"order": "dayMonthYear",
+"day": "2004-06-24",
+"minuteOfDay": null
+},
+{
+"text": "16/08/2008T17:48:00",
+"order": "dayMonthYear",
+"day": "2008-08-16",
+"minuteOfDay": 1068
+},
+{
+"text": "02.06.2034 05:01:17",
+"order": "monthDayYear",
+"day": "2034-02-06",
+"minuteOfDay": 301
+},
+{
+"text": "2043.12.17",
+"order": "yearMonthDay",
+"day": "2043-12-17",
+"minuteOfDay": null
+},
+{
+"text": "1.25.43",
+"order": "monthDayYear",
+"day": "2043-01-25",
+"minuteOfDay": null
+},
+{
+"text": "2009/06/19",
+"order": "yearMonthDay",
+"day": "2009-06-19",
+"minuteOfDay": null
+},
+{
+"text": "05-12-2007 04:00",
+"order": "monthDayYear",
+"day": "2007-05-12",
+"minuteOfDay": 240
+},
+{
+"text": "5-17-09",
+"order": "monthDayYear",
+"day": "2009-05-17",
+"minuteOfDay": null
+},
+{
+"text": "30-7-1990 12:49",
+"order": "dayMonthYear",
+"day": "1990-07-30",
+"minuteOfDay": 769
+},
+{
+"text": "19/07/21",
+"order": "dayMonthYear",
+"day": "2021-07-19",
+"minuteOfDay": null
+},
+{
+"text": "2007-07-06 06:12",
+"order": "yearMonthDay",
+"day": "2007-07-06",
+"minuteOfDay": 372
+},
+{
+"text": "11/16/06 03:34:17",
+"order": "monthDayYear",
+"day": "2006-11-16",
+"minuteOfDay": 214
+},
+{
+"text": "2-6-2019",
+"order": "dayMonthYear",
+"day": "2019-06-02",
+"minuteOfDay": null
+},
+{
+"text": "07-08-30T05:18:00",
+"order": "dayMonthYear",
+"day": "2030-08-07",
+"minuteOfDay": 318
+},
+{
+"text": "2.20.15T03:09:00",
+"order": "monthDayYear",
+"day": "2015-02-20",
+"minuteOfDay": 189
+},
+{
+"text": "2031.03.16",
+"order": "yearMonthDay",
+"day": "2031-03-16",
+"minuteOfDay": null
+},
+{
+"text": "2021-03-04",
+"order": "yearMonthDay",
+"day": "2021-03-04",
+"minuteOfDay": null
+},
+{
+"text": "17/5/2033",
+"order": "dayMonthYear",
+"day": "2033-05-17",
+"minuteOfDay": null
+},
+{
+"text": "08/11/2004 22:20:17",
+"order": "dayMonthYear",
+"day": "2004-11-08",
+"minuteOfDay": 1340
+},
+{
+"text": "15/08/35 04:24",
+"order": "dayMonthYear",
+"day": "2035-08-15",
+"minuteOfDay": 264
+},
+{
+"text": "01-13-2041",
+"order": "monthDayYear",
+"day": "2041-01-13",
+"minuteOfDay": null
+},
+{
+"text": "13-03-94 12:04:17",
+"order": "dayMonthYear",
+"day": "1994-03-13",
+"minuteOfDay": 724
+},
+{
+"text": "05.25.2030",
+"order": "monthDayYear",
+"day": "2030-05-25",
+"minuteOfDay": null
+},
+{
+"text": "11/10/98",
+"order": "dayMonthYear",
+"day": "1998-10-11",
+"minuteOfDay": null
+},
+{
+"text": "2025-06-16",
+"order": "yearMonthDay",
+"day": "2025-06-16",
+"minuteOfDay": null
+},
+{
+"text": "2/24/03T18:36:00",
+"order": "monthDayYear",
+"day": "2003-02-24",
+"minuteOfDay": 1116
+},
+{
+"text": "2026-05-06",
+"order": "yearMonthDay",
+"day": "2026-05-06",
+"minuteOfDay": null
+},
+{
+"text": "28.03.97",
+"order": "dayMonthYear",
+"day": "1997-03-28",
+"minuteOfDay": null
+},
+{
+"text": "05-12-2022",
+"order": "dayMonthYear",
+"day": "2022-12-05",
+"minuteOfDay": null
+},
+{
+"text": "2039-12-11",
+"order": "yearMonthDay",
+"day": "2039-12-11",
+"minuteOfDay": null
+},
+{
+"text": "9-23-13",
+"order": "monthDayYear",
+"day": "2013-09-23",
+"minuteOfDay": null
+},
+{
+"text": "12/25/17 19:59:17",
+"order": "monthDayYear",
+"day": "2017-12-25",
+"minuteOfDay": 1199
+},
+{
+"text": "2001.12.18T12:27:00",
+"order": "yearMonthDay",
+"day": "2001-12-18",
+"minuteOfDay": 747
+},
+{
+"text": "2021-05-24",
+"order": "yearMonthDay",
+"day": "2021-05-24",
+"minuteOfDay": null
+},
+{
+"text": "09/02/1996",
+"order": "monthDayYear",
+"day": "1996-09-02",
+"minuteOfDay": null
+},
+{
+"text": "12.09.2041 10:57",
+"order": "dayMonthYear",
+"day": "2041-09-12",
+"minuteOfDay": 657
+},
+{
+"text": "2033-08-11",
+"order": "yearMonthDay",
+"day": "2033-08-11",
+"minuteOfDay": null
+},
+{
+"text": "1993/04/01 14:17:17",
+"order": "yearMonthDay",
+"day": "1993-04-01",
+"minuteOfDay": 857
+},
+{
+"text": "09-04-2006 05:20:17",
+"order": "monthDayYear",
+"day": "2006-09-04",
+"minuteOfDay": 320
+},
+{
+"text": "02/05/1997",
+"order": "dayMonthYear",
+"day": "1997-05-02",
+"minuteOfDay": null
+},
+{
+"text": "13-6-1994",
+"order": "dayMonthYear",
+"day": "1994-06-13",
+"minuteOfDay": null
+},
+{
+"text": "16-05-13T06:21:00",
+"order": "dayMonthYear",
+"day": "2013-05-16",
+"minuteOfDay": 381
+},
+{
+"text": "2001.03.21 01:24:17",
+"order": "yearMonthDay",
+"day": "2001-03-21",
+"minuteOfDay": 84
+},
+{
+"text": "9/15/01",
+"order": "monthDayYear",
+"day": "2001-09-15",
+"minuteOfDay": null
+},
+{
+"text": "03/09/2018",
+"order": "monthDayYear",
+"day": "2018-03-09",
+"minuteOfDay": null
+},
+{
+"text": "28-01-98T15:16:00",
+"order": "dayMonthYear",
+"day": "1998-01-28",
+"minuteOfDay": 916
+},
+{
+"text": "1-26-18",
+"order": "monthDayYear",
+"day": "2018-01-26",
+"minuteOfDay": null
+},
+{
+"text": "2.23.04 01:55",
+"order": "monthDayYear",
+"day": "2004-02-23",
+"minuteOfDay": 115
+},
+{
+"text": "2013-10-06",
+"order": "yearMonthDay",
+"day": "2013-10-06",
+"minuteOfDay": null
+},
+{
+"text": "2012.12.03",
+"order": "yearMonthDay",
+"day": "2012-12-03",
+"minuteOfDay": null
+},
+{
+"text": "2016.12.06 16:05",
+"order": "yearMonthDay",
+"day": "2016-12-06",
+"minuteOfDay": 965
+},
+{
+"text": "8.5.92 23:40:17",
+"order": "monthDayYear",
+"day": "1992-08-05",
+"minuteOfDay": 1420
+},
+{
+"text": "9-26-06",
+"order": "monthDayYear",
+"day": "2006-09-26",
+"minuteOfDay": null
+},
+{
+"text": "6-21-36T06:31:00",
+"order": "monthDayYear",
+"day": "2036-06-21",
+"minuteOfDay": 391
+}
+]
+}

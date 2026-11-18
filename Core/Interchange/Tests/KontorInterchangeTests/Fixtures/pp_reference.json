@@ -1,0 +1,671 @@
+{
+ "Issue1498FifoCrossPortfolio.xml": {
+  "accounts": 4,
+  "balances": {
+   "01129778-d05f-4d46-8f1b-5c7859104149": 0,
+   "56f552ff-0993-49b2-9933-07e423acd56f": 0,
+   "bdcf78d6-1b9b-4502-b822-93b1e8a25a37": 0,
+   "d2d2dcc5-a0bc-401c-9da9-870c2001b3c6": 51340
+  },
+  "depots": 4,
+  "exchangeRateSecurities": 0,
+  "ledger": [
+   "buy|2019-01-15||15000|EUR|1000000000|0|0||Deutsche Lufthansa AG|",
+   "buy|2019-02-15||100000|EUR|5000000000|0|0||Deutsche Lufthansa AG|",
+   "buy|2019-04-15||17460|EUR|2000000000|0|0||Deutsche Lufthansa AG|",
+   "deposit|2019-01-01||100000|EUR|0|0|0|||",
+   "deposit|2019-01-01||15000|EUR|0|0|0|||",
+   "deposit|2019-01-01||50000|EUR|0|0|0|||",
+   "securityTransfer|2019-03-15||10000|EUR|500000000|0|0||Deutsche Lufthansa AG|",
+   "sell|2019-05-15||18800|EUR|2000000000|0|0||Deutsche Lufthansa AG|"
+  ],
+  "positions": {
+   "6b54a2a7-d2e8-4304-bcbf-72fdf04ee9e9|06179b70-563f-497a-8caf-0331100ce645": 500000000,
+   "8a36bdbc-5f2c-4842-b8fb-20646848a8aa|06179b70-563f-497a-8caf-0331100ce645": 500000000,
+   "f9befeb1-0fc5-424c-8d77-e0f125f1f5bc|06179b70-563f-497a-8caf-0331100ce645": 5000000000
+  },
+  "prices": {
+   "06179b70-563f-497a-8caf-0331100ce645": [
+    1,
+    1000000000
+   ]
+  },
+  "securities": 1,
+  "transactions": 8,
+  "version": 45
+ },
+ "Issue1897AddFeesToDividendTransactions.xml": {
+  "accounts": 1,
+  "balances": {
+   "4f9a5551-03c6-4b85-ae21-2e45fe12c3b2": -148260
+  },
+  "depots": 1,
+  "exchangeRateSecurities": 0,
+  "ledger": [
+   "buy|2020-11-02||156160|EUR|1000000000|500|600||ALLIANZ SE NA O.N.|",
+   "dividend|2020-12-01||7900|EUR|1000000000|1000|1100||ALLIANZ SE NA O.N.|"
+  ],
+  "positions": {
+   "6af8d7c4-6608-43b4-9e28-84288616187e|d9e5c54e-6251-443e-97cd-c5a745add072": 1000000000
+  },
+  "prices": {
+   "d9e5c54e-6251-443e-97cd-c5a745add072": [
+    1,
+    15106000000
+   ]
+  },
+  "securities": 1,
+  "transactions": 2,
+  "version": 48
+ },
+ "classification_test_case.xml": {
+  "accounts": 4,
+  "balances": {
+   "05495daf-e7d0-44ee-b127-ce4c99f97b4c": 53486,
+   "2c5ed412-cfc8-4f72-ada0-b67bddcf9cc0": 68684,
+   "7551bc47-a2df-483d-a319-a1673a95cd38": 42352,
+   "d18cef06-ebb6-4e14-8cad-fe7410d2e6b6": 124816
+  },
+  "depots": 2,
+  "exchangeRateSecurities": 0,
+  "ledger": [
+   "buy|2012-01-01||101980|EUR|7480000000|1000|0||Commerzbank AG|",
+   "buy|2012-01-01||381358|EUR|3300000000|1000|2000||Linde AG|",
+   "buy|2012-01-02||239760|EUR|4700000000|1000|0||Adidas AG|",
+   "buy|2012-01-02||664030|EUR|9000000000|1000|0||Allianz SE|",
+   "buy|2012-01-16||47648|USD|100000000|1000|1000||Apple Inc.|",
+   "buy|2012-01-18||39135|EUR|100000000|1779|1779|45648 USD|Apple Inc.|",
+   "cashTransfer|2012-01-17||10000|USD|0|0|0|||7819 EUR",
+   "cashTransfer|2012-01-25||10000|EUR|0|0|0|||",
+   "deliveryIn|2012-01-12||93450|EUR|1000000000|1000|1000||MAN SE|",
+   "deliveryOut|2012-01-13||160500|EUR|1000000000|1000|1000||Allianz SE|",
+   "deposit|2011-12-31||100000|EUR|0|0|0|||",
+   "deposit|2011-12-31||100000|USD|0|0|0|||",
+   "deposit|2011-12-31||1500000|EUR|0|0|0|||",
+   "dividend|2012-01-10||1650|EUR|3300000000|0|0||Linde AG|",
+   "dividend|2012-01-10||1944|EUR|4700000000|0|500||Adidas AG|",
+   "feeRefund|2012-01-22||2000|EUR|0|0|0|||",
+   "fee|2012-01-21||1000|EUR|0|0|0|||",
+   "interestCharge|2012-01-23||1000|EUR|0|0|0|||",
+   "interest|2012-01-20||2000|EUR|0|0|0|||",
+   "securityTransfer|2012-01-11||666000|EUR|9000000000|0|0||Allianz SE|",
+   "sell|2012-01-10||68836|EUR|7480000000|1000|1000||Commerzbank AG|",
+   "taxRefund|2012-01-26||1000|EUR|0|0|0|||",
+   "taxRefund|2012-01-27||1000|EUR|0|0|0||Linde AG|",
+   "tax|2012-01-28||1000|EUR|0|0|0|||",
+   "withdrawal|2012-01-24||10000|EUR|0|0|0|||"
+  ],
+  "positions": {
+   "639cbf96-1002-483b-9d02-99555b83c9b4|07c00f1e-101b-46b2-8587-93b137a4119b": 8000000000,
+   "639cbf96-1002-483b-9d02-99555b83c9b4|bb5c7307-f0ec-43e4-a8f0-1f2327355d8c": 200000000,
+   "639cbf96-1002-483b-9d02-99555b83c9b4|fdec0fea-ebf5-40b5-88e9-783005c8e85c": 1000000000,
+   "c8676f98-3337-4c64-a6c2-0974788790bb|3765c42a-e243-4444-a113-f4fba5b79e21": 3300000000,
+   "c8676f98-3337-4c64-a6c2-0974788790bb|b23ec5dd-c899-4f45-90f9-bfd83ed971ad": 4700000000
+  },
+  "prices": {
+   "07c00f1e-101b-46b2-8587-93b137a4119b": [
+    23,
+    176262000000
+   ],
+   "3765c42a-e243-4444-a113-f4fba5b79e21": [
+    23,
+    269180000000
+   ],
+   "6d90d476-112b-4bec-b345-53db714d7c4b": [
+    23,
+    35010000000
+   ],
+   "704f5f3e-dd03-4a56-9fdf-84626c4503ca": [
+    22,
+    13794626000000
+   ],
+   "b23ec5dd-c899-4f45-90f9-bfd83ed971ad": [
+    23,
+    122393000000
+   ],
+   "bb5c7307-f0ec-43e4-a8f0-1f2327355d8c": [
+    21,
+    897655900000
+   ],
+   "dc22bc1a-0cdb-4ee9-aeda-e3509d21bea5": [
+    23,
+    129230000000
+   ],
+   "fdec0fea-ebf5-40b5-88e9-783005c8e85c": [
+    23,
+    173250000000
+   ]
+  },
+  "securities": 8,
+  "transactions": 25,
+  "version": 34
+ },
+ "client52.xml": {
+  "accounts": 1,
+  "balances": {
+   "bfe141fa-0bc4-4372-b074-8979be4d6934": 9000
+  },
+  "depots": 1,
+  "exchangeRateSecurities": 1,
+  "ledger": [
+   "deliveryIn|2021-08-02||10000|EUR|9000000|1000|0||Security with all Attributes|",
+   "deposit|2021-08-09||9000|EUR|0|0|0|||"
+  ],
+  "positions": {
+   "fcbb7f99-8311-459c-ac45-bcf7847d0b5c|d60295d6-b5a4-4642-85d2-a6c7dac88fdf": 9000000
+  },
+  "prices": {
+   "004680ab-92b2-4de7-8dd6-b7f05dec4ff3": [
+    2,
+    21780000000
+   ],
+   "5293d6ab-3d6a-480f-8e61-ab367b8964e3": [
+    0,
+    0
+   ],
+   "92707c1c-60f4-4610-a470-224147abff0d": [
+    0,
+    0
+   ],
+   "d60295d6-b5a4-4642-85d2-a6c7dac88fdf": [
+    1,
+    100000000000
+   ]
+  },
+  "securities": 3,
+  "transactions": 2,
+  "version": 52
+ },
+ "client69.xml": {
+  "accounts": 1,
+  "balances": {
+   "6908edd0-1bb5-411e-bb4d-678a858eff66": 1007
+  },
+  "depots": 1,
+  "exchangeRateSecurities": 0,
+  "ledger": [
+   "dividend|2019-05-27||1007|EUR|7000000000|0|393||Commerzbank AG Inhaber-Aktien o.N.|"
+  ],
+  "positions": {},
+  "prices": {
+   "2bab2728-f3b2-4ca0-8330-825446831ade": [
+    0,
+    0
+   ]
+  },
+  "securities": 1,
+  "transactions": 1,
+  "version": 69
+ },
+ "client_performance_snapshot.xml": {
+  "accounts": 2,
+  "balances": {
+   "6cfd32c7-1992-4d61-92c6-df6c540573a8": 101265,
+   "b6a5f511-7c51-4d94-950f-795dc7a60b73": 202843
+  },
+  "depots": 2,
+  "exchangeRateSecurities": 0,
+  "ledger": [
+   "buy|2014-12-22||28235|USD|1000000000|0|0||APPLE INC.|",
+   "buy|2014-12-22||70570|EUR|1000000000|100|200||BASF SE NA O.N.|",
+   "buy|2015-01-06||6869|EUR|100000000|100|100||BASF SE NA O.N.|",
+   "cashTransfer|2023-05-25||1000|USD|0|0|0|||927 EUR",
+   "deliveryIn|2015-01-07||20694|EUR|300000000|222|333||BASF SE NA O.N.|",
+   "deliveryOut|2015-01-14||5157|USD|200000000|111|222||APPLE INC.|",
+   "deposit|2014-01-01||100000|EUR|0|0|0|||",
+   "deposit|2014-05-25||100000|USD|0|0|0|||",
+   "deposit|2015-01-02||10000|EUR|0|0|0|||",
+   "deposit|2015-01-02||20000|USD|0|0|0|||",
+   "deposit|2015-01-10||30000|USD|0|0|0|||",
+   "deposit|2015-01-14||20000|EUR|0|0|0|||",
+   "deposit|2015-01-14||40000|USD|0|0|0|||",
+   "deposit|2015-04-14||50000|USD|0|0|0|||",
+   "deposit|2015-06-01||50000|EUR|0|0|0|||",
+   "dividend|2015-01-13||1020|EUR|1100000000|200|100||BASF SE NA O.N.|",
+   "feeRefund|2015-01-12||712|EUR|0|0|0|||",
+   "fee|2015-01-11||999|EUR|0|0|0|||",
+   "interestCharge|2015-01-09||700|EUR|0|0|0|||",
+   "interest|2014-05-25||400|EUR|0|0|100|||",
+   "interest|2015-01-02||4444|EUR|0|0|123|||",
+   "interest|2015-01-10||900|EUR|0|0|100|||",
+   "interest|2015-01-14||1000|EUR|0|0|234|||",
+   "interest|2015-05-25||1000|EUR|0|0|1000|||",
+   "sell|2015-01-13||12078|USD|500000000|1000|700||APPLE INC.|",
+   "taxRefund|2015-01-05||2300|EUR|0|0|0|||",
+   "tax|2015-01-04||12300|EUR|0|0|0|||",
+   "withdrawal|2015-01-10||20000|USD|0|0|0|||"
+  ],
+  "positions": {
+   "9e91496e-d2b6-458f-8e3e-76caeaf8bccd|bf881504-8fde-4e66-8e6d-5bb2809323b4": 300000000,
+   "e7a74f2d-8b4c-4ce7-a705-52d93bedd7eb|a70f690d-730c-4d68-9bef-8d65218c675b": 1400000000
+  },
+  "prices": {
+   "a70f690d-730c-4d68-9bef-8d65218c675b": [
+    18,
+    123891500000
+   ],
+   "bf881504-8fde-4e66-8e6d-5bb2809323b4": [
+    19,
+    52314500000
+   ]
+  },
+  "securities": 2,
+  "transactions": 28,
+  "version": 56
+ },
+ "client_with_id_references.xml": {
+  "accounts": 0,
+  "balances": {},
+  "depots": 0,
+  "exchangeRateSecurities": 0,
+  "ledger": [],
+  "positions": {},
+  "prices": {
+   "35b3ba7d-20f4-45be-8804-9d5778f40b52": [
+    1,
+    10
+   ],
+   "987f74dd-2308-4b6b-a5b8-4918e3a73d95": [
+    1,
+    10
+   ]
+  },
+  "securities": 2,
+  "transactions": 0,
+  "version": 63
+ },
+ "client_with_relative_references.xml": {
+  "accounts": 0,
+  "balances": {},
+  "depots": 0,
+  "exchangeRateSecurities": 0,
+  "ledger": [],
+  "positions": {},
+  "prices": {
+   "35b3ba7d-20f4-45be-8804-9d5778f40b52": [
+    1,
+    10
+   ],
+   "987f74dd-2308-4b6b-a5b8-4918e3a73d95": [
+    1,
+    10
+   ]
+  },
+  "securities": 2,
+  "transactions": 0,
+  "version": 63
+ },
+ "client_with_security_events.xml": {
+  "accounts": 0,
+  "balances": {},
+  "depots": 0,
+  "exchangeRateSecurities": 0,
+  "ledger": [],
+  "positions": {},
+  "prices": {
+   "35b3ba7d-20f4-45be-8804-9d5778f40b52": [
+    1,
+    10
+   ],
+   "987f74dd-2308-4b6b-a5b8-4918e3a73d95": [
+    1,
+    10
+   ]
+  },
+  "securities": 2,
+  "transactions": 0,
+  "version": 65
+ },
+ "currency_sample.xml": {
+  "accounts": 2,
+  "balances": {
+   "7ba2f169-977e-4694-891f-6c9b4f593d86": 42240,
+   "ea1818a5-4917-45e7-ab64-5a7ff65695ca": 100000
+  },
+  "depots": 2,
+  "exchangeRateSecurities": 0,
+  "ledger": [
+   "buy|2015-01-01||45460|EUR|500000000|0|0|55190 USD|Apple|",
+   "buy|2015-01-01||57190|USD|500000000|1000|1000||Apple|",
+   "buy|2015-01-01||71880|EUR|1000000000|1000|1000||BASF|",
+   "buy|2015-01-01||84841|USD|1000000000|0|0|69880 EUR|BASF|",
+   "buy|2015-08-03||57760|USD|500000000|0|0||Apple|",
+   "deposit|2015-01-01||100000|EUR|0|0|0|||",
+   "deposit|2015-01-01||100000|USD|0|0|0|||",
+   "deposit|2015-01-01||45460|EUR|0|0|0|||",
+   "deposit|2015-01-01||57190|USD|0|0|0|||",
+   "deposit|2015-01-01||71880|EUR|0|0|0|||",
+   "deposit|2015-01-01||84841|USD|0|0|0|||"
+  ],
+  "positions": {
+   "345b1fd2-e095-4082-b8e0-4d80619763b4|053c7c76-6aeb-46fa-acfe-a4e0ea8a2dc8": 1000000000,
+   "345b1fd2-e095-4082-b8e0-4d80619763b4|d7aa722d-5242-4270-8fec-a79c7a44008b": 1000000000,
+   "759c7ed2-4752-40ed-865d-4cb9c68ca3f1|053c7c76-6aeb-46fa-acfe-a4e0ea8a2dc8": 1000000000,
+   "759c7ed2-4752-40ed-865d-4cb9c68ca3f1|d7aa722d-5242-4270-8fec-a79c7a44008b": 500000000
+  },
+  "prices": {
+   "053c7c76-6aeb-46fa-acfe-a4e0ea8a2dc8": [
+    1328,
+    8447356000000
+   ],
+   "d7aa722d-5242-4270-8fec-a79c7a44008b": [
+    1409,
+    10205554000000
+   ]
+  },
+  "securities": 2,
+  "transactions": 11,
+  "version": 29
+ },
+ "kommer.xml": {
+  "accounts": 4,
+  "balances": {
+   "789294db-0aa4-4673-9d91-ad083c9d6916": 32400,
+   "db94317b-26ed-4a8b-bf6c-2f535a217138": 200000,
+   "e068fb14-2554-427e-b2d0-30dcc6e15717": 59387,
+   "ea9414e0-1787-46c0-92b3-8e2370eb892e": 50000
+  },
+  "depots": 2,
+  "exchangeRateSecurities": 0,
+  "ledger": [
+   "buy|2019-01-07||133025|EUR|6100000000|990|0||iShares Core MSCI Europe UCITS ETF EUR (Dist)|",
+   "buy|2019-01-07||163528|EUR|3900000000|0|995||iShares MSCI North America UCITS ETF|",
+   "buy|2019-01-07||212272|EUR|6400000000|0|995||iShares MSCI EM UCITS ETF (Dist)|",
+   "buy|2019-01-07||294683|EUR|2400000000|995|0||iShares Core Euro Government Bond UCITS ETF (Dist)|",
+   "buy|2019-01-07||48640|EUR|1000000000|495|0||Lyxor MSCI Pacific UCITS ETF|",
+   "buy|2019-01-08||140843|EUR|33100000000|0|995||iShares Diversified Commodity Swap UCITS ETF|",
+   "buy|2021-11-01||87580|EUR|1000000000|600|0||Mercedes Benz Group AG (former Daimler)|",
+   "buy|2022-04-27||267600|USD|2000000000|600|0||Amazon.com Inc.|",
+   "buy|2022-10-01||26240|EUR|200000000|600|0||NVIDIA Corp.|",
+   "deliveryIn|2020-01-25||10000|EUR|1282400|0|0||Bitcoin|",
+   "deliveryIn|2020-01-25||1000|EUR|130100|0|0||Bitcoin|",
+   "deliveryIn|2021-02-16||19562|EUR|478631|0|0||Bitcoin|",
+   "deliveryIn|2022-06-13||4762|EUR|180296|0|0||Bitcoin|",
+   "deliveryOut|2020-11-21||10000|EUR|636567|0|0||Bitcoin|",
+   "deliveryOut|2021-01-11||19562|EUR|775933|0|0||Bitcoin|",
+   "deliveryOut|2021-09-20||17510|EUR|478631|0|0||Bitcoin|",
+   "deposit|2019-01-01||1000000|EUR|0|0|0|||",
+   "deposit|2019-04-01||50000|EUR|0|0|0|||",
+   "deposit|2021-10-01||100000|EUR|0|0|0|||",
+   "deposit|2022-03-03||200000|GBP|0|0|0|||",
+   "deposit|2022-03-03||300000|USD|0|0|0|||",
+   "dividend|2019-03-11||384|EUR|6400000000|0|128||iShares MSCI EM UCITS ETF (Dist)|",
+   "dividend|2019-03-12||498|EUR|3900000000|0|165||iShares MSCI North America UCITS ETF|",
+   "dividend|2019-05-14||1327|EUR|6100000000|0|442||iShares Core MSCI Europe UCITS ETF EUR (Dist)|",
+   "dividend|2019-06-11||792|EUR|2400000000|0|264||iShares Core Euro Government Bond UCITS ETF (Dist)|",
+   "dividend|2019-06-12||468|EUR|3900000000|0|156||iShares MSCI North America UCITS ETF|",
+   "dividend|2019-06-13||672|EUR|6400000000|0|224||iShares MSCI EM UCITS ETF (Dist)|",
+   "dividend|2019-08-05||1281|EUR|6100000000|0|427||iShares Core MSCI Europe UCITS ETF EUR (Dist)|",
+   "dividend|2019-08-12||870|EUR|1000000000|0|290||Lyxor MSCI Pacific UCITS ETF|",
+   "dividend|2019-09-12||498|EUR|3900000000|0|165||iShares MSCI North America UCITS ETF|",
+   "dividend|2019-09-27||1824|EUR|6400000000|0|608||iShares MSCI EM UCITS ETF (Dist)|",
+   "dividend|2019-11-14||595|EUR|6100000000|0|198||iShares Core MSCI Europe UCITS ETF EUR (Dist)|",
+   "dividend|2019-12-16||336|EUR|6400000000|0|112||iShares MSCI EM UCITS ETF (Dist)|",
+   "dividend|2019-12-18||498|EUR|3900000000|0|165||iShares MSCI North America UCITS ETF|",
+   "dividend|2020-01-09||684|EUR|2400000000|0|228||iShares Core Euro Government Bond UCITS ETF (Dist)|",
+   "dividend|2020-02-20||320|EUR|6100000000|0|107||iShares Core MSCI Europe UCITS ETF EUR (Dist)|",
+   "dividend|2020-03-04||384|EUR|6400000000|0|128||iShares MSCI EM UCITS ETF (Dist)|",
+   "dividend|2020-03-16||527|EUR|3900000000|0|175||iShares MSCI North America UCITS ETF|",
+   "dividend|2020-05-12||869|EUR|6100000000|0|290||iShares Core MSCI Europe UCITS ETF EUR (Dist)|",
+   "dividend|2020-06-10||450|EUR|2400000000|0|150||iShares Core Euro Government Bond UCITS ETF (Dist)|",
+   "dividend|2020-06-11||498|EUR|3900000000|0|165||iShares MSCI North America UCITS ETF|",
+   "dividend|2020-06-18||672|EUR|6400000000|0|224||iShares MSCI EM UCITS ETF (Dist)|",
+   "dividend|2020-08-10||750|EUR|1000000000|0|250||Lyxor MSCI Pacific UCITS ETF|",
+   "dividend|2020-08-24||732|EUR|6100000000|0|244||iShares Core MSCI Europe UCITS ETF EUR (Dist)|",
+   "dividend|2020-09-16||410|EUR|3900000000|0|136||iShares MSCI North America UCITS ETF|",
+   "dividend|2020-09-17||1536|EUR|6400000000|0|512||iShares MSCI EM UCITS ETF (Dist)|",
+   "dividend|2020-11-25||366|EUR|6100000000|0|122||iShares Core MSCI Europe UCITS ETF EUR (Dist)|",
+   "dividend|2020-12-07||432|EUR|6400000000|0|144||iShares MSCI EM UCITS ETF (Dist)|",
+   "dividend|2020-12-16||410|EUR|3900000000|0|136||iShares MSCI North America UCITS ETF|",
+   "dividend|2021-01-27||324|EUR|2400000000|0|108||iShares Core Euro Government Bond UCITS ETF (Dist)|",
+   "dividend|2021-03-24||410|EUR|3900000000|0|137||iShares MSCI North America UCITS ETF|",
+   "dividend|2021-03-24||624|EUR|6400000000|0|208||iShares MSCI EM UCITS ETF (Dist)|",
+   "dividend|2021-05-26||1235|EUR|6100000000|0|412||iShares Core MSCI Europe UCITS ETF EUR (Dist)|",
+   "dividend|2021-06-30||410|EUR|3900000000|0|137||iShares MSCI North America UCITS ETF|",
+   "dividend|2021-06-30||960|EUR|6400000000|0|320||iShares MSCI EM UCITS ETF (Dist)|",
+   "dividend|2021-07-28||234|EUR|2400000000|0|78||iShares Core Euro Government Bond UCITS ETF (Dist)|",
+   "dividend|2021-08-25||915|EUR|6100000000|0|305||iShares Core MSCI Europe UCITS ETF EUR (Dist)|",
+   "dividend|2021-09-29||1632|EUR|6400000000|0|544||iShares MSCI EM UCITS ETF (Dist)|",
+   "dividend|2021-09-29||439|EUR|3900000000|0|146||iShares MSCI North America UCITS ETF|",
+   "dividend|2021-11-24||686|EUR|6100000000|0|229||iShares Core MSCI Europe UCITS ETF EUR (Dist)|",
+   "dividend|2021-12-31||439|EUR|3900000000|0|146||iShares MSCI North America UCITS ETF|",
+   "dividend|2021-12-31||768|EUR|6400000000|0|256||iShares MSCI EM UCITS ETF (Dist)|",
+   "dividend|2022-01-26||234|EUR|2400000000|0|78||iShares Core Euro Government Bond UCITS ETF (Dist)|",
+   "dividend|2022-02-24||320|EUR|6100000000|0|107||iShares Core MSCI Europe UCITS ETF EUR (Dist)|",
+   "dividend|2022-03-30||468|EUR|3900000000|0|156||iShares MSCI North America UCITS ETF|",
+   "dividend|2022-03-30||624|EUR|6400000000|0|208||iShares MSCI EM UCITS ETF (Dist)|",
+   "dividend|2022-05-02||3750|EUR|1000000000|0|1250||Mercedes Benz Group AG (former Daimler)|",
+   "dividend|2022-05-25||1418|EUR|6100000000|0|473||iShares Core MSCI Europe UCITS ETF EUR (Dist)|",
+   "dividend|2022-06-29||1248|EUR|6400000000|0|416||iShares MSCI EM UCITS ETF (Dist)|",
+   "dividend|2022-06-29||556|EUR|3900000000|0|185||iShares MSCI North America UCITS ETF|",
+   "dividend|2022-07-27||306|EUR|2400000000|0|102||iShares Core Euro Government Bond UCITS ETF (Dist)|",
+   "dividend|2022-08-24||1281|EUR|6100000000|0|427||iShares Core MSCI Europe UCITS ETF EUR (Dist)|",
+   "dividend|2022-09-28||2400|EUR|6400000000|0|800||iShares MSCI EM UCITS ETF (Dist)|",
+   "dividend|2022-09-28||673|EUR|3900000000|0|224||iShares MSCI North America UCITS ETF|",
+   "dividend|2022-11-30||549|EUR|6100000000|0|183||iShares Core MSCI Europe UCITS ETF EUR (Dist)|",
+   "dividend|2022-11-30||6|EUR|200000000|0|2||NVIDIA Corp.|",
+   "dividend|2022-12-30||585|EUR|3900000000|0|195||iShares MSCI North America UCITS ETF|",
+   "dividend|2022-12-30||624|EUR|6400000000|0|208||iShares MSCI EM UCITS ETF (Dist)|",
+   "dividend|2023-01-25||738|EUR|2400000000|0|246||iShares Core Euro Government Bond UCITS ETF (Dist)|",
+   "dividend|2023-02-28||412|EUR|6100000000|0|137||iShares Core MSCI Europe UCITS ETF EUR (Dist)|",
+   "dividend|2023-03-07||6|EUR|200000000|0|2||NVIDIA Corp.|",
+   "dividend|2023-03-29||480|EUR|6400000000|0|160||iShares MSCI EM UCITS ETF (Dist)|",
+   "dividend|2023-03-29||527|EUR|3900000000|0|176||iShares MSCI North America UCITS ETF|",
+   "dividend|2023-05-04||3900|EUR|1000000000|0|1300||Mercedes Benz Group AG (former Daimler)|",
+   "dividend|2023-05-30||1556|EUR|6100000000|0|519||iShares Core MSCI Europe UCITS ETF EUR (Dist)|",
+   "dividend|2023-06-07||6|EUR|200000000|0|2||NVIDIA Corp.|",
+   "dividend|2023-06-28||1056|EUR|6400000000|0|352||iShares MSCI EM UCITS ETF (Dist)|",
+   "dividend|2023-06-28||585|EUR|3900000000|0|195||iShares MSCI North America UCITS ETF|",
+   "dividend|2023-07-26||1242|EUR|2400000000|0|414||iShares Core Euro Government Bond UCITS ETF (Dist)|",
+   "dividend|2023-08-31||1418|EUR|6100000000|0|473||iShares Core MSCI Europe UCITS ETF EUR (Dist)|",
+   "dividend|2023-09-06||6|EUR|200000000|0|2||NVIDIA Corp.|",
+   "dividend|2023-09-27||1920|EUR|6400000000|0|640||iShares MSCI EM UCITS ETF (Dist)|",
+   "dividend|2023-09-27||585|EUR|3900000000|0|195||iShares MSCI North America UCITS ETF|",
+   "dividend|2023-11-29||549|EUR|6100000000|0|183||iShares Core MSCI Europe UCITS ETF EUR (Dist)|",
+   "dividend|2023-12-05||6|EUR|200000000|0|2||NVIDIA Corp.|",
+   "dividend|2023-12-14||795|EUR|1000000000|0|265||Lyxor MSCI Pacific UCITS ETF|",
+   "dividend|2023-12-29||576|EUR|6400000000|0|192||iShares MSCI EM UCITS ETF (Dist)|",
+   "dividend|2023-12-29||585|EUR|3900000000|0|195||iShares MSCI North America UCITS ETF|",
+   "dividend|2024-01-24||1656|EUR|2400000000|0|552||iShares Core Euro Government Bond UCITS ETF (Dist)|",
+   "dividend|2024-02-28||412|EUR|6100000000|0|137||iShares Core MSCI Europe UCITS ETF EUR (Dist)|",
+   "dividend|2024-03-05||6|EUR|200000000|0|2||NVIDIA Corp.|",
+   "dividend|2024-05-09||3975|EUR|1000000000|0|1325||Mercedes Benz Group AG (former Daimler)|"
+  ],
+  "positions": {
+   "57ede399-7ef8-4696-a874-1f425e25d1f5|4fcafd74-6fe9-4699-8fe7-8ec44136392e": 180296,
+   "dc6fac85-6c6e-47f1-a968-2b5b84d90997|15b10f6f-15a9-4129-83cb-a99dc43d9fa7": 1000000000,
+   "dc6fac85-6c6e-47f1-a968-2b5b84d90997|22100879-5a9f-4873-a376-8383ed635627": 200000000,
+   "dc6fac85-6c6e-47f1-a968-2b5b84d90997|3cfa101b-0558-4ec4-a9e5-baab4eeddb2a": 2000000000,
+   "dc6fac85-6c6e-47f1-a968-2b5b84d90997|47094920-535c-4508-9a92-80c01933f567": 6400000000,
+   "dc6fac85-6c6e-47f1-a968-2b5b84d90997|97000a3b-0a3d-4779-ad6c-1234bfea5e72": 33100000000,
+   "dc6fac85-6c6e-47f1-a968-2b5b84d90997|99b9419f-8c70-422e-8e8e-05eadb4507ec": 2400000000,
+   "dc6fac85-6c6e-47f1-a968-2b5b84d90997|c770a389-0a84-442c-ad85-2a58c3066924": 6100000000,
+   "dc6fac85-6c6e-47f1-a968-2b5b84d90997|daab10fd-c3fb-4430-a368-0ce0cdf551c8": 3900000000,
+   "dc6fac85-6c6e-47f1-a968-2b5b84d90997|ff0a2b77-9749-45b0-8333-cb1d9787812c": 1000000000
+  },
+  "prices": {
+   "15b10f6f-15a9-4129-83cb-a99dc43d9fa7": [
+    2,
+    13697000000
+   ],
+   "22100879-5a9f-4873-a376-8383ed635627": [
+    1,
+    21760000000
+   ],
+   "381e03f2-f019-4686-bac5-2444576e2df2": [
+    2,
+    5592197976563
+   ],
+   "3cfa101b-0558-4ec4-a9e5-baab4eeddb2a": [
+    1,
+    6950000000
+   ],
+   "47094920-535c-4508-9a92-80c01933f567": [
+    1,
+    3264200000
+   ],
+   "4fcafd74-6fe9-4699-8fe7-8ec44136392e": [
+    1,
+    10318620000
+   ],
+   "5638b182-da36-49ee-94c1-5f059cc0129a": [
+    1,
+    3229000000
+   ],
+   "66e58ab5-ad42-4588-b512-9d144b8aea4a": [
+    0,
+    0
+   ],
+   "79ea3186-48d7-4be2-9ccc-494af9c7eca7": [
+    2,
+    2020887600000
+   ],
+   "97000a3b-0a3d-4779-ad6c-1234bfea5e72": [
+    1,
+    422500000
+   ],
+   "99b9419f-8c70-422e-8e8e-05eadb4507ec": [
+    1,
+    12265500000
+   ],
+   "c770a389-0a84-442c-ad85-2a58c3066924": [
+    1,
+    2106000000
+   ],
+   "daab10fd-c3fb-4430-a368-0ce0cdf551c8": [
+    1,
+    4081500000
+   ],
+   "f52d3250-9a9f-4fd5-b4e4-5bcf705e0a15": [
+    2,
+    2692092000000
+   ],
+   "ff0a2b77-9749-45b0-8333-cb1d9787812c": [
+    1,
+    4696000000
+   ]
+  },
+  "securities": 15,
+  "transactions": 102,
+  "version": 60
+ },
+ "security_tax_and_fee_account_transactions.xml": {
+  "accounts": 1,
+  "balances": {
+   "020ce088-8704-417b-aab1-932abaf8f727": 844200
+  },
+  "depots": 1,
+  "exchangeRateSecurities": 0,
+  "ledger": [
+   "buy|2017-01-02||153300|EUR|1000000000|1000|1000||Adidas AG|",
+   "deposit|2016-12-31||1000000|EUR|0|0|0|||",
+   "feeRefund|2017-01-10||500|EUR|0|0|0||Adidas AG|",
+   "fee|2017-01-09||1000|EUR|0|0|0||Adidas AG|",
+   "taxRefund|2017-01-12||500|EUR|0|0|0||Adidas AG|",
+   "tax|2017-01-11||2500|EUR|0|0|0||Adidas AG|"
+  ],
+  "positions": {
+   "d1d55231-a8e9-4500-8298-e55555b50685|776e1108-2d06-4e37-9d87-2b6e03a0eff4": 1000000000
+  },
+  "prices": {
+   "776e1108-2d06-4e37-9d87-2b6e03a0eff4": [
+    23,
+    343140000000
+   ],
+   "936a64f3-ef4d-4c97-bf4e-6a6f8c8eb623": [
+    23,
+    192767000000
+   ]
+  },
+  "securities": 2,
+  "transactions": 6,
+  "version": 35
+ },
+ "trade_test_case.xml": {
+  "accounts": 4,
+  "balances": {
+   "05495daf-e7d0-44ee-b127-ce4c99f97b4c": 32272,
+   "2c5ed412-cfc8-4f72-ada0-b67bddcf9cc0": 68684,
+   "7551bc47-a2df-483d-a319-a1673a95cd38": 42352,
+   "d18cef06-ebb6-4e14-8cad-fe7410d2e6b6": -73710
+  },
+  "depots": 2,
+  "exchangeRateSecurities": 0,
+  "ledger": [
+   "buy|2012-01-01||101980|EUR|7480000000|1000|0||Commerzbank AG|",
+   "buy|2012-01-01||381358|EUR|3300000000|1000|2000||Linde AG|",
+   "buy|2012-01-02||239760|EUR|4700000000|1000|0||Adidas AG|",
+   "buy|2012-01-02||664030|EUR|9000000000|1000|0||Allianz SE|",
+   "buy|2012-01-12||91450|EUR|1000000000|0|0||MAN SE|",
+   "buy|2012-01-16||47648|USD|100000000|1000|1000||Apple Inc.|",
+   "buy|2012-01-18||39135|EUR|100000000|1779|1779|45648 USD|Apple Inc.|",
+   "buy|2012-01-28||198526|EUR|1700000000|0|0||Linde AG|",
+   "cashTransfer|2012-01-17||10000|USD|0|0|0|||7819 EUR",
+   "cashTransfer|2012-01-25||10000|EUR|0|0|0|||",
+   "deliveryOut|2012-01-13||160500|EUR|1000000000|1000|1000||Allianz SE|",
+   "deposit|2011-12-31||100000|EUR|0|0|0|||",
+   "deposit|2011-12-31||100000|USD|0|0|0|||",
+   "deposit|2011-12-31||1500000|EUR|0|0|0|||",
+   "dividend|2012-01-10||1650|EUR|3300000000|0|0||Linde AG|",
+   "dividend|2012-01-10||1944|EUR|4700000000|0|500||Adidas AG|",
+   "feeRefund|2012-01-22||2000|EUR|0|0|0|||",
+   "fee|2012-01-21||1000|EUR|0|0|0|||",
+   "interestCharge|2012-01-23||1000|EUR|0|0|0|||",
+   "interest|2012-01-20||2000|EUR|0|0|0|||",
+   "securityTransfer|2012-01-11||666000|EUR|9000000000|0|0||Allianz SE|",
+   "securityTransfer|2019-01-28||478160|EUR|4000000000|0|0||Linde AG|",
+   "sell|2012-01-10||68836|EUR|7480000000|1000|1000||Commerzbank AG|",
+   "sell|2012-01-20||39020|EUR|500000000|0|0||MAN SE|",
+   "sell|2012-01-21||31216|EUR|400000000|0|0||MAN SE|",
+   "taxRefund|2012-01-26||1000|EUR|0|0|0|||",
+   "taxRefund|2012-01-27||1000|EUR|0|0|0||Linde AG|",
+   "tax|2012-01-28||1000|EUR|0|0|0|||",
+   "withdrawal|2012-01-24||10000|EUR|0|0|0|||"
+  ],
+  "positions": {
+   "639cbf96-1002-483b-9d02-99555b83c9b4|07c00f1e-101b-46b2-8587-93b137a4119b": 8000000000,
+   "639cbf96-1002-483b-9d02-99555b83c9b4|3765c42a-e243-4444-a113-f4fba5b79e21": 4000000000,
+   "639cbf96-1002-483b-9d02-99555b83c9b4|bb5c7307-f0ec-43e4-a8f0-1f2327355d8c": 200000000,
+   "639cbf96-1002-483b-9d02-99555b83c9b4|fdec0fea-ebf5-40b5-88e9-783005c8e85c": 100000000,
+   "c8676f98-3337-4c64-a6c2-0974788790bb|3765c42a-e243-4444-a113-f4fba5b79e21": 1000000000,
+   "c8676f98-3337-4c64-a6c2-0974788790bb|b23ec5dd-c899-4f45-90f9-bfd83ed971ad": 4700000000
+  },
+  "prices": {
+   "07c00f1e-101b-46b2-8587-93b137a4119b": [
+    23,
+    176262000000
+   ],
+   "3765c42a-e243-4444-a113-f4fba5b79e21": [
+    23,
+    269180000000
+   ],
+   "6d90d476-112b-4bec-b345-53db714d7c4b": [
+    23,
+    35010000000
+   ],
+   "704f5f3e-dd03-4a56-9fdf-84626c4503ca": [
+    22,
+    13794626000000
+   ],
+   "b23ec5dd-c899-4f45-90f9-bfd83ed971ad": [
+    23,
+    122393000000
+   ],
+   "bb5c7307-f0ec-43e4-a8f0-1f2327355d8c": [
+    21,
+    897655900000
+   ],
+   "dc22bc1a-0cdb-4ee9-aeda-e3509d21bea5": [
+    23,
+    129230000000
+   ],
+   "fdec0fea-ebf5-40b5-88e9-783005c8e85c": [
+    23,
+    173250000000
+   ]
+  },
+  "securities": 8,
+  "transactions": 29,
+  "version": 39
+ }
+}

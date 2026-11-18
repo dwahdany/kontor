@@ -1,0 +1,11 @@
+Date,Type,Value,Transaction Currency,Taxes,Shares,ISIN,WKN,Ticker Symbol,Security Name,Note
+2019-01-01,Deposit,"10,000.00",EUR,,,,,,,Initial funding
+2019-08-12,Dividend,8.70,EUR,2.90,10,LU0392495023,ETF114,X014.DE,Lyxor MSCI Pacific UCITS ETF,
+2019-09-01,Interest,1.25,EUR,0.33,,,,,,
+2019-09-02,Interest Charge,-0.80,EUR,,,,,,,
+2019-10-01,Fees,-12.00,EUR,,,,,,,"Custody fee, Q3"
+2019-10-02,Fees Refund,2.00,EUR,,,,,,,
+2019-10-03,Taxes,-55.10,EUR,,,,,,,
+2019-10-04,Tax Refund,5.10,EUR,,,,,,,
+2019-11-01,Removal,-500.00,EUR,,,,,,,
+2019-11-02,Transfer (Outbound),-250.00,EUR,,,,,,,

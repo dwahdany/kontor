@@ -1,0 +1,8 @@
+Depotumsätze;Depot 12345678
+Zeitraum;01.01.2023 - 31.12.2023
+
+Buchungstag;Geschäftsart;Stück;Bezeichnung;ISIN;Kurs;Betrag;Währung;Gebühr
+02.01.2023;Wertpapierkauf;12,5;Müller & Söhne Beteiligungs-AG;DE000MUELL01;80,00;-1.009,90;EUR;9,90
+03.02.2023;Ertragsgutschrift;;Müller & Söhne Beteiligungs-AG;DE000MUELL01;;18,75;EUR;
+04.03.2023;Wertpapierverkauf;-2,5;Müller & Söhne Beteiligungs-AG;DE000MUELL01;90,00;215,10;EUR;9,90
+05.04.2023;Depotübertrag (intern);1;Fonds „Größe“ €;LU0000GROSS1;;;EUR;
