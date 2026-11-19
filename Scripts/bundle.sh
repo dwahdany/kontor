@@ -114,7 +114,14 @@ else
     ENTITLEMENTS="$ROOT/Resources/Kontor-dev.entitlements"
     say "▸ Signing (ad hoc, hardened runtime, no sandbox — development)"
 fi
-codesign --force --sign - --options runtime --entitlements "$ENTITLEMENTS" --timestamp=none "$APP" 2> /dev/null
+# KONTOR_SIGN_IDENTITY (e.g. "Developer ID Application: …") signs for distribution with a secure
+# timestamp, as notarization requires; unset, the bundle is signed ad hoc for local use.
+if [[ -n "${KONTOR_SIGN_IDENTITY:-}" ]]; then
+    say "▸ Re-signing with $KONTOR_SIGN_IDENTITY"
+    codesign --force --sign "$KONTOR_SIGN_IDENTITY" --options runtime --entitlements "$ENTITLEMENTS" --timestamp "$APP"
+else
+    codesign --force --sign - --options runtime --entitlements "$ENTITLEMENTS" --timestamp=none "$APP" 2> /dev/null
+fi
 codesign --verify --strict "$APP"
 
 if [[ "$VERIFY" == 1 ]]; then
