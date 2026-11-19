@@ -140,17 +140,38 @@ public struct TableFooter<Trailing: View>: View {
     private let text: String
     private let trailing: Trailing
 
-    public init(count: Int, noun: String, selected: Int = 0, filteredFrom total: Int? = nil, @ViewBuilder trailing: () -> Trailing) {
-        var parts = ["\(Fmt.integer(count)) \(noun)\(count == 1 ? "" : "s")"]
-        if let total, total != count { parts[0] += " of \(Fmt.integer(total))" }
+    /// - Parameters:
+    ///   - noun: Singular ("transaction"). The plural appends "s" (or turns "…y" into "…ies")
+    ///     unless `plural` is given ("securities", "entries").
+    ///   - leading: Extra text before the count, e.g. the period.
+    public init(
+        count: Int, noun: String, plural: String? = nil, selected: Int = 0, filteredFrom total: Int? = nil,
+        leading: String? = nil, @ViewBuilder trailing: () -> Trailing
+    ) {
+        let many = plural ?? Self.pluralize(noun)
+        var parts = ["\(Fmt.integer(count)) \(count == 1 ? noun : many)"]
+        if let leading, !leading.isEmpty { parts.insert(leading, at: 0) }
+        let countIndex = parts.count - 1
+        if let total, total != count { parts[countIndex] += " of \(Fmt.integer(total))" }
         if selected > 0 { parts.append("\(Fmt.integer(selected)) selected") }
         text = parts.joined(separator: " · ")
         self.trailing = trailing()
     }
 
+    /// "security" → "securities", "trade" → "trades", "class" → "classes".
+    nonisolated static func pluralize(_ noun: String) -> String {
+        let lower = noun.lowercased()
+        if lower.hasSuffix("y"), let before = lower.dropLast().last, !"aeiou".contains(before) {
+            return noun.dropLast() + "ies"
+        }
+        if lower.hasSuffix("s") || lower.hasSuffix("x") || lower.hasSuffix("ch") || lower.hasSuffix("sh") { return noun + "es" }
+        return noun + "s"
+    }
+
     public var body: some View {
         HStack(spacing: DS.Spacing.m) {
             Text(text)
+                .lineLimit(1)
             Spacer(minLength: DS.Spacing.s)
             trailing
         }
@@ -165,7 +186,7 @@ public struct TableFooter<Trailing: View>: View {
 }
 
 extension TableFooter where Trailing == EmptyView {
-    public init(count: Int, noun: String, selected: Int = 0, filteredFrom total: Int? = nil) {
-        self.init(count: count, noun: noun, selected: selected, filteredFrom: total) { EmptyView() }
+    public init(count: Int, noun: String, plural: String? = nil, selected: Int = 0, filteredFrom total: Int? = nil, leading: String? = nil) {
+        self.init(count: count, noun: noun, plural: plural, selected: selected, filteredFrom: total, leading: leading) { EmptyView() }
     }
 }

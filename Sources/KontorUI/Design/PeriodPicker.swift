@@ -1,5 +1,6 @@
 import SwiftUI
 import KontorModel
+import KontorEngine
 
 /// The toolbar control for the global reporting period (`store.period`). The shell already places
 /// one in the window toolbar; use it elsewhere only for screen-local overrides via the binding initialiser.
@@ -23,18 +24,20 @@ public struct PeriodPicker: View {
 
     public var body: some View {
         Menu {
-            Section("Trailing") {
-                ForEach(ReportingPeriod.presets, id: \.self) { period in
+            Section("Recent") {
+                ForEach(ReportingPeriod.presets.filter { $0 != .ytd && $0 != .allTime }, id: \.self) { period in
                     item(period)
                 }
             }
             Section("To Date") {
                 item(.monthToDate)
                 item(.quarterToDate)
+                item(.ytd)
+                item(.allTime)
             }
             Section("Calendar Year") {
                 ForEach(calendarYears, id: \.self) { year in
-                    item(.calendarYear(year))
+                    item(.year(year))
                 }
             }
             Divider()
@@ -47,12 +50,15 @@ public struct PeriodPicker: View {
             }
             .labelStyle(.titleAndIcon)
         }
-        .help("Reporting period: \(selection.title)")
+        .help("Reporting period: \(selection.title) (\(Fmt.interval(store.interval(for: selection))))")
         .accessibilityLabel("Reporting period")
         .accessibilityValue(selection.title)
         .popover(isPresented: $isCustomPresented, arrowEdge: .bottom) {
-            CustomRangeEditor(initial: selection.interval(today: store.today, inception: store.inception)) { range in
-                selection = .custom(from: range.lowerBound, to: range.upperBound)
+            // The editor shows the days the period covers; the engine's `custom(from:)` is the
+            // baseline day before the first of them.
+            let current = store.interval(for: selection)
+            CustomRangeEditor(initial: min(current.firstDay, current.end)...current.end) { range in
+                selection = .custom(from: range.lowerBound.advanced(by: -1), to: range.upperBound)
             }
         }
     }
@@ -87,6 +93,9 @@ private struct CustomRangeEditor: View {
     var body: some View {
         VStack(alignment: .leading, spacing: DS.Spacing.m) {
             Text("Custom Range").font(.headline)
+            Text("First and last day included in the period.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
             Grid(alignment: .leading, horizontalSpacing: DS.Spacing.m, verticalSpacing: DS.Spacing.s) {
                 GridRow {
                     Text("From").foregroundStyle(.secondary)

@@ -92,6 +92,8 @@ private final class PPTransaction: XStreamObject {
     var source: String?
     var units: [PPUnit] = []
     var type: String
+    /// Dividends: the ex-dividend day as PP's `LocalDateTime` ("2024-03-28T00:00").
+    var exDate: String?
     var crossEntry: PPCrossEntry?
 
     init(account type: String, uuid: UUID, date: String, money: Money) {
@@ -245,12 +247,7 @@ private struct PPDocumentBuilder {
         // Exchange rates travel as PP's "exchange rate" pseudo securities.
         for series in file.exchangeRates {
             var security = Security(id: StableID.uuid("kontor-fx|\(series.base)|\(series.quote)"), name: "\(series.base)/\(series.quote)", currency: series.base)
-            var points: [PricePoint] = []
-            points.reserveCapacity(series.days.count)
-            for index in series.days.indices {
-                points.append(PricePoint(day: Day(rawValue: series.days[index]), price: Price(series.rates[index])))
-            }
-            security.prices = PriceSeries(points)
+            security.prices = PriceSeries(days: series.days, values: series.rates.map { Price($0).raw })
             securities.append(PPSecurity(security, targetCurrency: series.quote))
         }
         for account in file.accounts {
@@ -358,7 +355,10 @@ private struct PPDocumentBuilder {
                 case .dividend, .fee, .feeRefund, .tax, .taxRefund: side.security = security
                 default: break
                 }
-                if transaction.kind == .dividend { side.shares = transaction.shares.raw }
+                if transaction.kind == .dividend {
+                    side.shares = transaction.shares.raw
+                    side.exDate = transaction.exDate.map { "\($0.iso)T00:00" }
+                }
                 account.transactions.append(side)
                 transactionByID[transaction.id] = side
             case .cashTransfer:
@@ -418,6 +418,27 @@ private struct PPDocumentBuilder {
                 }
             }
             properties.append((KontorMarker.order, String(decoding: order, as: UTF8.self)))
+            // Dividends, interest, fees and taxes live on the cash account alone in PP: remember
+            // the depot they were booked for.
+            var depots = [UInt8]()
+            func appendHex(_ id: UUID) {
+                withUnsafeBytes(of: id.uuid) { raw in
+                    for byte in raw {
+                        depots.append(digits[Int(byte >> 4)])
+                        depots.append(digits[Int(byte & 0x0F)])
+                    }
+                }
+            }
+            for transaction in file.transactions {
+                guard let depot = transaction.depotID else { continue }
+                switch transaction.kind {
+                case .buy, .sell, .deliveryIn, .deliveryOut, .securityTransfer: continue
+                default: break
+                }
+                appendHex(transaction.id)
+                appendHex(depot)
+            }
+            if !depots.isEmpty { properties.append((KontorMarker.depots, String(decoding: depots, as: UTF8.self))) }
         }
         for (index, watchlist) in file.watchlists.enumerated() {
             properties.append(("\(KontorMarker.idPrefix)watchlist.\(index)", "\(watchlist.id.uuidString)||\(watchlist.name)"))
@@ -656,6 +677,7 @@ private struct PPDocumentBuilder {
             }
             w.leaf("updatedAt", timestamp)
             w.leaf("type", object.type)
+            if let exDate = object.exDate { w.leaf("exDate", exDate) }
         }
     }
 

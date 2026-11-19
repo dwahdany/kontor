@@ -118,6 +118,10 @@ import Testing
     @Test func resolution() {
         #expect(resolve(.ytd) == DayInterval(start: d("2023-12-31"), end: today))
         #expect(resolve(.monthToDate) == DayInterval(start: d("2024-04-30"), end: today))
+        #expect(ReportingPeriod.quarterToDate.interval(today: d("2024-05-20"), firstTransactionDay: nil)
+            == DayInterval(start: d("2024-03-31"), end: d("2024-05-20")))
+        #expect(ReportingPeriod.quarterToDate.interval(today: d("2024-01-01"), firstTransactionDay: nil).start == d("2023-12-31"))
+        #expect(ReportingPeriod.quarterToDate.shortTitle == "QTD" && ReportingPeriod.quarterToDate.title == "Quarter to date")
         #expect(resolve(.lastDays(30)) == DayInterval(start: d("2024-04-15"), end: today))
         #expect(resolve(.lastMonths(3)) == DayInterval(start: d("2024-02-15"), end: today))
         #expect(resolve(.lastYears(1)) == DayInterval(start: d("2023-05-15"), end: today))
@@ -166,7 +170,7 @@ import Testing
         #expect(ReportingPeriod.allTime.title == "All time")
         #expect(ReportingPeriod.custom(from: d("2024-01-01"), to: d("2024-06-30")).title == "2024-01-01 – 2024-06-30")
         #expect(ReportingPeriod.lastMonths(6).shortTitle == "6M" && ReportingPeriod.allTime.shortTitle == "Max")
-        let all: [ReportingPeriod] = ReportingPeriod.presets + [.monthToDate, .lastDays(7), .year(2022), .custom(from: d("2024-01-01"), to: d("2024-06-30"))]
+        let all: [ReportingPeriod] = ReportingPeriod.presets + [.monthToDate, .quarterToDate, .lastDays(7), .year(2022), .custom(from: d("2024-01-01"), to: d("2024-06-30"))]
         let decoded = try JSONDecoder().decode([ReportingPeriod].self, from: JSONEncoder().encode(all))
         #expect(decoded == all)
         let interval = DayInterval(start: d("2024-01-01"), end: d("2024-06-30"))

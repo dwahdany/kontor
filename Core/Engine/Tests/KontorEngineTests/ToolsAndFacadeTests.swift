@@ -31,6 +31,48 @@ import Testing
         #expect(plan.sourceTag == "plan:\(plan.id.uuidString)")
     }
 
+    @Test func skippedDatesAreNeitherDueNorMissing() throws {
+        var f = Fixture()
+        let cash = f.account("Cash"), depot = f.depot("Depot")
+        let etf = f.security("ETF", prices: [("2024-01-10", 50)])
+        f.add(.deposit, "2024-01-02", account: cash, amount: 1_000)
+        var plan = InvestmentPlan(
+            id: f.uuid(), name: "ETF plan", securityID: etf, depotID: depot, accountID: cash, amount: Money(100, "EUR"),
+            start: d("2024-01-31"))
+        // Schedule: Jan 31, Feb 29, Mar 31 (Sunday → Apr 1), Apr 30, May 31.
+        // Skip February by its execution day, March by its nominal day (the Sunday) and a future one.
+        plan.skippedDates = [d("2024-02-29"), d("2024-03-31"), d("2024-05-31"), d("2023-01-01")]
+
+        #expect(plan.dueDates(through: d("2024-05-10")).map(\.iso) == ["2024-01-31", "2024-04-30"])
+        #expect(plan.dueDates(through: d("2024-05-10"), includingSkipped: true).map(\.iso)
+            == ["2024-01-31", "2024-02-29", "2024-04-01", "2024-04-30"])
+        #expect(plan.skippedDueDates(through: d("2024-05-10")).map(\.iso) == ["2024-02-29", "2024-04-01"])
+        #expect(plan.isSkipped(d("2024-02-29")) && plan.isSkipped(d("2024-04-01")) && !plan.isSkipped(d("2024-04-30")))
+        #expect(!plan.isSkipped(d("2024-04-01"), moveToWeekday: false))
+        // The skipped May execution is not "next".
+        #expect(plan.nextDueDate(after: d("2024-05-10")) == d("2024-07-01")) // Jun 30 is a Sunday
+        #expect(plan.nextDueDate(after: d("2024-02-01")) == d("2024-04-30"))
+
+        let ledger = f.ledger
+        let status = ledger.planStatus(plan, through: d("2024-05-10"))
+        #expect(status.dueDates.map(\.iso) == ["2024-01-31", "2024-04-30"])
+        #expect(status.missing.map(\.iso) == ["2024-01-31", "2024-04-30"])
+        #expect(status.skipped.map(\.iso) == ["2024-02-29", "2024-04-01"])
+        #expect(status.nextDue == d("2024-07-01"))
+
+        let proposal = ledger.planTransactions(plan, through: d("2024-05-10"))
+        #expect(proposal.transactions.map(\.date.iso) == ["2024-01-31", "2024-04-30"])
+
+        // Skipping every open date leaves nothing to generate; un-skipping brings them back.
+        plan.skippedDates = status.missing + (plan.skippedDates ?? [])
+        #expect(ledger.planTransactions(plan, through: d("2024-05-10")).transactions.isEmpty)
+        #expect(ledger.planStatus(plan, through: d("2024-05-10")).missing.isEmpty)
+        plan.skippedDates = nil
+        #expect(ledger.planStatus(plan, through: d("2024-05-10")).missing.count == 4)
+        plan.skippedDates = []
+        #expect(ledger.planStatus(plan, through: d("2024-05-10")).skipped.isEmpty)
+    }
+
     @Test func generatesMissingPurchases() throws {
         var f = Fixture()
         let cash = f.account("Cash"), depot = f.depot("Depot")

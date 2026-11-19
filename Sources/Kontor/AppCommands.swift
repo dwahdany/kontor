@@ -17,7 +17,7 @@ struct AppCommands: Commands {
             Button("Import…") { store.map { $0.services.chooseImportFile?($0) } }
                 .keyboardShortcut("i", modifiers: [.command, .shift])
                 .disabled(store == nil)
-            Button("Export…") { store.map { $0.services.export?($0) } }
+            Button("Export…") { store?.present(.export) }
                 .keyboardShortcut("e", modifiers: [.command, .shift])
                 .disabled(store == nil)
         }
@@ -69,9 +69,15 @@ struct AppCommands: Commands {
                 Button("New Depot…") { store?.present(.newDepot) }
                 Button("New Plan…") { store?.present(.newPlan) }
                 Divider()
-                Button("Update Quotes") { store.map { ShellContext.shared.updateQuotes($0) } }
-                    .keyboardShortcut("r", modifiers: .command)
-                    .disabled(store?.activity != nil)
+                if store?.isUpdatingQuotes == true {
+                    Button("Cancel Quote Update") { store?.cancelQuoteUpdate() }
+                        .keyboardShortcut("r", modifiers: .command)
+                } else {
+                    Button("Update Quotes") { store?.updateQuotes() }
+                        .keyboardShortcut("r", modifiers: .command)
+                }
+                Button("Show Last Quote Update…") { store?.isQuoteReportPresented = true }
+                    .disabled(store?.lastQuoteUpdate == nil)
                 Button("Check Consistency") { store?.present(.consistencyReport) }
                     .keyboardShortcut("k", modifiers: [.command, .shift])
                 Divider()
@@ -90,7 +96,7 @@ struct AppCommands: Commands {
 
     /// ⌥⌘1 … ⌥⌘5
     private static let periodShortcuts: [ReportingPeriod] = [
-        .yearToDate, .trailingMonths(12), .trailingMonths(36), .trailingMonths(60), .allTime,
+        .ytd, .lastYears(1), .lastYears(3), .lastYears(5), .allTime,
     ]
 
     @ViewBuilder

@@ -278,21 +278,105 @@ import Testing
         #expect(rows[7].messages == ["\"zehn\" in column \"Value\" is not a number."])
         #expect(rows[8].status == .warning)
         #expect(rows[8].transaction?.amount.minor == 300)
-        // empty type cell: inferred, flagged, new security in the row's currency
-        #expect(rows[9].transaction?.kind == .buy)
-        #expect(rows[9].status == .warning)
-        #expect(rows[9].transaction?.amount.currency == "USD")
-        #expect(proposal.newSecurities.map(\.name) == ["Neue AG"])
-        #expect(rows[9].messages.contains { $0.contains("differs from the account's currency") })
+        // empty type cell: inferred and flagged — but USD on the EUR account without anything to
+        // convert it with is an error, not a silently wrong booking
+        #expect(rows[9].status == .error)
+        #expect(rows[9].transaction == nil)
+        #expect(rows[9].messages.first?.contains("The row is in USD, but its cash account is kept in EUR") == true)
         // negative interest is an interest charge
         #expect(rows[10].transaction?.kind == .interestCharge)
         #expect(rows[11].messages == ["Fees and taxes exceed the value of the transaction."])
-        #expect(rows.filter { $0.status == .error }.count == 6)
+        #expect(rows.filter { $0.status == .error }.count == 7)
         #expect(rows.filter { $0.status == .error }.allSatisfy { $0.transaction == nil && !$0.isImportable && !$0.isRecommended })
         #expect(rows[0].transaction?.securityID == bond.id)
         // errors are never applied, even when explicitly selected
-        #expect(proposal.apply(to: file, selection: .rows(Set(0..<12))).transactions.count == 6)
-        #expect(proposal.apply(to: file).transactions.count == 6)
+        #expect(proposal.apply(to: file, selection: .rows(Set(0..<12))).transactions.count == 5)
+        #expect(proposal.apply(to: file).transactions.count == 5)
+    }
+
+    @Test func foreignCurrencyRowsNeedAConversion() throws {
+        let (file, account, _, bond) = base()
+        let csv = """
+        Date,Type,Shares,Value,Fees,Taxes,Transaction Currency,Gross Amount,Currency Gross Amount,Exchange Rate,ISIN,Note
+        2024-01-02,Buy,10,1100.00,10.00,,USD,,,,IE00B4WXJJ64,no way to convert
+        2024-01-03,Buy,10,1100.00,10.00,,USD,981.00,EUR,,IE00B4WXJJ64,gross columns in the account currency
+        2024-01-04,Dividend,10,85.00,,15.00,USD,,,0.9,IE00B4WXJJ64,exchange rate
+        2024-01-05,Deposit,,500.00,,,USD,,,0.5,,rate on a cash booking
+        2024-01-06,Deposit,,500.00,,,USD,,,0,,useless rate
+        2024-01-07,Buy,10,1000.00,,,EUR,1100.00,USD,0.9091,IE00B4WXJJ64,the ordinary case is untouched
+        """
+        let rows = CSVImporter.propose(CSVDocument(data: Data(csv.utf8)), file: file).rows
+        #expect(rows.map(\.status) == [.error, .warning, .warning, .warning, .error, .ok])
+        #expect(rows[0].transaction == nil && !rows[0].isImportable)
+        #expect(rows[0].messages.first == "The row is in USD, but its cash account is kept in EUR. Add the amount in EUR "
+            + "(Gross Amount with Currency Gross Amount EUR) or an Exchange Rate (USD → EUR), or book it on a USD account.")
+
+        // 1 090 USD gross = 981 EUR → factor 0.9: value 990 EUR, fees 9 EUR, the USD gross is kept.
+        let buy = try #require(rows[1].transaction)
+        #expect(buy.accountID == account.id && buy.securityID == bond.id)
+        #expect(buy.amount == Money(minor: 99_000, currency: "EUR") && buy.fees == 900 && buy.taxes == 0)
+        #expect(buy.securityGross == Money(minor: 109_000, currency: "USD"))
+        #expect(rows[1].messages == ["The value was converted from USD to the account's currency (EUR)."])
+
+        let dividend = try #require(rows[2].transaction)
+        #expect(dividend.amount == Money(minor: 7_650, currency: "EUR") && dividend.taxes == 1_350)
+        #expect(dividend.securityGross == Money(minor: 10_000, currency: "USD"))
+
+        let deposit = try #require(rows[3].transaction)
+        #expect(deposit.amount == Money(minor: 25_000, currency: "EUR") && deposit.securityGross == nil)
+
+        let ordinary = try #require(rows[5].transaction)
+        #expect(ordinary.amount == Money(minor: 100_000, currency: "EUR"))
+        #expect(ordinary.securityGross == Money(minor: 110_000, currency: "USD"))
+        // Every importable row is in its account's currency.
+        #expect(rows.compactMap(\.transaction).allSatisfy { $0.amount.currency == "EUR" })
+    }
+
+    @Test func exportNeutralizesSpreadsheetFormulas() throws {
+        // Text cells that a spreadsheet would evaluate get a leading apostrophe; numbers do not.
+        let table = CSVTable(header: ["=Name", "Value", "Note"], rows: [
+            ["=HYPERLINK(\"http://evil.example\",\"x\")", .minor(-12_345), "+1 for effort"],
+            ["@SUM(A1)", .number(-0.5, fractionDigits: 2), "-5 % rebate"],
+            ["\tTabbed", .integer(-3), "\rCarriage"],
+            ["Plain = fine", .shares(Shares(-1.5)), .day(Day(year: 2024, month: 1, day: 2))],
+            ["", .empty, "'already quoted"],
+        ])
+        let text = CSVExporter.string(table, format: CSVExportFormat(lineEnding: "\n"))
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
+        #expect(lines[0] == "'=Name,Value,Note")
+        #expect(lines[1] == "\"'=HYPERLINK(\"\"http://evil.example\"\",\"\"x\"\")\",-123.45,'+1 for effort")
+        #expect(lines[2] == "'@SUM(A1),-0.50,'-5 % rebate")
+        #expect(lines[3].hasPrefix("'\tTabbed,-3,"))
+        #expect(text.contains("\"'\rCarriage\""))
+        #expect(text.contains("Plain = fine,-1.5,2024-01-02"))
+        #expect(text.contains(",,'already quoted"))
+        #expect(CSVExporter.neutralizingFormulas("") == "" && CSVExporter.neutralizingFormulas("a=b") == "a=b")
+
+        // The ledger export guards names and notes, and the importer reads them back unchanged.
+        var (file, account, depot, _) = base()
+        let evil = Security(name: "=cmd|' /C calc'!A0", currency: "EUR", isin: "DE000EVIL001")
+        file.securities.append(evil)
+        file.transactions = [
+            Transaction(kind: .deposit, date: day("2024-01-02"), accountID: account.id, amount: Money(1_000, "EUR"), note: "+49 30 123456"),
+            Transaction(kind: .buy, date: day("2024-01-03"), accountID: account.id, depotID: depot.id, securityID: evil.id, shares: Shares(2),
+                        amount: Money(200, "EUR"), note: "@home"),
+            Transaction(kind: .withdrawal, date: day("2024-01-04"), accountID: account.id, amount: Money(50, "EUR"), note: "-/-"),
+        ]
+        let csv = CSVExporter.string(CSVExporter.transactions(file), format: CSVExportFormat(lineEnding: "\n"))
+        for line in csv.split(separator: "\n") {
+            for field in line.split(separator: ",", omittingEmptySubsequences: true) {
+                let first = field.first == "\"" ? field.dropFirst().first : field.first
+                if let first, "=+@".contains(first) { Issue.record("unguarded cell \(field)") }
+            }
+        }
+        #expect(csv.contains("'=cmd|' /C calc'!A0") && csv.contains("'+49 30 123456") && csv.contains("'@home") && csv.contains("'-/-"))
+        #expect(csv.contains(",50.00,") && csv.contains(",1000.00,"))
+        var empty = file
+        empty.transactions = []
+        let proposal = CSVImporter.propose(CSVDocument(data: Data(csv.utf8)), file: empty)
+        #expect(proposal.rows.allSatisfy { $0.status == .ok })
+        #expect(proposal.rows.compactMap(\.transaction).map(\.note) == ["+49 30 123456", "@home", "-/-"])
+        #expect(proposal.rows[1].transaction?.securityID == evil.id)
     }
 
     @Test func requiresADateColumn() {
@@ -449,6 +533,7 @@ import Testing
                 var copy = transaction
                 copy.id = UUID(uuidString: "00000000-0000-0000-0000-000000000000")!
                 copy.source = nil
+                copy.exDate = nil // the CSV ledger has no ex-date column
                 return copy
             }
         }

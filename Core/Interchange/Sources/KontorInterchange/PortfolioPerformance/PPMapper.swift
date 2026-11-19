@@ -16,6 +16,8 @@ enum KontorMarker {
     static let targetWeightKey = "kontor.target"
     /// Ids of all transactions in ledger order (32 hex digits each, no separators).
     static let order = "kontor.order"
+    /// Depots of cash-only entries (dividends, fees, taxes …) — PP books those on the account alone.
+    static let depots = "kontor.depots"
 }
 
 /// Converts the object graph of a PP `client` document into a `PortfolioFile`.
@@ -405,8 +407,11 @@ struct PPMapper {
     }
 
     private mutating func readPrices(_ node: NodeID, securityName: String) -> PriceSeries {
-        var points: [PricePoint] = []
-        var ascending = true
+        // Parallel columns, handed to the model's bulk initializer (adopted as-is when ascending,
+        // sorted and de-duplicated — last value per day wins — otherwise).
+        var days: [Int32] = []
+        var values: [Int64] = []
+        var newest: Int32?
         var invalid = 0
         if let list = graph.object(node, n.prices) {
             for child in tree.children(of: list) {
@@ -416,24 +421,24 @@ struct PPMapper {
                     invalid += 1
                     continue
                 }
-                if let last = points.last, last.day >= day { ascending = false }
-                points.append(PricePoint(day: day, price: Price(raw: quote.value)))
+                days.append(day.rawValue)
+                values.append(quote.value)
+                newest = max(newest ?? day.rawValue, day.rawValue)
             }
         }
         // PP keeps the most recent quote separately; fold it in when it extends the history.
         if let latest = graph.object(node, n.latest), let dayBytes = tree.attributeBytes(latest, n.t), let valueBytes = tree.attributeBytes(latest, n.v),
            let day = PPMapper.day(dayBytes), let raw = PPMapper.integer(valueBytes),
            case let quote = PPMapper.scaled(raw, by: priceFactor), !quote.overflow {
-            let newest = ascending ? points.last?.day : points.map(\.day).max()
-            if newest.map({ day > $0 }) ?? true { points.append(PricePoint(day: day, price: Price(raw: quote.value))) }
+            if newest.map({ day.rawValue > $0 }) ?? true {
+                days.append(day.rawValue)
+                values.append(quote.value)
+            }
         }
         if invalid > 0 {
             for _ in 0..<invalid { warnings.add(.invalidValue, "A historical price without a valid date or value was skipped", example: securityName) }
         }
-        guard ascending else { return PriceSeries(points) }
-        var series = PriceSeries()
-        for point in points { series.set(point.price, on: point.day) } // O(1) appends for ascending input
-        return series
+        return PriceSeries(days: days, values: values)
     }
 
     private mutating func mapFeed(_ node: NodeID, security: Security, feedTicker: String, properties: [(name: String, value: String)]) -> QuoteFeed? {
@@ -626,6 +631,8 @@ struct PPMapper {
         var uuid: UUID?
         var day: Day?
         var minute: Int?
+        /// `<exDate>` (dividends).
+        var exDate: Day?
         var currency: String
         var amount: Int64
         var securityNode: NodeID?
@@ -670,8 +677,12 @@ struct PPMapper {
         // Files older than format 29 stored fees and taxes as plain fields.
         if core.fees == 0, let legacy = integer(node, n.fees) { core.fees = abs(money(legacy, at: node)) }
         if core.taxes == 0, let legacy = integer(node, n.taxes) { core.taxes = abs(money(legacy, at: node)) }
-        if text(node, n.exDate) != nil {
-            warnings.add(.skippedExDate, "Ex-dividend dates of dividend transactions are not imported", severity: .info)
+        if let exNode = graph.object(node, n.exDate) {
+            if let parsed = PPMapper.dateTime(tree.textBytes(of: exNode)) {
+                core.exDate = parsed.day
+            } else {
+                warnings.add(.skippedExDate, "An ex-dividend date that is not a valid date was ignored", example: location(node), severity: .info)
+            }
         }
         if !isKontorExport, let source = core.source, !source.isEmpty {
             warnings.add(.skippedDocumentReference, "References to imported documents (PDF file names) are not carried over", severity: .info)
@@ -778,6 +789,13 @@ struct PPMapper {
             shares: Shares(raw: magnitude(primary.shares, primary)), amount: Money(minor: magnitude(amount, primary), currency: currency),
             counterAmount: counterAmount, note: note ?? primary.note, source: isKontorExport ? primary.source : "pp-import"
         )
+        if let exDate = primary.exDate {
+            if kind == .dividend {
+                transaction.exDate = exDate
+            } else {
+                warnings.add(.skippedExDate, "Ex-dividend dates on bookings other than dividends are not imported", example: describe(primary), severity: .info)
+            }
+        }
         if withBreakdown {
             transaction.fees = primary.fees
             transaction.taxes = primary.taxes
@@ -996,6 +1014,26 @@ struct PPMapper {
             while offset + 32 <= hex.count {
                 if let id = PPMapper.uuid(hex: hex[offset..<(offset + 32)]) { rank[id] = rank.count }
                 offset += 32
+            }
+        }
+        // Cash-only entries (dividends, fees, taxes) have no securities account in PP; a Kontor
+        // export records which depot they belong to.
+        if isKontorExport, let recorded = properties[KontorMarker.depots] {
+            let hex = Array(recorded.utf8)
+            var depotByTransaction: [UUID: UUID] = [:]
+            var offset = 0
+            while offset + 64 <= hex.count {
+                if let id = PPMapper.uuid(hex: hex[offset..<(offset + 32)]),
+                   let depot = PPMapper.uuid(hex: hex[(offset + 32)..<(offset + 64)]) {
+                    depotByTransaction[id] = depot
+                }
+                offset += 64
+            }
+            let known = Set(depotIDs.values)
+            for index in transactions.indices where transactions[index].depotID == nil {
+                if let depot = depotByTransaction[transactions[index].id], known.contains(depot) {
+                    transactions[index].depotID = depot
+                }
             }
         }
         let ranks = transactions.map { rank[$0.id] }

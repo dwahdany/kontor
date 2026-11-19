@@ -87,6 +87,9 @@ enum Templates {
             ("allocation", "Allocation", 2, allocation),
             ("earnings", "Dividends & Interest", 2, ["grouping": "year"]),
             ("top-movers", "Top Movers", 2, ["period": "1m"]),
+            ("holdings", "Largest Holdings", 2, [:]),
+            ("recent-transactions", "Recent Transactions", 2, [:]),
+            ("cash", "Cash Balances", 2, [:]),
         ]
         return Dashboard(id: id, name: "Overview", widgets: widgets.map {
             Dashboard.Widget(id: nextID(), kind: $0.kind, title: $0.title, span: $0.span, config: $0.config)

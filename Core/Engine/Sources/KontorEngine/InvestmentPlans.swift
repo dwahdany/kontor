@@ -15,9 +15,13 @@ extension InvestmentPlan {
     /// Mar 31, Apr 30, …). With `moveToWeekday`, dates falling on a Saturday or Sunday move to the
     /// following Monday. The plan stops after `end` (compared against the nominal date). A plan
     /// with a non-positive interval has no due dates.
-    public func dueDates(through day: Day, moveToWeekday: Bool = true) -> [Day] {
+    ///
+    /// Dates the user skipped (`skippedDates`, see ``isSkipped(_:moveToWeekday:)``) are left out
+    /// unless `includingSkipped` is true.
+    public func dueDates(through day: Day, moveToWeekday: Bool = true, includingSkipped: Bool = false) -> [Day] {
         guard intervalMonths > 0 else { return [] }
         let step = min(intervalMonths, Self.maximumIntervalMonths)
+        let skipped = includingSkipped ? [] : Set(skippedDates ?? [])
         var out: [Day] = []
         var k = 0
         while true {
@@ -25,16 +29,42 @@ extension InvestmentPlan {
             if let end, nominal > end { break }
             let due = Self.execution(nominal, moveToWeekday: moveToWeekday)
             if due > day { break }
-            out.append(due)
+            if skipped.isEmpty || !(skipped.contains(due) || skipped.contains(nominal)) { out.append(due) }
             k += 1
         }
         return out
     }
 
-    /// The first execution day after `day`; nil if the plan has ended (or is invalid).
+    /// Scheduled execution days up to and including `day` that the user skipped, ascending.
+    public func skippedDueDates(through day: Day, moveToWeekday: Bool = true) -> [Day] {
+        guard let skippedDates, !skippedDates.isEmpty else { return [] }
+        let kept = Set(dueDates(through: day, moveToWeekday: moveToWeekday))
+        return dueDates(through: day, moveToWeekday: moveToWeekday, includingSkipped: true).filter { !kept.contains($0) }
+    }
+
+    /// Whether the execution falling on `due` was skipped by the user. `skippedDates` may hold the
+    /// execution day (weekends moved to Monday) or the nominal day of the schedule; both count.
+    public func isSkipped(_ due: Day, moveToWeekday: Bool = true) -> Bool {
+        guard let skippedDates, !skippedDates.isEmpty else { return false }
+        if skippedDates.contains(due) { return true }
+        guard moveToWeekday, due.weekday == 1 else { return false }
+        // A Monday execution may stand for a nominal Saturday or Sunday.
+        return skippedDates.contains { ($0 == due.advanced(by: -1) || $0 == due.advanced(by: -2)) && isNominal($0) }
+    }
+
+    private func isNominal(_ day: Day) -> Bool {
+        guard intervalMonths > 0, day >= start else { return false }
+        let step = min(intervalMonths, Self.maximumIntervalMonths)
+        let monthsApart = (day.year - start.year) * 12 + day.month - start.month
+        guard monthsApart % step == 0 else { return false }
+        return start.addingMonths(monthsApart) == day
+    }
+
+    /// The first execution day after `day` that is not skipped; nil if the plan has ended (or is invalid).
     public func nextDueDate(after day: Day, moveToWeekday: Bool = true) -> Day? {
         guard intervalMonths > 0 else { return nil }
         let step = min(intervalMonths, Self.maximumIntervalMonths)
+        let skipped = Set(skippedDates ?? [])
         // Jump close to `day`, then walk forward.
         let monthsApart = (day.year - start.year) * 12 + day.month - start.month
         var k = max(monthsApart / step - 1, 0)
@@ -42,7 +72,7 @@ extension InvestmentPlan {
             let nominal = start.addingMonths(k * step)
             if let end, nominal > end { return nil }
             let due = Self.execution(nominal, moveToWeekday: moveToWeekday)
-            if due > day { return due }
+            if due > day, !(skipped.contains(due) || skipped.contains(nominal)) { return due }
             k += 1
         }
     }
@@ -125,12 +155,15 @@ public struct PlanStatus: Sendable, Hashable, Identifiable {
 
     public var id: UUID { planID }
     public let planID: UUID
-    /// All execution days up to the requested day.
+    /// All execution days up to the requested day, without the skipped ones.
     public let dueDates: [Day]
     /// Due dates for which the ledger contains a transaction of this plan.
     public let executions: [Execution]
     /// Due dates without a transaction, ascending.
     public let missing: [Day]
+    /// Scheduled dates the user skipped (`InvestmentPlan.skippedDates`), ascending. They are neither
+    /// in `dueDates` nor in `missing`, and no transaction is generated for them.
+    public let skipped: [Day]
     /// The first execution day after the requested day; nil once the plan has ended.
     public let nextDue: Day?
     /// A configuration problem that prevents the plan from being executed at all.
@@ -218,6 +251,7 @@ extension Ledger {
         return PlanStatus(
             planID: plan.id, dueDates: due, executions: matched.compactMap { $0 },
             missing: due.indices.filter { matched[$0] == nil }.map { due[$0] },
+            skipped: plan.skippedDueDates(through: day, moveToWeekday: moveToWeekday),
             nextDue: plan.nextDueDate(after: day, moveToWeekday: moveToWeekday),
             problem: configurationProblem(plan))
     }

@@ -50,8 +50,8 @@ public enum Fmt {
     public static func money(minor: Int64, currency: CurrencyCode? = nil, signed: Bool = false) -> String {
         current.money(minor: minor, currency: currency, signed: signed)
     }
-    public static func moneyRounded(_ money: Money, symbol: Bool = true) -> String {
-        current.moneyRounded(money, symbol: symbol)
+    public static func moneyRounded(_ money: Money, symbol: Bool = true, signed: Bool = false) -> String {
+        current.moneyRounded(money, symbol: symbol, signed: signed)
     }
     public static func compactMoney(_ money: Money, symbol: Bool = true) -> String {
         current.compactMoney(money, symbol: symbol)
@@ -66,9 +66,13 @@ public enum Fmt {
         current.number(value, decimals: decimals, signed: signed, grouping: grouping)
     }
     public static func integer(_ value: Int) -> String { current.integer(value) }
-    public static func shares(_ shares: Shares, signed: Bool = false) -> String { current.shares(shares, signed: signed) }
-    public static func price(_ price: Price, currency: CurrencyCode? = nil) -> String {
-        current.price(price, currency: currency)
+    public static func shares(_ shares: Shares, signed: Bool = false, maxDecimals: Int = 8) -> String {
+        current.shares(shares, signed: signed, maxDecimals: maxDecimals)
+    }
+    public static func time(minuteOfDay: Int) -> String { current.time(minuteOfDay: minuteOfDay) }
+    public static func bytes(_ count: Int) -> String { current.bytes(count) }
+    public static func price(_ price: Price, currency: CurrencyCode? = nil, maxDecimals: Int? = nil) -> String {
+        current.price(price, currency: currency, maxDecimals: maxDecimals)
     }
     public static func rate(_ rate: Double) -> String { current.rate(rate) }
     public static func currencySymbol(_ code: CurrencyCode) -> String { current.currencySymbol(code) }

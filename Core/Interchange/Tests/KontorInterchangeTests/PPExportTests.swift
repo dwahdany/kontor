@@ -45,6 +45,7 @@ func makeRichFile() -> PortfolioFile {
     var withdrawal = t(7, .withdrawal, "2024-02-04", 20_000); withdrawal.accountID = giro.id
     var dividend = t(8, .dividend, "2024-03-01", 1_840); dividend.accountID = giro.id; dividend.securityID = globex.id; dividend.shares = Shares(8.12345678)
     dividend.taxes = 460; dividend.fees = 0; dividend.securityGross = Money(minor: 2_500, currency: "USD")
+    dividend.exDate = day("2024-02-27")
     var interest = t(9, .interest, "2024-03-02", 750); interest.accountID = giro.id; interest.taxes = 250
     var charge = t(10, .interestCharge, "2024-03-03", 99); charge.accountID = giro.id
     var fee = t(11, .fee, "2024-03-04", 1_500); fee.accountID = giro.id; fee.securityID = acme.id
@@ -89,6 +90,28 @@ func makeRichFile() -> PortfolioFile {
 
 @Suite struct PPExportTests {
     private let options = PortfolioPerformanceExportOptions(timestamp: Date(timeIntervalSince1970: 1_750_000_000))
+
+    @Test func exDateIsExportedInPortfolioPerformanceFormat() throws {
+        let file = makeRichFile()
+        let export = PortfolioPerformanceExporter.export(file, options: options)
+        let xml = String(decoding: export.data, as: UTF8.self)
+        // PP's AccountTransaction stores a LocalDateTime after the type.
+        #expect(xml.contains("<type>DIVIDENDS</type>"))
+        #expect(xml.components(separatedBy: "<exDate>2024-02-27T00:00</exDate>").count == 2)
+        let imported = try PortfolioPerformanceImporter.read(export.data, name: "x")
+        let dividend = try #require(imported.file.transactions.first { $0.kind == .dividend })
+        #expect(dividend.exDate == day("2024-02-27"))
+        #expect(imported.file.transactions.filter { $0.exDate != nil }.count == 1)
+        #expect(!imported.report.warnings.contains { $0.code == .skippedExDate })
+
+        // An ex-date on a booking that is not a dividend cannot be represented and is reported.
+        let moved = xml.replacingOccurrences(of: "<type>DIVIDENDS</type>\n", with: "<type>INTEREST</type>\n")
+        if moved != xml {
+            let other = try PortfolioPerformanceImporter.read(Data(moved.utf8), name: "x")
+            #expect(other.file.transactions.allSatisfy { $0.exDate == nil })
+            #expect(other.report.warnings.contains { $0.code == .skippedExDate })
+        }
+    }
 
     @Test(arguments: [PortfolioPerformanceExportOptions.ReferenceStyle.xpath, .id])
     func roundTripIsLossless(style: PortfolioPerformanceExportOptions.ReferenceStyle) throws {

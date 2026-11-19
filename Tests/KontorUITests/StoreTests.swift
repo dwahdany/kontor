@@ -159,7 +159,7 @@ private func grouped(_ undo: UndoManager, _ body: () -> Void) {
         #expect(store.file.settings.benchmarkSecurityIDs.isEmpty)
         #expect(store.file.taxonomies[0].root[0].children[0].assignments.isEmpty)
         #expect(store.file.taxonomies[0].root[1].assignments.count == 1)
-        #expect(ConsistencyChecker.check(store.file).isEmpty)
+        #expect(!ConsistencyChecker.check(store.file).contains { $0.severity == .error })
 
         undo.undo()
         #expect(store.file == before)
@@ -173,7 +173,7 @@ private func grouped(_ undo: UndoManager, _ body: () -> Void) {
         #expect(store.file.transactions.isEmpty)
         #expect(store.file.depots[0].referenceAccountID == nil)
         #expect(store.file.taxonomies[0].root[2].assignments.isEmpty)
-        #expect(ConsistencyChecker.check(store.file).isEmpty)
+        #expect(!ConsistencyChecker.check(store.file).contains { $0.severity == .error })
     }
 
     @Test func deletingDepotCascades() {
@@ -282,37 +282,49 @@ private func grouped(_ undo: UndoManager, _ body: () -> Void) {
         let (store, _, _) = makeStore()
         store.show(Toast("Saved", style: .success, duration: 0.05))
         #expect(store.toasts.count == 1)
-        try await Task.sleep(for: .milliseconds(300))
+        // Polls instead of one fixed sleep: the suite also runs at low priority on a busy machine.
+        for _ in 0..<60 where !store.toasts.isEmpty { try await Task.sleep(for: .milliseconds(50)) }
         #expect(store.toasts.isEmpty)
     }
 
     @Test func periodInterval() {
         let (store, _, _) = makeStore()
         store.period = .allTime
-        #expect(store.periodInterval == Day(year: 2024, month: 1, day: 1)...Day(year: 2024, month: 6, day: 1))
+        #expect(store.periodInterval == DayInterval(start: Day(year: 2024, month: 1, day: 1), end: Day(year: 2024, month: 6, day: 1)))
+        #expect(store.interval(for: .ytd) == DayInterval(start: Day(year: 2023, month: 12, day: 31), end: Day(year: 2024, month: 6, day: 1)))
         #expect(store.baseCurrency == "EUR")
     }
 }
 
 @Suite struct Consistency {
-    @Test func detectsStructuralProblems() {
+    @Test func engineIssuesMapToRoutes() {
         let account = Account(name: "USD Cash", currency: "USD")
+        let security = Security(name: "Held, Unquoted", currency: "USD")
+        let depot = Depot(name: "Depot")
         var file = PortfolioFile()
         file.accounts = [account]
+        file.securities = [security]
+        file.depots = [depot]
         let d = Day(year: 2024, month: 1, day: 1)
+        let wrongCurrency = Transaction(kind: .deposit, date: d, accountID: account.id, amount: Money(minor: 100, currency: "EUR"))
         file.transactions = [
-            Transaction(kind: .deposit, date: d, accountID: account.id, amount: Money(minor: 100, currency: "EUR")),
+            wrongCurrency,
+            Transaction(kind: .deposit, date: d, accountID: account.id, amount: Money(minor: 100_000, currency: "USD")),
+            Transaction(kind: .buy, date: d, accountID: account.id, depotID: depot.id, securityID: security.id, shares: Shares(1), amount: Money(minor: 100, currency: "USD")),
             Transaction(kind: .buy, date: d, accountID: account.id, depotID: UUID(), securityID: UUID(), shares: Shares(1), amount: Money(minor: 100, currency: "USD")),
-            Transaction(kind: .cashTransfer, date: d, accountID: account.id, counterAccountID: account.id, amount: Money(minor: 100, currency: "USD")),
-            Transaction(kind: .withdrawal, date: d, amount: Money(minor: -5, currency: "USD")),
         ]
-        let messages = ConsistencyChecker.check(file).map(\.message)
-        #expect(messages.contains { $0.contains("is in EUR but account “USD Cash” is in USD") })
-        #expect(messages.contains { $0.contains("no valid depot") })
-        #expect(messages.contains { $0.contains("no valid security") })
-        #expect(messages.contains { $0.contains("same source and target account") })
-        #expect(messages.contains { $0.contains("negative magnitude") })
-        #expect(messages.contains { $0.contains("no valid cash account") })
+        let issues = ConsistencyChecker.check(file, options: .init(today: Day(year: 2024, month: 6, day: 1)))
+        #expect(issues.first?.severity == .error) // most severe first
+        let mismatch = issues.first { $0.kind == .currencyMismatch }
+        #expect(mismatch?.route == .transaction(wrongCurrency.id))
+        #expect(mismatch?.title == "Currency mismatch")
+        let unquoted = issues.first { $0.kind == .securityWithoutPrices }
+        #expect(unquoted?.route == .security(security.id) && unquoted?.severity == .warning)
+        #expect(issues.contains { $0.kind == .unknownReference })
+        // Every severity has distinct presentation.
+        #expect(Set(ConsistencyIssue.Severity.allCases.map(\.symbol)).count == 3)
+        #expect(ConsistencyIssue.Severity.info.pluralTitle == "Hints")
+        #expect(ConsistencyIssue.Kind.allCases.allSatisfy { !$0.title.isEmpty })
         #expect(ConsistencyChecker.check(PortfolioFile()).isEmpty)
     }
 }

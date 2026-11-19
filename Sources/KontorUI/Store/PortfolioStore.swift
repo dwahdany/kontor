@@ -1,20 +1,22 @@
 import Foundation
 import KontorModel
+import KontorEngine
+import KontorMarketData
 import Observation
 
 /// The single source of truth of one open portfolio window: the document (`file`), derived lookup
 /// caches, the reporting period and all transient UI state (navigation, sheets, toasts, activity).
 ///
-/// Features obtain it from the environment and key their recomputation on `revision`:
+/// Features obtain it from the environment and derive their models through the shared analysis
+/// cache, which recomputes off the main actor whenever `revision`, the scope or the period change:
 ///
 /// ```swift
 /// @Environment(PortfolioStore.self) private var store
+/// @State private var model = Loadable<HoldingsModel>()
 ///
 /// var body: some View {
-///     Content(model: model)
-///         .task(id: Inputs(revision: store.revision, period: store.period)) {
-///             model = await store.whileBusy { await compute(store.file, store.periodInterval) }
-///         }
+///     Content(model: model.value)
+///         .analysisTask($model, id: "holdings.model") { analysis in HoldingsModel(analysis) }
 /// }
 /// ```
 ///
@@ -49,7 +51,37 @@ public final class PortfolioStore {
     public var today: Day
 
     /// The globally selected reporting period (toolbar period picker).
-    public var period: ReportingPeriod = .trailingMonths(12)
+    public var period: ReportingPeriod = .lastYears(1)
+
+    /// The part of the portfolio this window looks at (see `ScopePicker`). Use ``scope`` for the
+    /// engine value.
+    public var scopeSelection: ScopeSelection = .portfolio
+
+    /// Launch-time view state for the headless screenshot mode: `--state key=value` arguments end
+    /// up here (empty in normal use). Screens read it once, when they appear, to open a particular
+    /// tab / sub-view / selection — see ``launchValue(_:)``.
+    public var launchState: [String: String] = [:]
+
+    // MARK: Analysis
+
+    /// The memoizing analysis layer (see ``compute(_:_:)`` and ``analyze(_:scope:interval:variant:_:)``).
+    @ObservationIgnored public let analysisCache = AnalysisCache()
+
+    // MARK: Quote updates
+
+    /// Downloads quotes and exchange rates. Installed by the shell; `nil` disables updates (tests,
+    /// headless screenshot mode — no network there).
+    @ObservationIgnored public var quoteUpdater: QuoteUpdater?
+
+    /// The outcome of the most recent quote update of this window.
+    public internal(set) var lastQuoteUpdate: QuoteUpdateReport?
+
+    /// Whether the shell shows the results popover of the last quote update.
+    public var isQuoteReportPresented = false
+
+    @ObservationIgnored var quoteUpdateTask: Task<QuoteUpdateReport?, Never>?
+    /// True from the start of a quote update until its results are applied.
+    public internal(set) var isUpdatingQuotes = false
 
     // MARK: Transient UI state
 
@@ -79,7 +111,25 @@ public final class PortfolioStore {
     /// The running background job, if any.
     public private(set) var activity: BackgroundActivity?
 
-    private var busyCount = 0
+    private var busyCount = 0 {
+        didSet {
+            guard (oldValue == 0) != (busyCount == 0) else { return }
+            let now = ContinuousClock.now
+            if busyCount > 0 {
+                busySince = now
+            } else if let since = busySince {
+                busyTime += now - since
+                lastIdleAt = now
+                busySince = nil
+            }
+        }
+    }
+    @ObservationIgnored private var busySince: ContinuousClock.Instant?
+
+    /// Total time spent busy (analysis requests, `whileBusy`) so far — for timing diagnostics.
+    @ObservationIgnored public private(set) var busyTime: Duration = .zero
+    /// When the store last went from busy to idle; nil if it has never been busy.
+    @ObservationIgnored public private(set) var lastIdleAt: ContinuousClock.Instant?
 
     // MARK: Caches (rebuilt lazily after each revision)
 
@@ -238,7 +288,24 @@ public final class PortfolioStore {
     public var baseCurrency: CurrencyCode { file.settings.baseCurrency }
 
     /// The selected period resolved against `today` and the first transaction.
-    public var periodInterval: ClosedRange<Day> { period.interval(today: today, inception: inception) }
+    ///
+    /// Engine convention: the value at the **end of `start`** is the baseline, the period covers
+    /// `start + 1 … end` (`interval.firstDay … interval.end`).
+    public var periodInterval: DayInterval { interval(for: period) }
+
+    /// Any reporting period resolved against `today` and the first transaction.
+    public func interval(for period: ReportingPeriod) -> DayInterval {
+        period.interval(today: today, firstTransactionDay: inception)
+    }
+
+    /// A launch-state value (`--state key=value`), or nil.
+    public func launchValue(_ key: String) -> String? { launchState[key] }
+
+    /// A launch-state value converted to a `String`-backed enum, e.g.
+    /// `store.launchValue("tab", as: Tab.self) ?? .overview`.
+    public func launchValue<Value: RawRepresentable>(_ key: String, as type: Value.Type) -> Value? where Value.RawValue == String {
+        launchState[key].flatMap { Value(rawValue: $0) }
+    }
 
     private static func index<E: Identifiable>(_ items: [E]) -> [E.ID: Int] {
         var map = [E.ID: Int](minimumCapacity: items.count)
@@ -300,7 +367,9 @@ public final class PortfolioStore {
         case .depot(let id): exists = depot(id) != nil
         case .transaction(let id): exists = transaction(id) != nil
         case .plan(let id): exists = plan(id) != nil
-        case .taxonomy(let id), .classification(let id, _): exists = file.taxonomies.contains { $0.id == id }
+        case .taxonomy(let id): exists = file.taxonomies.contains { $0.id == id }
+        case .classification(let taxonomy, let id):
+            exists = file.taxonomies.first { $0.id == taxonomy }?.classification(id) != nil
         }
         if !exists { route.focus = nil }
     }
@@ -369,15 +438,16 @@ public final class PortfolioStore {
 
     public func endActivity() { activity = nil }
 
-    /// True while a background activity runs or any feature is inside ``whileBusy(_:)``. The
-    /// screenshot mode waits for this to turn false before capturing.
+    /// True while a background activity runs, an analysis request (``compute(_:_:)``,
+    /// ``analyze(_:scope:interval:variant:_:)``, `analysisTask`) is pending, or any feature is inside
+    /// ``whileBusy(_:)``. The screenshot mode waits for this to turn false before capturing.
     public var isBusy: Bool { busyCount > 0 || activity != nil }
 
     /// Marks the store busy for the duration of `operation` — wrap asynchronous recomputation in it
     /// so loading indicators and the headless screenshot mode know when the screen has settled.
     public func whileBusy<T>(_ operation: () async throws -> T) async rethrows -> T {
-        busyCount += 1
-        defer { busyCount -= 1 }
+        beginBusy()
+        defer { endBusy() }
         return try await operation()
     }
 
@@ -386,19 +456,25 @@ public final class PortfolioStore {
     public func endBusy() { busyCount = max(0, busyCount - 1) }
 
     /// Suspends until `isBusy` has been false for `quietPeriod`, or `timeout` elapsed.
-    public func waitUntilSettled(quietPeriod: Duration = .milliseconds(250), timeout: Duration = .seconds(10)) async {
+    ///
+    /// - Returns: How long it took until the store became idle (not counting the quiet period), or
+    ///   nil if it never settled before the timeout.
+    @discardableResult
+    public func waitUntilSettled(quietPeriod: Duration = .milliseconds(250), timeout: Duration = .seconds(10)) async -> Duration? {
         let clock = ContinuousClock()
-        let deadline = clock.now + timeout
+        let start = clock.now
+        let deadline = start + timeout
         var quietSince: ContinuousClock.Instant? = nil
         while clock.now < deadline {
             if isBusy {
                 quietSince = nil
             } else if let since = quietSince {
-                if clock.now - since >= quietPeriod { return }
+                if clock.now - since >= quietPeriod { return since - start }
             } else {
                 quietSince = clock.now
             }
-            try? await Task.sleep(for: .milliseconds(25))
+            try? await Task.sleep(for: .milliseconds(10))
         }
+        return nil
     }
 }

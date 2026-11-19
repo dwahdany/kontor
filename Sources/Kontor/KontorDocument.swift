@@ -2,6 +2,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 import KontorModel
 import KontorUI
+import KontorSampleData
 
 extension UTType {
     /// `.kontor` — the native JSON document (exported type, declared in Info.plist).
@@ -28,7 +29,9 @@ final class KontorDocument: ReferenceFileDocument {
     @MainActor private(set) lazy var store = PortfolioStore(file: initialFile)
     private let initialFile: PortfolioFile
 
-    init(file: PortfolioFile = PortfolioFile(settings: Settings(baseCurrency: AppPreferences.defaultCurrency))) {
+    /// A new, untitled document starts from the sample-data starter: a cash account, a depot and
+    /// the standard taxonomies, so the first transaction can be recorded right away.
+    init(file: PortfolioFile = SampleData.starterPortfolio(name: "", baseCurrency: AppPreferences.defaultCurrency)) {
         initialFile = file
     }
 

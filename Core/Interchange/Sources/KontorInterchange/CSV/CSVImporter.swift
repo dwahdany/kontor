@@ -301,7 +301,14 @@ private struct ProposalBuilder {
 
     func cell(_ row: [String], _ field: CSVField) -> String {
         guard let column = columnOf[field], column < row.count else { return "" }
-        return row[column]
+        let value = row[column]
+        // The apostrophe `CSVExporter.neutralizingFormulas` (and other careful exporters) put in
+        // front of text that looks like a spreadsheet formula is not part of the value.
+        let scalars = value.unicodeScalars
+        if scalars.first == "'", let second = scalars.dropFirst().first, CSVExporter.isFormulaTrigger(second) {
+            return String(value.dropFirst())
+        }
+        return value
     }
 
     mutating func build() -> ImportProposal {
@@ -640,6 +647,8 @@ private struct ProposalBuilder {
             row.status = .error
             row.messages = [message] + warnings
         }
+        /// Set when the row's currency differs from its account's and the row could be converted.
+        var conversion: (currency: String, fees: Int64, taxes: Int64, original: Money)?
         if kind.requiresAccount {
             let primaryName = swapSides ? counterAccountName : accountName
             // Without an account of its own, a securities account's reference account settles the trade.
@@ -653,7 +662,28 @@ private struct ProposalBuilder {
             case .missing(let message): return fail(message)
             }
             if let existing = transaction.accountID.flatMap({ accountCurrency[$0] }), existing != currency {
-                warnings.append("The row's currency (\(currency)) differs from the account's currency (\(existing)).")
+                // A booking must be in its account's currency. The row can only be used if it says
+                // what it is worth there: either the gross columns carry the amount in the account's
+                // currency, or an exchange rate (row currency → account currency) is given.
+                let rowGross = kind == .buy || kind == .deliveryIn ? amount - abs(feesValue) - abs(taxesValue)
+                    : (kind == .sell || kind == .deliveryOut || kind == .dividend || kind == .interest ? amount + abs(feesValue) + abs(taxesValue) : amount)
+                var factor: Double?
+                if kind != .cashTransfer, let grossValue, grossValue != 0, grossCurrency == existing, rowGross > 0 {
+                    factor = Double(abs(grossValue)) / Double(rowGross)
+                } else if let rate = CSVValueParser.decimal(cell(cells, .exchangeRate), decimalSeparator: decimalSeparator, digits: 8), rate > 0 {
+                    factor = Double(rate) / 100_000_000
+                }
+                guard let factor, factor.isFinite, factor > 0 else {
+                    return fail("The row is in \(currency), but its cash account is kept in \(existing). Add the amount in \(existing) "
+                        + "(Gross Amount with Currency Gross Amount \(existing)) or an Exchange Rate (\(currency) → \(existing)), or book it on a \(currency) account.")
+                }
+                func converted(_ minor: Int64) -> Int64 {
+                    let value = (Double(minor) * factor).rounded()
+                    return value >= Double(ProposalBuilder.amountLimit) ? ProposalBuilder.amountLimit : Int64(value)
+                }
+                transaction.amount = Money(minor: converted(amount), currency: existing)
+                conversion = (existing, converted(abs(feesValue)), converted(abs(taxesValue)), Money(minor: max(rowGross, 0), currency: currency))
+                warnings.append("The value was converted from \(currency) to the account's currency (\(existing)).")
             }
         }
         if kind == .cashTransfer {
@@ -686,10 +716,16 @@ private struct ProposalBuilder {
         // Fee/tax breakdown and foreign-currency gross value.
         switch kind {
         case .buy, .sell, .deliveryIn, .deliveryOut, .dividend, .interest:
-            transaction.fees = abs(feesValue)
-            transaction.taxes = abs(taxesValue)
-            if let grossValue, let grossCurrency, grossCurrency != currency, grossValue != 0 {
-                transaction.securityGross = Money(minor: abs(grossValue), currency: grossCurrency)
+            if let conversion {
+                transaction.fees = conversion.fees
+                transaction.taxes = conversion.taxes
+                if kind != .interest, conversion.original.minor > 0 { transaction.securityGross = conversion.original }
+            } else {
+                transaction.fees = abs(feesValue)
+                transaction.taxes = abs(taxesValue)
+                if let grossValue, let grossCurrency, grossCurrency != currency, grossValue != 0 {
+                    transaction.securityGross = Money(minor: abs(grossValue), currency: grossCurrency)
+                }
             }
             if transaction.grossMinor < 0 {
                 warnings.append("Fees and taxes exceed the value of the transaction.")

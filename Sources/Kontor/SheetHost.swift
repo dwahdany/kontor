@@ -17,6 +17,7 @@ struct SheetHost: View {
             switch request {
             case .portfolioSettings: PortfolioSettingsSheet()
             case .consistencyReport: ConsistencyReportSheet()
+            case .export: BasicExportSheet()
             default: PendingSheet(request: request)
             }
         }
@@ -70,18 +71,23 @@ struct PortfolioSettingsSheet: View {
                     }
                 }
                 Section {
-                    Picker("Cost Method", selection: $settings.costMethod) {
-                        Text("First In, First Out (FIFO)").tag(CostMethod.fifo)
-                        Text("Moving Average").tag(CostMethod.average)
+                    Picker(selection: $settings.costMethod) {
+                        ForEach(CostMethod.allCases, id: \.self) { method in
+                            Text(method.title).tag(method)
+                        }
+                    } label: {
+                        HelpLabel("Cost Method", topic: .costMethod)
                     }
-                    LabeledContent("Risk-Free Rate") {
+                    LabeledContent {
                         PercentField("Risk-Free Rate", fraction: $settings.riskFreeRate)
                             .frame(width: 90)
+                    } label: {
+                        HelpLabel("Risk-Free Rate", topic: .riskFreeRate)
                     }
                 } header: {
                     Text("Calculation")
                 } footer: {
-                    Text("The cost method determines realised gains when selling part of a position. The risk-free rate is used for the Sharpe ratio.")
+                    Text("The cost method determines realized gains when selling part of a position. The risk-free rate is used for the Sharpe ratio.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -113,7 +119,7 @@ struct PortfolioSettingsSheet: View {
                         .fixedSize()
                     }
                 } header: {
-                    Text("Benchmarks")
+                    HelpLabel("Benchmarks", topic: .benchmark)
                 }
             }
             .formStyle(.grouped)
@@ -152,10 +158,42 @@ struct PortfolioSettingsSheet: View {
     }
 }
 
-/// Result of Portfolio ▸ Check Consistency.
+/// The shell's built-in export (used until the Import feature provides the full export sheet):
+/// a readable JSON copy of the portfolio.
+struct BasicExportSheet: View {
+    @Environment(PortfolioStore.self) private var store
+
+    var body: some View {
+        VStack(spacing: DS.Spacing.l) {
+            Image(systemName: "square.and.arrow.up")
+                .font(.system(size: 36, weight: .light))
+                .foregroundStyle(.tertiary)
+            Text("Export").font(.title3.weight(.semibold))
+            Text("Save a readable JSON copy of this portfolio. It contains everything — securities, quotes, accounts and all transactions — and can be opened by Kontor or processed with other tools.")
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Button("Cancel") { store.dismissSheet() }
+                    .keyboardShortcut(.cancelAction)
+                Button("Export as JSON…") {
+                    store.dismissSheet()
+                    ShellContext.exportJSON(store)
+                }
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(DS.Spacing.xxl)
+        .frame(width: 420)
+    }
+}
+
+/// Result of Portfolio ▸ Check Consistency (⇧⌘K): the engine's findings grouped by severity. Each
+/// row leads to the transaction, security or account it is about.
 struct ConsistencyReportSheet: View {
     @Environment(PortfolioStore.self) private var store
-    @State private var issues: [ConsistencyChecker.Issue]?
+    @State private var issues: [ConsistencyIssue]?
+    @State private var filter: ConsistencyIssue.Severity?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -163,74 +201,132 @@ struct ConsistencyReportSheet: View {
                 Image(systemName: summarySymbol)
                     .font(.title)
                     .foregroundStyle(summaryColor)
+                    .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: DS.Spacing.xxs) {
-                    Text("Consistency Check").font(.headline)
-                    Text(summary).foregroundStyle(.secondary)
+                    HStack(spacing: DS.Spacing.xs) {
+                        Text("Consistency Check").font(.headline)
+                        HelpButton(.consistencyCheck)
+                    }
+                    Text(summary).foregroundStyle(.secondary).numeric()
                 }
                 Spacer()
+                if let issues, Set(issues.map(\.severity)).count > 1 {
+                    Picker("Show", selection: $filter) {
+                        Text("All").tag(ConsistencyIssue.Severity?.none)
+                        ForEach(severities(in: issues), id: \.self) { severity in
+                            Text(severity.pluralTitle).tag(ConsistencyIssue.Severity?.some(severity))
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .fixedSize()
+                }
             }
             .padding(DS.Spacing.l)
             Divider()
             Group {
                 if let issues, !issues.isEmpty {
-                    List(issues) { issue in
-                        HStack(alignment: .firstTextBaseline, spacing: DS.Spacing.s) {
-                            Image(systemName: issue.severity == .error ? "xmark.octagon.fill" : "exclamationmark.triangle.fill")
-                                .foregroundStyle(issue.severity == .error ? DS.Colors.red : DS.Colors.warning)
-                                .accessibilityLabel(issue.severity == .error ? "Error" : "Warning")
-                            Text(issue.message)
-                                .textSelection(.enabled)
-                            Spacer(minLength: DS.Spacing.s)
-                            if let route = issue.route {
-                                Button("Show") {
-                                    store.dismissSheet()
-                                    store.navigate(to: route)
-                                }
-                                .buttonStyle(.link)
+                    List {
+                        ForEach(severities(in: issues).filter { filter == nil || filter == $0 }, id: \.self) { severity in
+                            let group = issues.filter { $0.severity == severity }
+                            Section {
+                                ForEach(group) { issue in row(issue) }
+                            } header: {
+                                Text("\(severity.pluralTitle) (\(Fmt.integer(group.count)))")
                             }
                         }
-                        .padding(.vertical, 2)
                     }
                     .listStyle(.inset)
                 } else if issues != nil {
-                    EmptyState("Everything Adds Up", symbol: "checkmark.seal", message: "No dangling references, currency mismatches or invalid bookings were found.")
+                    EmptyState("Everything Adds Up", symbol: "checkmark.seal", message: "No impossible positions, broken references, currency mismatches or stale quotes were found.")
                 } else {
                     ProgressView()
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
-            .frame(height: 300)
+            .frame(height: 380)
             Divider()
             HStack {
-                Spacer()
+                Text("Nothing is changed automatically. “Show” takes you to the entry so you can fix it; every edit can be undone.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: DS.Spacing.l)
                 Button("Done") { store.dismissSheet() }
                     .keyboardShortcut(.defaultAction)
             }
             .padding(DS.Spacing.l)
         }
-        .frame(width: 580)
+        .frame(width: 680)
         .task(id: store.revision) {
-            let file = store.file
-            issues = await store.whileBusy {
-                await Task.detached(priority: .userInitiated) { ConsistencyChecker.check(file) }.value
-            }
+            if let result = try? await store.consistencyIssues() { issues = result }
         }
     }
 
-    private var errorCount: Int { issues?.count { $0.severity == .error } ?? 0 }
+    private func row(_ issue: ConsistencyIssue) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: DS.Spacing.s) {
+            Image(systemName: issue.severity.symbol)
+                .foregroundStyle(issue.severity.color)
+                .accessibilityLabel(issue.severity.title)
+            VStack(alignment: .leading, spacing: DS.Spacing.xxs) {
+                Text(issue.title).font(.body.weight(.medium))
+                Text(issue.message)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+                if let context = context(of: issue) {
+                    Text(context)
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                        .numeric()
+                        .lineLimit(1)
+                }
+            }
+            Spacer(minLength: DS.Spacing.s)
+            if let route = issue.route {
+                Button("Show") {
+                    store.dismissSheet()
+                    store.navigate(to: route)
+                }
+                .buttonStyle(.link)
+                .accessibilityLabel("Show: \(issue.message)")
+            }
+        }
+        .padding(.vertical, DS.Spacing.xs)
+    }
+
+    /// Names of the entities an issue is about, so the row can be understood without leaving the sheet.
+    private func context(of issue: ConsistencyIssue) -> String? {
+        var parts: [String] = []
+        if let name = store.security(issue.securityID)?.name { parts.append(name) }
+        if let name = store.depot(issue.depotID)?.name { parts.append(name) }
+        if let name = store.account(issue.accountID)?.name { parts.append(name) }
+        if let day = issue.day { parts.append(Fmt.day(day, style: .medium)) }
+        if issue.transactionIDs.count > 1 { parts.append("\(issue.transactionIDs.count) transactions") }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    private func severities(in issues: [ConsistencyIssue]) -> [ConsistencyIssue.Severity] {
+        ConsistencyIssue.Severity.allCases.reversed().filter { severity in issues.contains { $0.severity == severity } }
+    }
+
+    private func count(_ severity: ConsistencyIssue.Severity) -> Int { issues?.count { $0.severity == severity } ?? 0 }
+
     private var summary: String {
         guard let issues else { return "Checking…" }
         if issues.isEmpty { return "No problems found." }
-        let warnings = issues.count - errorCount
-        return [errorCount > 0 ? "\(errorCount) error\(errorCount == 1 ? "" : "s")" : nil,
-                warnings > 0 ? "\(warnings) warning\(warnings == 1 ? "" : "s")" : nil].compactMap { $0 }.joined(separator: ", ")
+        func part(_ n: Int, _ noun: String) -> String? { n > 0 ? "\(Fmt.integer(n)) \(noun)\(n == 1 ? "" : "s")" : nil }
+        return [part(count(.error), "error"), part(count(.warning), "warning"), part(count(.info), "hint")].compactMap { $0 }.joined(separator: ", ")
     }
     private var summarySymbol: String {
         guard let issues else { return "hourglass" }
-        return issues.isEmpty ? "checkmark.seal.fill" : errorCount > 0 ? "xmark.octagon.fill" : "exclamationmark.triangle.fill"
+        if issues.isEmpty { return "checkmark.seal.fill" }
+        return (count(.error) > 0 ? ConsistencyIssue.Severity.error : count(.warning) > 0 ? .warning : .info).symbol
     }
     private var summaryColor: Color {
         guard let issues else { return .secondary }
-        return issues.isEmpty ? DS.Colors.green : errorCount > 0 ? DS.Colors.red : DS.Colors.warning
+        if issues.isEmpty { return DS.Colors.green }
+        return (count(.error) > 0 ? ConsistencyIssue.Severity.error : count(.warning) > 0 ? .warning : .info).color
     }
 }

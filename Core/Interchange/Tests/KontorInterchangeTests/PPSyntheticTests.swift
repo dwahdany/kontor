@@ -82,6 +82,7 @@ import Testing
         var dividend = expected("07", .dividend, "2024-04-01", 850)
         dividend.accountID = giro; dividend.securityID = globex; dividend.shares = Shares(5); dividend.taxes = 150
         dividend.securityGross = Money(minor: 1100, currency: "USD")
+        dividend.exDate = Day(year: 2024, month: 3, day: 28)
         #expect(try transaction(.dividend) == dividend)
 
         var interest = expected("08", .interest, "2024-04-02", 300)
@@ -136,7 +137,10 @@ import Testing
         #expect(file.plans[2].intervalMonths == 1)
         #expect(result.report.warnings.contains { $0.code == .skippedPlan && $0.examples == ["Interest plan"] })
         #expect(result.report.warnings.contains { $0.code == .approximatedPlan && $0.severity == .warning })
-        #expect(result.report.warnings.contains { $0.code == .skippedExDate })
+        let dividends = file.transactions.filter { $0.kind == .dividend }
+        #expect(dividends.contains { $0.exDate == Day(year: 2024, month: 3, day: 28) })
+        #expect(file.transactions.allSatisfy { $0.kind == .dividend || $0.exDate == nil })
+        #expect(!result.report.warnings.contains { $0.code == .skippedExDate })
 
         // Taxonomy: children and assignments ordered by rank; weights adding up to 100 % are target weights.
         let taxonomy = try #require(file.taxonomies.first)

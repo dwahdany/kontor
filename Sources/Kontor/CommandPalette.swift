@@ -24,11 +24,11 @@ enum PaletteCommands {
         action("new-account", "New Account", "creditcard", shortcut: "⌃⌘N", keywords: ["cash", "add"]) { store.present(.newAccount) }
         action("new-depot", "New Depot", "briefcase", keywords: ["broker", "custody", "add"]) { store.present(.newDepot) }
         action("new-plan", "New Plan", "calendar.badge.clock", keywords: ["savings plan", "recurring"]) { store.present(.newPlan) }
-        action("update-quotes", "Update Quotes", "arrow.trianglehead.2.clockwise", shortcut: "⌘R", keywords: ["prices", "refresh", "sync"]) { ShellContext.shared.updateQuotes(store) }
+        action("update-quotes", "Update Quotes", "arrow.trianglehead.2.clockwise", shortcut: "⌘R", keywords: ["prices", "refresh", "sync"]) { store.updateQuotes() }
         action("check", "Check Consistency", "checkmark.seal", shortcut: "⇧⌘K", keywords: ["validate", "errors", "problems"]) { store.present(.consistencyReport) }
         action("settings", "Portfolio Settings", "slider.horizontal.3", shortcut: "⌥⌘,", keywords: ["base currency", "benchmark", "cost method"]) { store.present(.portfolioSettings) }
         action("import", "Import…", "square.and.arrow.down", shortcut: "⇧⌘I", keywords: ["csv", "portfolio performance", "xml"]) { store.services.chooseImportFile?(store) }
-        action("export", "Export…", "square.and.arrow.up", shortcut: "⇧⌘E", keywords: ["json", "save copy"]) { store.services.export?(store) }
+        action("export", "Export…", "square.and.arrow.up", shortcut: "⇧⌘E", keywords: ["json", "csv", "save copy"]) { store.present(.export) }
         action("inspector", store.isInspectorPresented ? "Hide Inspector" : "Show Inspector", "sidebar.trailing", shortcut: "⌥⌘I") { store.isInspectorPresented.toggle() }
         for period in ReportingPeriod.presets {
             action("period.\(period.shortTitle)", "Period: \(period.title)", "calendar", keywords: [period.shortTitle, "reporting period", "range"]) { store.period = period }

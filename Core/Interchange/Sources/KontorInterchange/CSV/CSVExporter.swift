@@ -81,11 +81,24 @@ public struct CSVTable: Hashable, Sendable {
 /// let data = CSVExporter.data(table, format: .german)
 /// ```
 public enum CSVExporter {
+    /// Guards against spreadsheet formula injection: a text cell that a spreadsheet would run as a
+    /// formula — one starting with `=`, `+`, `-`, `@`, a tab or a carriage return — gets a leading
+    /// apostrophe, which spreadsheets treat as "this is text" (and do not display). Numbers and
+    /// dates are never touched; `CSVImporter` removes the apostrophe again when reading such a cell.
+    public static func neutralizingFormulas(_ text: String) -> String {
+        guard let first = text.unicodeScalars.first, isFormulaTrigger(first) else { return text }
+        return "'" + text
+    }
+
+    static func isFormulaTrigger(_ scalar: Unicode.Scalar) -> Bool {
+        scalar == "=" || scalar == "+" || scalar == "-" || scalar == "@" || scalar == "\t" || scalar == "\r"
+    }
+
     /// Renders one cell.
     public static func string(_ value: CSVValue, format: CSVExportFormat) -> String {
         switch value {
         case .empty: return ""
-        case .text(let text): return text
+        case .text(let text): return neutralizingFormulas(text)
         case .integer(let value): return String(value)
         case .decimal(let raw, let digits, let minFraction):
             return FixedDecimal.format(raw, digits: min(max(digits, 0), 18), minFraction: min(minFraction, digits), decimalSeparator: format.decimalSeparator)
@@ -114,7 +127,7 @@ public enum CSVExporter {
         output.reserveCapacity((table.rows.count + 1) * max(table.header.count, 1) * 12)
         for (index, title) in table.header.enumerated() {
             if index > 0 { output.append(format.delimiter) }
-            CSVCodec.append(title, to: &output, delimiter: format.delimiter)
+            CSVCodec.append(neutralizingFormulas(title), to: &output, delimiter: format.delimiter)
         }
         output.append(format.lineEnding)
         for row in table.rows {

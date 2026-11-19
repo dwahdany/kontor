@@ -41,10 +41,10 @@ public struct KontorFormatter: Sendable {
     }
 
     /// Whole currency units without decimals (`$1,235`) — for axis labels and dense summaries.
-    public func moneyRounded(_ money: Money, symbol: Bool = true) -> String {
+    public func moneyRounded(_ money: Money, symbol: Bool = true, signed: Bool = false) -> String {
         var out = [UInt8]()
         let rounded = (money.minor.magnitude + 50) / 100
-        appendSign(money.minor < 0 && rounded != 0, positive: false, &out)
+        appendSign(money.minor < 0 && rounded != 0, positive: signed && money.minor > 0 && rounded != 0, &out)
         wrapCurrency(symbol ? money.currency : nil, &out) { out in
             self.appendFixed(rounded, scaleDigits: 0, minFraction: 0, maxFraction: 0, grouping: true, &out)
         }
@@ -104,23 +104,58 @@ public struct KontorFormatter: Sendable {
     }
 
     /// Share counts: up to 8 decimals, trailing zeros trimmed (`12`, `0.5`, `1,234.56789`).
-    public func shares(_ shares: Shares, signed: Bool = false) -> String {
+    ///
+    /// `maxDecimals` rounds for dense table cells (`3.85239567` → `3.8524` with 4); the exact value
+    /// belongs in a tooltip, an inspector or an editor.
+    public func shares(_ shares: Shares, signed: Bool = false, maxDecimals: Int = 8) -> String {
         var out = [UInt8]()
-        appendSign(shares.raw < 0, positive: signed && shares.raw > 0, &out)
-        appendFixed(shares.raw.magnitude, scaleDigits: 8, minFraction: 0, maxFraction: 8, grouping: true, &out)
+        let magnitude = Self.rounded(shares.raw.magnitude, toDecimals: maxDecimals)
+        appendSign(shares.raw < 0 && magnitude != 0, positive: signed && shares.raw > 0, &out)
+        appendFixed(magnitude, scaleDigits: 8, minFraction: 0, maxFraction: max(0, min(maxDecimals, 8)), grouping: true, &out)
         return String(decoding: out, as: UTF8.self)
     }
 
+    /// Rounds a value with 8 implied decimals half-up to `decimals` decimals (still scaled by 10⁸).
+    private static func rounded(_ raw: UInt64, toDecimals decimals: Int) -> UInt64 {
+        let d = max(0, min(decimals, 8))
+        guard d < 8 else { return raw }
+        var step: UInt64 = 1
+        for _ in 0..<(8 - d) { step *= 10 }
+        let (sum, overflow) = raw.addingReportingOverflow(step / 2)
+        return overflow ? raw : sum / step * step
+    }
+
     /// Quotes: at least 2 decimals; up to 4 for prices ≥ 1 and up to 8 below (penny stocks, crypto).
-    public func price(_ price: Price, currency: CurrencyCode? = nil) -> String {
+    ///
+    /// `maxDecimals` caps the fraction digits (never below 2) — for engine-derived values such as a
+    /// dividend per share or an average purchase price in a table cell.
+    public func price(_ price: Price, currency: CurrencyCode? = nil, maxDecimals: Int? = nil) -> String {
         var out = [UInt8]()
-        appendSign(price.raw < 0, positive: false, &out)
-        let magnitude = price.raw.magnitude
-        let maxFraction = magnitude >= UInt64(Scale.price) ? 4 : 8
+        var magnitude = price.raw.magnitude
+        var maxFraction = magnitude >= UInt64(Scale.price) ? 4 : 8
+        if let maxDecimals { maxFraction = min(maxFraction, max(2, maxDecimals)) }
+        magnitude = Self.rounded(magnitude, toDecimals: maxFraction)
+        appendSign(price.raw < 0 && magnitude != 0, positive: false, &out)
         wrapCurrency(currency, &out) { out in
             self.appendFixed(magnitude, scaleDigits: 8, minFraction: 2, maxFraction: maxFraction, grouping: true, &out)
         }
         return String(decoding: out, as: UTF8.self)
+    }
+
+    /// A time of day given as minutes after midnight, 24-hour: `495` → `08:15`.
+    public func time(minuteOfDay: Int) -> String {
+        let m = ((minuteOfDay % 1440) + 1440) % 1440
+        let digits = [m / 60 / 10, m / 60 % 10, m % 60 / 10, m % 60 % 10].map { UInt8(48 + $0) }
+        return String(decoding: [digits[0], digits[1], UInt8(ascii: ":"), digits[2], digits[3]], as: UTF8.self)
+    }
+
+    /// A file size: `850 bytes`, `12.4 KB`, `74.1 MB` (decimal units, as Finder shows them).
+    public func bytes(_ count: Int) -> String {
+        let n = Double(max(0, count))
+        if n < 1000 { return "\(integer(Int(n))) \(Int(n) == 1 ? "byte" : "bytes")" }
+        if n < 1e6 { return "\(number(n / 1e3, decimals: n < 1e4 ? 1 : 0)) KB" }
+        if n < 1e9 { return "\(number(n / 1e6, decimals: 1)) MB" }
+        return "\(number(n / 1e9, decimals: 2)) GB"
     }
 
     /// An exchange rate with 4 decimals.

@@ -301,3 +301,21 @@ extension ReviewAdditionalTests {
         #expect(try PortfolioPerformanceImporter.read(edited).file.transactions.map(\.id) == [earlier, first, third, second].map(\.id))
     }
 }
+
+extension ReviewAdditionalTests {
+    /// Dividends and fees are cash-only entries in Portfolio Performance; a Kontor export still
+    /// brings their depot back.
+    @Test func depotOfCashOnlyEntriesSurvivesPortfolioPerformanceRoundTrip() throws {
+        let account = Account(name: "Giro", currency: "EUR")
+        let depot = Depot(name: "Broker", referenceAccountID: account.id)
+        let security = Security(name: "ACME", currency: "EUR")
+        let dividend = Transaction(kind: .dividend, date: day("2024-03-01"), accountID: account.id, depotID: depot.id,
+                                   securityID: security.id, shares: Shares(10), amount: Money(minor: 1_200, currency: "EUR"))
+        let fee = Transaction(kind: .fee, date: day("2024-03-02"), accountID: account.id, depotID: depot.id,
+                              amount: Money(minor: 500, currency: "EUR"))
+        let file = PortfolioFile(securities: [security], accounts: [account], depots: [depot], transactions: [dividend, fee])
+        let back = try PortfolioPerformanceImporter.read(PortfolioPerformanceExporter.export(file).data).file
+        #expect(back.transactions.map(\.depotID) == [depot.id, depot.id])
+        #expect(back == file)
+    }
+}

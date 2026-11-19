@@ -170,6 +170,7 @@ extension EnvironmentValues {
 /// purpose plus a few live facts from the store, so the app is navigable from day one.
 public struct FeaturePlaceholder: View {
     @Environment(PortfolioStore.self) private var store
+    @State private var value = Loadable<Money>()
     private let screen: AppScreen
 
     public init(_ screen: AppScreen) {
@@ -199,6 +200,10 @@ public struct FeaturePlaceholder: View {
                 fact(Fmt.integer(store.file.accounts.count + store.file.depots.count), "Accounts")
                 Divider().frame(height: 28)
                 fact(store.period.shortTitle, "Period")
+                Divider().frame(height: 28)
+                // Live from the shared analysis layer (scope-aware, computed off the main actor).
+                fact(value.value.map { Fmt.compactMoney($0) } ?? Fmt.missing, store.isWholePortfolioScope ? "Value" : "Value in Scope")
+                    .opacity(value.isRefreshing ? 0.5 : 1)
             }
             .padding(.horizontal, DS.Spacing.xl)
             .padding(.vertical, DS.Spacing.m)
@@ -211,6 +216,10 @@ public struct FeaturePlaceholder: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(DS.Spacing.xl)
         .accessibilityElement(children: .combine)
+        .analysisTask($value, id: "kontorui.placeholder.value") { analysis in analysis.snapshot.totalValue }
+        .toolbar {
+            ToolbarItem { ScopePicker() }
+        }
     }
 
     private func fact(_ value: String, _ label: String) -> some View {

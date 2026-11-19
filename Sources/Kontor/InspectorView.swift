@@ -42,7 +42,7 @@ private struct DefaultInspector: View {
         Section("Portfolio") {
             KeyValueRow("Name", store.file.name.isEmpty ? "Untitled" : store.file.name)
             KeyValueRow("Base Currency", store.baseCurrency)
-            KeyValueRow("Cost Method", store.file.settings.costMethod == .fifo ? "FIFO" : "Average")
+            KeyValueRow("Cost Method", store.file.settings.costMethod.shortTitle)
             KeyValueRow("Since", store.inception.map { Fmt.day($0, style: .medium) } ?? "")
         }
         Section("Contents") {
@@ -54,8 +54,9 @@ private struct DefaultInspector: View {
         }
         Section("Reporting Period") {
             KeyValueRow("Period", store.period.title)
-            KeyValueRow("From", Fmt.day(store.periodInterval.lowerBound, style: .medium))
-            KeyValueRow("To", Fmt.day(store.periodInterval.upperBound, style: .medium))
+            KeyValueRow("From", Fmt.day(min(store.periodInterval.firstDay, store.periodInterval.end), style: .medium))
+            KeyValueRow("To", Fmt.day(store.periodInterval.end, style: .medium))
+            KeyValueRow("Scope", store.scopeTitle)
         }
         Section {
             Button("Portfolio Settings…") { store.present(.portfolioSettings) }
@@ -116,7 +117,7 @@ private struct DefaultInspector: View {
 
     @ViewBuilder private func transaction(_ t: Transaction) -> some View {
         Section("Transaction") {
-            KeyValueRow("Type", t.kind.rawValue.capitalized)
+            KeyValueRow("Type", t.kind.title)
             KeyValueRow("Date", Fmt.day(t.date, style: .medium))
             KeyValueRow("Security", store.security(t.securityID)?.name ?? "")
             KeyValueRow("Account", store.account(t.accountID)?.name ?? "")

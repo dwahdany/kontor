@@ -329,6 +329,13 @@ func mergePrices(_ points: [PricePoint], into series: inout PriceSeries) -> Int 
     let insertLimit = 16
     guard !points.isEmpty else { return 0 }
 
+    // First download of a history: build the columns in one go (the model's bulk initializer adopts
+    // ascending input as-is and otherwise sorts with "last value per day wins", like `merge`).
+    if series.isEmpty {
+        series = PriceSeries(days: points.map(\.day.rawValue), values: points.map(\.price.raw))
+        return series.count
+    }
+
     // Classify against the stored series in one forward pass (both sides ascending). The scope
     // keeps the column copies from outliving the pass, so the mutation below stays in place.
     let plan: (pending: [PricePoint], inserts: Int)? = {

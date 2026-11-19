@@ -33,6 +33,8 @@ public enum ReportingPeriod: Hashable, Sendable, Codable {
     case ytd
     /// From the end of last month until today.
     case monthToDate
+    /// From the end of the last calendar quarter until today.
+    case quarterToDate
     case lastDays(Int)
     case lastMonths(Int)
     case lastYears(Int)
@@ -55,6 +57,10 @@ public enum ReportingPeriod: Hashable, Sendable, Codable {
             return DayInterval(start: today.startOfYear.advanced(by: -1), end: today)
         case .monthToDate:
             return DayInterval(start: today.startOfMonth.advanced(by: -1), end: today)
+        case .quarterToDate:
+            let c = today.ymd
+            let quarterStart = Day(year: c.year, month: (c.month - 1) / 3 * 3 + 1, day: 1)
+            return DayInterval(start: quarterStart.advanced(by: -1), end: today)
         case .lastDays(let n):
             return DayInterval(start: today.advanced(by: -max(n, 0)), end: today)
         case .lastMonths(let n):
@@ -84,6 +90,7 @@ public enum ReportingPeriod: Hashable, Sendable, Codable {
         switch self {
         case .ytd: return "Year to date"
         case .monthToDate: return "Month to date"
+        case .quarterToDate: return "Quarter to date"
         case .lastDays(let n): return plural(n, "day")
         case .lastMonths(let n): return plural(n, "month")
         case .lastYears(let n): return plural(n, "year")
@@ -98,6 +105,7 @@ public enum ReportingPeriod: Hashable, Sendable, Codable {
         switch self {
         case .ytd: return "YTD"
         case .monthToDate: return "MTD"
+        case .quarterToDate: return "QTD"
         case .lastDays(let n): return "\(n)D"
         case .lastMonths(let n): return "\(n)M"
         case .lastYears(let n): return "\(n)Y"

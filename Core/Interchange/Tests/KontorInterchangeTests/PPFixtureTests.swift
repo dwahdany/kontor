@@ -356,7 +356,8 @@ import Testing
         #expect(transaction.shares == Shares(70))
         #expect(transaction.note == "Abrechnungs-Nr. 19200128")
         #expect(result.file.securities[0].isin == "DE000CBK1001")
-        #expect(result.report.warnings.contains { $0.code == .skippedExDate })
+        #expect(transaction.exDate == day("2019-05-23"))
+        #expect(!result.report.warnings.contains { $0.code == .skippedExDate })
         #expect(result.report.warnings.contains { $0.code == .skippedDocumentReference })
 
         let events = try Fixture.pp("client_with_security_events.xml").file

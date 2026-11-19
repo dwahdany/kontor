@@ -77,16 +77,19 @@ struct MarketSimulation: Sendable {
     /// The quoted history of `asset` (trading days only unless it trades continuously), optionally cut
     /// off after `lastOffset`.
     func series(_ asset: Int, through lastOffset: Int? = nil) -> PriceSeries {
-        var series = PriceSeries()
         let values = quotes[asset]
         let last = min(lastOffset ?? dayCount - 1, dayCount - 1)
         let everyDay = continuous[asset]
         let first = start.rawValue
-        guard last >= 0 else { return series }
+        guard last >= 0 else { return PriceSeries() }
+        var days = [Int32](), raws = [Int64]()
+        days.reserveCapacity(last + 1)
+        raws.reserveCapacity(last + 1)
         for i in 0...last where everyDay || isTradingDay[i] {
-            series.set(Price(raw: values[i]), on: Day(rawValue: first + Int32(i)))
+            days.append(first + Int32(i))
+            raws.append(values[i])
         }
-        return series
+        return PriceSeries(days: days, values: raws)
     }
 
     init(start: Day, end: Day, assets: [AssetModel], regimes: [Regime] = Regime.standard, seed: UInt64) {

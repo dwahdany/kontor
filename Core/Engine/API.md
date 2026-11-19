@@ -268,7 +268,7 @@ Works on any `ReturnSeries`, including benchmarks.
 
 ```swift
 public enum ReportingPeriod: Hashable, Sendable, Codable {
-    case ytd, monthToDate, lastDays(Int), lastMonths(Int), lastYears(Int), year(Int), allTime
+    case ytd, monthToDate, quarterToDate, lastDays(Int), lastMonths(Int), lastYears(Int), year(Int), allTime
     case custom(from: Day, to: Day)
     static let presets: [ReportingPeriod]
     func interval(today: Day = .today, ledger: Ledger) -> DayInterval
@@ -470,11 +470,15 @@ p.valueBefore, p.valueAfter, p.warnings, p.node(id), p.flattened
 ```swift
 plan.dueDates(through: today)            // [Day]; start + k × intervalMonths, day clamped to month length,
 plan.dueDates(through: today, moveToWeekday: false)   // weekends → next Monday unless disabled
-plan.nextDueDate(after: today)           // Day?
+plan.dueDates(through: today, includingSkipped: true) // the full schedule
+plan.skippedDueDates(through: today)     // [Day] scheduled days listed in plan.skippedDates
+plan.isSkipped(due)                      // Bool
+plan.nextDueDate(after: today)           // Day? — the first execution day that is not skipped
 plan.sourceTag                           // "plan:<uuid>" — marks executions in Transaction.source
 
 let status = ledger.planStatus(plan, through: today)
 status.dueDates, status.executions /* (due, transactionID, date) */, status.missing, status.nextDue
+status.skipped                           // [Day] — scheduled, but skipped by the user
 status.problem                           // PlanProblem? — configuration error, nothing can be generated
 
 let proposal = ledger.planTransactions(plan, through: today)       // or an array of plans
@@ -487,6 +491,9 @@ proposal.skipped                         // [(due, reason)] e.g. .noPrice, .noEx
 * purchase → `buy` of `amount` (incl. `fees`), shares = (amount − fees) / price on that day (last
   quote on or before it); without an account a `deliveryIn`. Foreign securities: gross converted
   at the day's rate and stored in `securityGross`. deposit / withdrawal → plain bookings.
+* `InvestmentPlan.skippedDates` (execution day, or the nominal day when a weekend moved it) removes
+  a date from `dueDates`, `missing`, `nextDue` and from the generated transactions; it is reported in
+  `status.skipped`. To skip an open execution: `plan.skippedDates = (plan.skippedDates ?? []) + [due]`.
 * An execution is recognised by `source == plan.sourceTag` (case-insensitive) and a date equal to
   the due date or within `toleranceDays` (default 7) of it.
 

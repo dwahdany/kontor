@@ -3,6 +3,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 import KontorModel
 import KontorUI
+import KontorMarketData
 
 /// App-wide coordination between scenes that SwiftUI gives no direct channel for: which portfolio
 /// window is frontmost, and work queued for the next document window (import a file after creating
@@ -71,42 +72,38 @@ final class ShellContext {
         return panel.runModal() == .OK ? panel.url : nil
     }
 
-    /// Installs the shell-provided services on a store. **This is the seam for the market-data and
-    /// interchange packages**: replace the bodies below once `KontorMarketData` / `KontorInterchange`
-    /// are linked.
-    func installServices(on store: PortfolioStore) {
+    /// One updater for the whole app: its HTTP stack throttles per host, so all windows share it.
+    private lazy var quoteUpdater = QuoteUpdater()
+
+    /// Connects a store to the app: the import-file panel and KontorMarketData's quote updater.
+    ///
+    /// - Parameter network: `false` in the headless screenshot mode — no updater is installed, so
+    ///   nothing can touch the network there.
+    func installServices(on store: PortfolioStore, network: Bool = true) {
         store.services.chooseImportFile = { [weak self] store in
             guard let url = self?.chooseImportFile() else { return }
             store.present(.importFile(url))
         }
-        store.services.export = { store in
-            Self.exportJSON(store)
-        }
-        // store.services.updateQuotes stays nil until KontorMarketData is linked; the toolbar button
-        // and menu item explain that instead of pretending to update.
+        store.quoteUpdater = network ? quoteUpdater : nil
     }
 
-    /// Runs the quote update service, or explains that it is not connected in this build.
-    func updateQuotes(_ store: PortfolioStore) {
-        guard store.activity == nil else { return }
-        guard let update = store.services.updateQuotes else {
-            store.toast("Quote updates are not available yet", message: "The market data module is not part of this build.", style: .warning)
-            return
-        }
-        Task { await update(store) }
-    }
-
-    /// Settings ▸ Market Data ▸ "Update quotes when a portfolio opens" (on by default). Does nothing
-    /// until a quote service is installed.
+    /// Settings ▸ Market Data ▸ "Update quotes when a portfolio opens" (on by default). Quiet: it
+    /// only reports through toasts, and does nothing if no security has an automatic feed.
     func autoUpdateQuotesIfEnabled(_ store: PortfolioStore) {
         let enabled = UserDefaults.standard.object(forKey: AppPreferences.Key.autoUpdateQuotes) as? Bool ?? true
-        guard enabled, store.activity == nil, let update = store.services.updateQuotes,
-              store.file.securities.contains(where: { !$0.isRetired && $0.feed != nil && $0.feed != .manual }) else { return }
-        Task { await update(store) }
+        guard enabled, !store.isUpdatingQuotes, store.hasAutomaticQuoteFeeds else { return }
+        store.updateQuotes(interactive: false)
     }
 
-    /// Export as a pretty-printed, diff-friendly JSON copy (CSV exports arrive with KontorInterchange).
-    private static func exportJSON(_ store: PortfolioStore) {
+    /// Settings ▸ Market Data ▸ "Keep updating while the app is running".
+    var isPeriodicUpdateEnabled: Bool {
+        UserDefaults.standard.bool(forKey: AppPreferences.Key.periodicUpdate)
+            && (UserDefaults.standard.object(forKey: AppPreferences.Key.autoUpdateQuotes) as? Bool ?? true)
+    }
+
+    /// Export as a pretty-printed, diff-friendly JSON copy — the shell's built-in export; richer
+    /// formats (Portfolio Performance XML, CSV) come with the Import feature's export sheet.
+    static func exportJSON(_ store: PortfolioStore) {
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.json]
         panel.nameFieldStringValue = (store.file.name.isEmpty ? "Portfolio" : store.file.name) + ".json"

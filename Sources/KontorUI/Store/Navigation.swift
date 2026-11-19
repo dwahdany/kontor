@@ -49,11 +49,11 @@ public enum AppScreen: String, CaseIterable, Identifiable, Codable, Sendable {
         case .performance: "Returns, benchmarks and risk over time"
         case .allocation: "Asset classes, targets and rebalancing"
         case .earnings: "Dividends and interest by period"
-        case .trades: "Closed and open trades with realised gains"
+        case .trades: "Closed and open trades with realized gains"
         case .securities: "Instruments, quotes and price history"
         case .transactions: "The complete ledger"
         case .accounts: "Cash accounts and depots"
-        case .plans: "Savings plans and recurring bookings"
+        case .plans: "Savings plans and recurring transactions"
         case .import: "Bring in data from files and other apps"
         }
     }
@@ -126,6 +126,22 @@ public struct Route: Hashable, Codable, Sendable {
     public var screen: AppScreen
     public var focus: Focus?
 
+    /// The focused security / account / depot / transaction / plan id, if the focus is of that kind
+    /// — shortcuts for `if case .security(let id) = store.route.focus`.
+    public var securityID: UUID? { if case .security(let id) = focus { id } else { nil } }
+    public var accountID: UUID? { if case .account(let id) = focus { id } else { nil } }
+    public var depotID: UUID? { if case .depot(let id) = focus { id } else { nil } }
+    public var transactionID: UUID? { if case .transaction(let id) = focus { id } else { nil } }
+    public var planID: UUID? { if case .plan(let id) = focus { id } else { nil } }
+    /// The focused taxonomy (also set when a classification of it is focused).
+    public var taxonomyID: UUID? {
+        switch focus {
+        case .taxonomy(let id), .classification(let id, _): id
+        default: nil
+        }
+    }
+    public var classificationID: UUID? { if case .classification(_, let id) = focus { id } else { nil } }
+
     public init(_ screen: AppScreen, focus: Focus? = nil) {
         self.screen = screen
         self.focus = focus
@@ -138,35 +154,45 @@ public struct Route: Hashable, Codable, Sendable {
     public static func transaction(_ id: UUID) -> Route { Route(.transactions, focus: .transaction(id)) }
     public static func plan(_ id: UUID) -> Route { Route(.plans, focus: .plan(id)) }
     public static func taxonomy(_ id: UUID) -> Route { Route(.allocation, focus: .taxonomy(id)) }
+    /// Allocation, focused on one classification of a taxonomy.
+    public static func classification(taxonomy: UUID, id: UUID) -> Route {
+        Route(.allocation, focus: .classification(taxonomy: taxonomy, id: id))
+    }
 
     /// Compact text form used by `--route` and scene storage: `holdings`, `security:<uuid>`,
     /// `account:<uuid>`, `depot:<uuid>`, `transaction:<uuid>`, `plan:<uuid>`, `taxonomy:<uuid>`,
-    /// or `<screen>/<kind>:<uuid>` to combine an arbitrary screen with a focus.
+    /// `classification:<taxonomy uuid>/<classification uuid>`, or `<screen>/<focus>` to combine an
+    /// arbitrary screen with a focus (`performance/security:<uuid>`).
     public init?(string: String) {
         let trimmed = string.trimmingCharacters(in: .whitespaces)
         var screenPart: Substring?
         var focusPart = Substring(trimmed)
-        if let slash = trimmed.firstIndex(of: "/") {
+        // "<screen>/<focus>": the screen prefix is the part before the first slash, if it is a screen.
+        if let slash = trimmed.firstIndex(of: "/"), AppScreen(rawValue: String(trimmed[..<slash])) != nil {
             screenPart = trimmed[..<slash]
             focusPart = trimmed[trimmed.index(after: slash)...]
         }
         if let colon = focusPart.firstIndex(of: ":") {
-            guard let id = UUID(uuidString: String(focusPart[focusPart.index(after: colon)...])) else { return nil }
+            let value = focusPart[focusPart.index(after: colon)...]
             let route: Route
-            switch focusPart[..<colon] {
-            case "security": route = .security(id)
-            case "account": route = .account(id)
-            case "depot": route = .depot(id)
-            case "transaction": route = .transaction(id)
-            case "plan": route = .plan(id)
-            case "taxonomy": route = .taxonomy(id)
-            default: return nil
+            if focusPart[..<colon] == "classification" {
+                let ids = value.split(separator: "/")
+                guard ids.count == 2, let taxonomy = UUID(uuidString: String(ids[0])), let id = UUID(uuidString: String(ids[1])) else { return nil }
+                route = .classification(taxonomy: taxonomy, id: id)
+            } else {
+                guard let id = UUID(uuidString: String(value)) else { return nil }
+                switch focusPart[..<colon] {
+                case "security": route = .security(id)
+                case "account": route = .account(id)
+                case "depot": route = .depot(id)
+                case "transaction": route = .transaction(id)
+                case "plan": route = .plan(id)
+                case "taxonomy": route = .taxonomy(id)
+                default: return nil
+                }
             }
             self = route
-            if let screenPart {
-                guard let screen = AppScreen(rawValue: String(screenPart)) else { return nil }
-                self.screen = screen
-            }
+            if let screenPart, let screen = AppScreen(rawValue: String(screenPart)) { self.screen = screen }
         } else {
             guard screenPart == nil, let screen = AppScreen(rawValue: trimmed) else { return nil }
             self.init(screen)
@@ -182,7 +208,8 @@ public struct Route: Hashable, Codable, Sendable {
         case .depot(let id): focusText = "depot:\(id.uuidString)"
         case .transaction(let id): focusText = "transaction:\(id.uuidString)"
         case .plan(let id): focusText = "plan:\(id.uuidString)"
-        case .taxonomy(let id), .classification(let id, _): focusText = "taxonomy:\(id.uuidString)"
+        case .taxonomy(let id): focusText = "taxonomy:\(id.uuidString)"
+        case .classification(let taxonomy, let id): focusText = "classification:\(taxonomy.uuidString)/\(id.uuidString)"
         }
         return "\(screen.rawValue)/\(focusText)"
     }

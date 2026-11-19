@@ -268,24 +268,70 @@ private let nbsp = "\u{00A0}"
     }
 
     @Test func periods() {
+        // The UI uses the engine's ReportingPeriod / DayInterval (re-exported by KontorUI).
         let today = Day(year: 2024, month: 5, day: 20)
-        #expect(ReportingPeriod.yearToDate.interval(today: today) == Day(year: 2023, month: 12, day: 31)...today)
-        #expect(ReportingPeriod.trailingMonths(12).interval(today: today) == Day(year: 2023, month: 5, day: 20)...today)
-        #expect(ReportingPeriod.monthToDate.interval(today: today) == Day(year: 2024, month: 4, day: 30)...today)
-        #expect(ReportingPeriod.quarterToDate.interval(today: today) == Day(year: 2024, month: 3, day: 31)...today)
-        #expect(ReportingPeriod.calendarYear(2022).interval(today: today) == Day(year: 2021, month: 12, day: 31)...Day(year: 2022, month: 12, day: 31))
-        #expect(ReportingPeriod.calendarYear(2024).interval(today: today).upperBound == today)
+        func interval(_ p: ReportingPeriod, inception: Day? = nil) -> DayInterval { p.interval(today: today, firstTransactionDay: inception) }
+        #expect(interval(.ytd) == DayInterval(start: Day(year: 2023, month: 12, day: 31), end: today))
+        #expect(interval(.lastYears(1)) == DayInterval(start: Day(year: 2023, month: 5, day: 20), end: today))
+        #expect(interval(.quarterToDate) == DayInterval(start: Day(year: 2024, month: 3, day: 31), end: today))
+        #expect(interval(.year(2024)).end == today)
         let inception = Day(year: 2019, month: 2, day: 1)
-        #expect(ReportingPeriod.allTime.interval(today: today, inception: inception) == Day(year: 2019, month: 1, day: 31)...today)
-        #expect(ReportingPeriod.custom(from: today, to: inception).interval(today: today) == inception...today)
-        #expect(ReportingPeriod.trailingMonths(36).shortTitle == "3Y")
-        #expect(ReportingPeriod.trailingMonths(6).shortTitle == "6M")
-        #expect(ReportingPeriod.trailingMonths(12).title == "1 Year")
-        // Codable round trip (persisted per window).
-        for p in ReportingPeriod.presets + [.calendarYear(2023), .custom(from: inception, to: today), .quarterToDate] {
-            let data = try! JSONEncoder().encode(p)
-            #expect(try! JSONDecoder().decode(ReportingPeriod.self, from: data) == p)
+        #expect(interval(.allTime, inception: inception) == DayInterval(start: Day(year: 2019, month: 1, day: 31), end: today))
+
+        // Text codes (scene storage, --period) round-trip.
+        let all: [ReportingPeriod] = ReportingPeriod.presets + [.monthToDate, .quarterToDate, .lastDays(30), .year(2023), .custom(from: inception, to: today)]
+        for p in all {
+            #expect(ReportingPeriod(code: p.code) == p, "\(p.code)")
         }
+        #expect(ReportingPeriod(code: "1y") == .lastYears(1))
+        #expect(ReportingPeriod(code: "ALL") == .allTime && ReportingPeriod(code: "max") == .allTime)
+        #expect(ReportingPeriod(code: "2024-01-01..2024-06-30") == .custom(from: Day(year: 2024, month: 1, day: 1), to: Day(year: 2024, month: 6, day: 30)))
+        #expect(ReportingPeriod(code: "") == nil && ReportingPeriod(code: "0M") == nil && ReportingPeriod(code: "soon") == nil)
+        #expect(ReportingPeriod(code: "1W") == nil && ReportingPeriod(code: "12345") == nil)
+    }
+
+    @Test func engineValueFormatting() {
+        let f = KontorFormatter(locale: Locale(identifier: "en_US"))
+        #expect(f.percent(Double?.none) == "–")
+        #expect(f.percent(Double?.some(0.0734), signed: true) == "+7.34%")
+        #expect(f.percentagePoints(0.0125) == "+1.25\u{00A0}pp")
+        #expect(f.percentagePoints(-0.002, decimals: 1) == "-0.2\u{00A0}pp" || f.percentagePoints(-0.002, decimals: 1) == "−0.2\u{00A0}pp")
+        #expect(f.percentagePoints(nil) == "–")
+        #expect(f.basisPoints(25) == "25\u{00A0}bp" && f.basisPoints(25, signed: true) == "+25\u{00A0}bp")
+        #expect(f.basisPoints(fraction: 0.0025) == "25\u{00A0}bp" && f.basisPoints(fraction: nil) == "–")
+        #expect(f.ratio(1.2345) == "1.23" && f.ratio(nil) == "–")
+        #expect(f.multiple(1.5) == "1.5×" && f.multiple(.infinity) == "–")
+        #expect(f.number(Double?.none) == "–" && f.money(Money?.none) == "–")
+        #expect(f.money(Money?.some(Money(minor: 150, currency: "USD"))) == "$1.50")
+        #expect(f.compactMoney(minor: 123_456_789, currency: "USD") == f.compactMoney(Money(minor: 123_456_789, currency: "USD")))
+
+        #expect(f.duration(days: 0) == "0 days" && f.duration(days: 1) == "1 day" && f.duration(days: 59) == "59 days")
+        #expect(f.duration(days: 60) == "2 months" && f.duration(days: 400) == "13 months")
+        #expect(f.duration(days: 730) == "2.0 years" && f.duration(days: 1_000) == "2.7 years")
+        #expect(f.duration(days: 12, style: .compact) == "12d" && f.duration(days: 90, style: .compact) == "3mo")
+        #expect(f.duration(days: 1_000, style: .compact) == "2.7y" && f.duration(days: nil) == "–")
+        #expect(f.duration(years: 2.5) == "2.5 years" && f.duration(years: .nan) == "–")
+
+        let interval = DayInterval(start: Day(year: 2023, month: 12, day: 31), end: Day(year: 2024, month: 6, day: 30))
+        #expect(f.interval(interval) == "Jan 1, 2024 – Jun 30, 2024")
+        #expect(f.interval(interval, style: .iso) == "2024-01-01 – 2024-06-30")
+        #expect(f.month(year: 2024, month: 3) == "Mar 2024")
+
+        // Every kind has a title and a symbol; the menu order is complete.
+        #expect(Set(Transaction.Kind.menuOrder) == Set(Transaction.Kind.allCases))
+        #expect(Transaction.Kind.menuOrder.count == Transaction.Kind.allCases.count)
+        #expect(Transaction.Kind.allCases.allSatisfy { !$0.title.isEmpty && !$0.symbol.isEmpty })
+        #expect(Transaction.Kind.deliveryIn.title == "Delivery (Inbound)" && CostMethod.fifo.shortTitle == "FIFO")
+    }
+
+    @Test func helpTopicsAreComplete() {
+        for topic in HelpTopic.allCases {
+            #expect(!topic.title.isEmpty)
+            #expect(topic.text.count > 80 && topic.text.count < 520, "\(topic.rawValue): \(topic.text.count) characters")
+            #expect(topic.text.hasSuffix("."))
+            #expect(!topic.related.contains(topic))
+        }
+        #expect(Set(HelpTopic.allCases.map(\.title)).count == HelpTopic.allCases.count)
     }
 
     @Test func routes() {
@@ -311,5 +357,38 @@ private let nbsp = "\u{00A0}"
 enum KontorUITestsSupport {
     static func components(_ hex: String) -> [Double]? {
         KontorUI.hexComponents(hex).map { [$0.r, $0.g, $0.b, $0.a] }
+    }
+}
+
+@Suite struct IntegrationFormatting {
+    @Test func sharesWithMaximumDecimals() {
+        #expect(us.shares(Shares(raw: 385_239_567), maxDecimals: 4) == "3.8524")
+        #expect(us.shares(Shares(raw: 385_239_567)) == "3.85239567")
+        #expect(us.shares(Shares(raw: 1_200_000_000), maxDecimals: 4) == "12")
+        #expect(us.shares(Shares(raw: -50_000), signed: true, maxDecimals: 2) == "0")
+        #expect(us.shares(Shares(raw: 99_999_999), maxDecimals: 2) == "1")
+    }
+
+    @Test func priceWithMaximumDecimals() {
+        #expect(us.price(Price(raw: 47_534_612), currency: "USD", maxDecimals: 4) == "$0.4753")
+        #expect(us.price(Price(raw: 47_534_612), currency: "USD") == "$0.47534612")
+        #expect(us.price(Price(raw: 10_150_000_000), maxDecimals: 1) == "101.50")
+    }
+
+    @Test func signedRoundedMoneyTimeAndBytes() {
+        #expect(us.moneyRounded(Money(minor: 123_456, currency: "USD"), signed: true) == "+$1,235")
+        #expect(us.moneyRounded(Money(minor: -123_456, currency: "USD"), signed: true) == "-$1,235")
+        #expect(us.moneyRounded(Money(minor: 20, currency: "USD"), signed: true) == "$0")
+        #expect(us.time(minuteOfDay: 495) == "08:15")
+        #expect(us.time(minuteOfDay: 0) == "00:00")
+        #expect(us.bytes(850) == "850 bytes")
+        #expect(us.bytes(74_100_000) == "74.1 MB")
+    }
+
+    @Test func footerPlurals() {
+        #expect(TableFooter<Never>.pluralize("security") == "securities")
+        #expect(TableFooter<Never>.pluralize("trade") == "trades")
+        #expect(TableFooter<Never>.pluralize("day") == "days")
+        #expect(TableFooter<Never>.pluralize("class") == "classes")
     }
 }

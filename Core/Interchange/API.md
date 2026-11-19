@@ -105,7 +105,8 @@ watchlists, savings plans, exchange rates (as PP exchange-rate entries).
 Round trip: `read(export(file).data).file == file` — exactly, including names with surrounding
 spaces, empty names and the order of the ledger (verified on randomly generated documents).
 Kontor-only data (settings, dashboards, exact quote-feed configuration, ids of
-watchlists/plans/events, plan end dates, target-weight flags, the ledger order as `kontor.order`) is
+watchlists/plans/events, plan end dates, target-weight flags, the ledger order as `kontor.order`, the
+depot of dividends, fees and taxes as `kontor.depots`) is
 stored in client/feed properties that PP preserves but ignores. If the file was edited in PP in
 between, the ledger comes back sorted by date and time, with the recorded order breaking ties.
 Fix `options.timestamp` for byte-identical output. `PortfolioPerformanceExportOptions` and
@@ -209,6 +210,14 @@ currency, grossAmount, grossCurrency, exchangeRate, account, counterAccount, dep
   (cash transfers: `counterAmount`, also in the same currency if the credited amount differs).
   Values beyond 10^15 currency units are row errors.
 * **Currency** — currency column → the account's currency → `options.defaultCurrency` → base currency.
+  A row whose currency differs from the currency of its (existing) cash account is converted when
+  it says what it is worth there — `Gross Amount` with `Currency Gross Amount` = the account's
+  currency, or an `Exchange Rate` (row currency → account currency); value, fees and taxes are
+  converted, the original gross goes to `securityGross`, the row is a *warning* row. Without either
+  it is an **error** row ("The row is in USD, but its cash account is kept in EUR. …") — never a
+  booking in the wrong currency.
+* **Formula guard** — a text cell starting with an apostrophe followed by `= + - @`, tab or CR (what
+  `CSVExporter` writes, see below) is read without the apostrophe.
 * **Securities** — matched to existing ones by ISIN → ticker → WKN → name (case-insensitive);
   otherwise one new security per distinct identity is proposed. An ISIN is authoritative: a row
   with an ISIN never matches a security that carries a different ISIN, whatever ticker or name say.
@@ -225,6 +234,11 @@ currency, grossAmount, grossCurrency, exchangeRate, account, counterAccount, dep
 ---
 
 ## 5. CSV export
+
+**Formula injection.** Text cells (`CSVValue.text`, column titles) that start with `=`, `+`, `-`, `@`,
+a tab or a carriage return are written with a leading apostrophe, so a spreadsheet shows them as text
+instead of evaluating them (`CSVExporter.neutralizingFormulas(_:)`). Typed numbers and dates
+(`.decimal`, `.integer`, `.number`, `.day`, `.money`, …) are never altered — pass numbers as numbers.
 
 Generic table API — use it for any report (holdings, statement of assets, performance tables):
 
@@ -280,6 +294,7 @@ randomly generated documents in both presets). Pass the same language to the tab
 | `DEPOSIT`, `REMOVAL`, `DIVIDENDS`, `INTEREST`, `INTEREST_CHARGE`, `FEES`, `FEES_REFUND`, `TAXES`, `TAX_REFUND` | `.deposit`, `.withdrawal`, `.dividend`, `.interest`, `.interestCharge`, `.fee`, `.feeRefund`, `.tax`, `.taxRefund` |
 | units `FEE`, `TAX`, `GROSS_VALUE` (forex) | `fees`, `taxes`, `securityGross` |
 | `date` (LocalDateTime) | `date` + `minuteOfDay` (midnight → nil) |
+| `exDate` of a `DIVIDENDS` transaction | `Transaction.exDate` (both directions; on other bookings: info warning `skippedExDate`) |
 | transactions listed in an investment plan | `source = "plan:<plan uuid>"`; all others `source = "pp-import"` |
 | `Taxonomy` / root `Classification` children | `Taxonomy.root` (sorted by rank) |
 | classification `weight` | `targetWeight` — only if the siblings' weights add up to 100 % (PP's default is 100 % each) |

@@ -3,6 +3,7 @@ import AppKit
 import UniformTypeIdentifiers
 import KontorModel
 import KontorUI
+import KontorSampleData
 
 /// The app: a document scene for `.kontor` portfolios, the welcome window and Settings.
 struct KontorApp: App {
@@ -74,7 +75,7 @@ struct WelcomeScene: View {
     private var actions: WelcomeActions {
         WelcomeActions(
             newPortfolio: { name, currency in
-                let file = PortfolioFile(name: name, settings: Settings(baseCurrency: currency))
+                let file = SampleData.starterPortfolio(name: name, baseCurrency: currency)
                 newDocument { KontorDocument(file: file) }
                 dismissWindow(id: Self.id)
             },
@@ -86,7 +87,7 @@ struct WelcomeScene: View {
                 open(url)
             },
             openDemo: {
-                let file = DemoPortfolio.make()
+                let file = SampleData.demoPortfolio()
                 newDocument { KontorDocument(file: file) }
                 dismissWindow(id: Self.id)
             },
@@ -120,6 +121,7 @@ struct DocumentWindow: View {
     @Environment(\.dismissWindow) private var dismissWindow
     @SceneStorage("route") private var storedRoute = AppScreen.dashboard.rawValue
     @SceneStorage("period") private var storedPeriod = ""
+    @SceneStorage("scope") private var storedScope = ""
     @SceneStorage("inspector") private var storedInspector = false
     @State private var window: NSWindow?
 
@@ -142,7 +144,9 @@ struct DocumentWindow: View {
             .onChange(of: undoManager, initial: true) { _, manager in store.undoManager = manager }
             .onChange(of: window) { _, window in trackChanges(of: store, in: window) }
             .onChange(of: store.route) { _, route in storedRoute = route.stringValue }
-            .onChange(of: store.period) { _, period in storedPeriod = Self.encode(period) }
+            .onChange(of: store.period) { _, period in storedPeriod = period.code }
+            .onChange(of: store.scopeSelection) { _, scope in storedScope = scope.stringValue }
+            .task { await updateQuotesPeriodically(store) }
             .onChange(of: store.isInspectorPresented) { _, shown in storedInspector = shown }
             .onReceive(NotificationCenter.default.publisher(for: .NSCalendarDayChanged)) { _ in store.today = .today }
             .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
@@ -159,16 +163,19 @@ struct DocumentWindow: View {
 
     private func restoreState(into store: PortfolioStore) {
         if let route = Route(string: storedRoute) { store.restore(route: route) }
-        if let period = Self.decodePeriod(storedPeriod) { store.period = period }
+        if let period = ReportingPeriod(code: storedPeriod) { store.period = period }
+        if let scope = ScopeSelection(string: storedScope), scope.resolve(in: store.file) != nil { store.scopeSelection = scope }
         store.isInspectorPresented = storedInspector
     }
 
-    private static func encode(_ period: ReportingPeriod) -> String {
-        (try? JSONEncoder().encode(period)).map { String(decoding: $0, as: UTF8.self) } ?? ""
-    }
-
-    private static func decodePeriod(_ string: String) -> ReportingPeriod? {
-        guard !string.isEmpty else { return nil }
-        return try? JSONDecoder().decode(ReportingPeriod.self, from: Data(string.utf8))
+    /// Settings ▸ Market Data ▸ periodic updates: every 30 minutes while the window is open.
+    private func updateQuotesPeriodically(_ store: PortfolioStore) async {
+        while !Task.isCancelled {
+            try? await Task.sleep(for: .seconds(30 * 60))
+            guard !Task.isCancelled else { return }
+            if ShellContext.shared.isPeriodicUpdateEnabled, !store.isUpdatingQuotes, store.hasAutomaticQuoteFeeds {
+                store.updateQuotes(interactive: false)
+            }
+        }
     }
 }
