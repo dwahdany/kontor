@@ -80,7 +80,7 @@ enum WidgetKind: String, CaseIterable, Sendable, Identifiable {
 
     var summary: String {
         switch self {
-        case .netWorth: "Total value with today's change and a sparkline of the period."
+        case .netWorth: "Total value with the latest day's change and a sparkline of the period."
         case .ttwror: "Return of the period, independent of deposits and withdrawals."
         case .annualizedReturn: "The time-weighted return expressed per year."
         case .irr: "Money-weighted return: what your own cash flows earned per year."
@@ -94,7 +94,7 @@ enum WidgetKind: String, CaseIterable, Sendable, Identifiable {
         case .maxDrawdown: "The deepest fall from a peak within the period."
         case .volatility: "How much the daily returns fluctuate, per year."
         case .sharpeRatio: "Return earned per unit of risk taken."
-        case .monthlyReturns: "A year-by-month heatmap of returns."
+        case .monthlyReturns: "A year-by-month heatmap of returns for the last calendar years."
         case .cash: "Balances of your cash accounts."
         case .upcomingPlans: "Next executions of your savings plans and standing orders."
         case .recentTransactions: "The latest transactions in the ledger."
@@ -178,10 +178,34 @@ enum WidgetKind: String, CaseIterable, Sendable, Identifiable {
     }
 
     /// Whether the numbers depend on the reporting period (and so can override it).
+    ///
+    /// Monthly returns are not in this list on purpose: the grid is made of whole calendar years
+    /// since the first transaction and `count` says how many of them to show — a reporting period
+    /// could only cut years in half (a "Year" total over six months) or pad the grid with months
+    /// from before the portfolio existed.
     var usesPeriod: Bool {
         switch self {
         case .netWorth, .ttwror, .annualizedReturn, .irr, .absoluteGain, .performanceChart, .valueChart, .topMovers,
-             .maxDrawdown, .volatility, .sharpeRatio, .monthlyReturns, .watchlist: true
+             .maxDrawdown, .volatility, .sharpeRatio, .watchlist: true
+        default: false
+        }
+    }
+
+    /// Statements of one day (what is held, where, how it is split). They have no period of their
+    /// own but are valued on the **last day of the window's period**, so they always add up to the
+    /// net worth shown next to them — today for every period that runs until today.
+    var isSnapshot: Bool {
+        switch self {
+        case .allocation, .holdings, .cash: true
+        default: false
+        }
+    }
+
+    /// Lists of the whole document that deliberately ignore the window's scope; they say so with
+    /// a chip while the window is narrowed to a part of the portfolio.
+    var alwaysShowsWholePortfolio: Bool {
+        switch self {
+        case .upcomingPlans, .recentTransactions, .consistency: true
         default: false
         }
     }
@@ -292,7 +316,71 @@ extension Dashboard.Widget {
         return widgetKind?.title ?? "Unsupported Widget"
     }
 
+    /// The title on the tile. "Net Worth" is the name of the whole portfolio's value only: a depot,
+    /// an account or a classification has a "Value".
+    func displayTitle(isPartialScope: Bool) -> String {
+        let trimmed = title.trimmingCharacters(in: .whitespaces)
+        if trimmed.isEmpty, isPartialScope, widgetKind == .netWorth { return "Value" }
+        return displayTitle
+    }
+
     var clampedSpan: Int { min(max(span, Self.spanRange.lowerBound), Self.spanRange.upperBound) }
+
+    /// References of this widget that no longer resolve in `file` (a deleted depot, taxonomy,
+    /// benchmark security or watchlist), as sentences for the tile's warning.
+    func danglingReferences(in file: PortfolioFile) -> [String] {
+        guard let kind = widgetKind else { return [] }
+        var notes: [String] = []
+        if kind.usesScope, let scope = scopeOverride, scope.resolve(in: file) == nil {
+            notes.append("The scope this widget was fixed to no longer exists. It follows the window's scope.")
+        }
+        if kind.usesPeriod, let text = config[WidgetConfigKey.period], !text.isEmpty, periodOverride == nil {
+            notes.append("The period “\(text)” this widget was fixed to is not understood. It follows the window's period.")
+        }
+        switch kind {
+        case .allocation:
+            if let id = uuid(WidgetConfigKey.taxonomy), !file.taxonomies.isEmpty, !file.taxonomies.contains(where: { $0.id == id }) {
+                notes.append("The taxonomy chosen for this widget no longer exists. It shows “\(file.taxonomies[0].name)”.")
+            }
+        case .performanceChart:
+            if let id = uuid(WidgetConfigKey.benchmark), !file.securities.contains(where: { $0.id == id }) {
+                notes.append("The security this widget was compared with no longer exists.")
+            }
+        case .watchlist:
+            if let id = uuid(WidgetConfigKey.watchlist), !file.watchlists.isEmpty, !file.watchlists.contains(where: { $0.id == id }) {
+                notes.append("The watchlist chosen for this widget no longer exists. It shows “\(file.watchlists[0].name)”.")
+            }
+        default:
+            break
+        }
+        return notes
+    }
+
+    /// The widget without references that no longer resolve in `file` — what the tile effectively
+    /// shows. The settings sheet edits this, so its pickers show real choices and "Done" cleans
+    /// the file. Settings the kind does not use (a period on a period-less widget) are dropped too.
+    func normalized(in file: PortfolioFile) -> Dashboard.Widget {
+        guard let kind = widgetKind else { return self }
+        var copy = self
+        if !kind.usesScope || scopeOverride?.resolve(in: file) == nil { copy.config[WidgetConfigKey.scope] = nil }
+        if !kind.usesPeriod || periodOverride == nil { copy.config[WidgetConfigKey.period] = nil }
+        func drop(_ key: String, unless exists: (UUID) -> Bool) {
+            guard let text = config[key], text.lowercased() != "none" else { return }
+            if let id = UUID(uuidString: text), exists(id) { return }
+            copy.config[key] = nil
+        }
+        switch kind {
+        case .allocation:
+            drop(WidgetConfigKey.taxonomy) { id in file.taxonomies.contains { $0.id == id } }
+        case .performanceChart:
+            drop(WidgetConfigKey.benchmark) { id in file.securities.contains { $0.id == id } }
+        case .watchlist:
+            drop(WidgetConfigKey.watchlist) { id in file.watchlists.contains { $0.id == id } }
+        default:
+            break
+        }
+        return copy
+    }
 
     init(_ kind: WidgetKind, title: String = "", span: Int? = nil, config: [String: String] = [:]) {
         self.init(kind: kind.rawValue, title: title, span: span ?? kind.defaultSpan, config: config)

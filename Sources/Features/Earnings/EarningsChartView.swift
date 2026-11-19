@@ -7,8 +7,8 @@ struct EarningsChartView: View {
     let model: EarningsModel
     @Binding var options: EarningsChartOptions
     let isRefreshing: Bool
-    /// Show the payments of one month (`year × 12 + month − 1`).
-    let showPayments: (Int) -> Void
+    /// Show the dividend payments of a range of months (each `year × 12 + month − 1`).
+    let showPayments: (ClosedRange<Int>) -> Void
 
     private var chart: EarningsModel.Chart { model.charts[options.grouping] ?? EarningsModel.Chart() }
     private var stacks: Bool { options.stacksBySecurity && chart.bySecurity != nil }
@@ -127,18 +127,23 @@ struct EarningsChartView: View {
                     fact("Dividend Payments", Fmt.integer(model.paymentCount))
                     fact("Months", Fmt.integer(model.monthCount))
                     if model.monthCount > 0 {
-                        fact("\(model.kind.title) per Month",
+                        fact("\(model.kind.shortTitle) per Month",
                              Fmt.money(minor: model.totalValue / Int64(model.monthCount), currency: model.currency))
                     }
                 } else {
+                    // The Payments view lists dividend payments: offered where the bar has any.
+                    let months = amounts.dividends != 0 ? options.selection.flatMap(EarningsRules.months(ofBar:)) : nil
                     HStack {
-                        if options.grouping == .month, let month = monthIndex(of: options.selection) {
-                            Button("Show Payments") { showPayments(month) }
+                        if let months {
+                            Button("Dividend Payments", systemImage: "list.bullet") { showPayments(months) }
+                                .help("Lists the dividend payments of \(title). Interest, fees and taxes have no list of their own here — find them under Transactions.")
                         }
                         Spacer()
                         Button("Clear Selection") { options.selection = nil }
                             .buttonStyle(.link)
                     }
+                    .lineLimit(1)
+                    .controlSize(.small)
                     .padding(.top, DS.Spacing.xs)
                 }
                 Text(index == nil ? "Select a bar to see its breakdown. \(model.kind.explanation)" : model.kind.explanation)
@@ -173,12 +178,6 @@ struct EarningsChartView: View {
             Spacer()
             Text(value).numeric()
         }
-    }
-
-    /// "2025-05" → `year × 12 + month − 1`.
-    private func monthIndex(of id: String?) -> Int? {
-        guard let parts = id?.split(separator: "-").compactMap({ Int($0) }), parts.count == 2 else { return nil }
-        return parts[0] * 12 + parts[1] - 1
     }
 }
 

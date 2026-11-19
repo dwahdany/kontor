@@ -21,11 +21,37 @@ struct RebalancingTab: View {
     @State private var onlyOrders = false
     @State private var showsAllWarnings = false
 
+    /// The inputs of this taxonomy (cash, options, exclusions are kept per taxonomy).
+    private var inputs: Binding<RebalancingInputs> {
+        let id = taxonomy.id
+        let session = session
+        return Binding(get: { session.inputs(for: id) }, set: { session.setInputs($0, for: id) })
+    }
+
+    /// Why no proposal can be made for the window's scope, if so.
+    private var scopeProblem: String? {
+        switch store.scopeSelection {
+        case .portfolio, .depot:
+            nil
+        case .account:
+            "“\(store.scopeTitle)” is a single cash account. Rebalancing buys and sells securities, so it needs the whole portfolio or a depot."
+        case .classification(let id, _):
+            id == taxonomy.id
+                ? "“\(store.scopeTitle)” is one classification of this taxonomy — there is nothing to balance it against. Rebalance the whole portfolio or a depot instead."
+                : "“\(store.scopeTitle)” is a weighted slice of your positions, which cannot be bought or sold on its own. Rebalance the whole portfolio or a depot instead."
+        }
+    }
+
     var body: some View {
         let taxonomy = taxonomy
-        let key = RebalancingKey(taxonomy: taxonomy.id, inputs: session.rebalancing, today: store.today)
+        let key = RebalancingKey(taxonomy: taxonomy.id, inputs: inputs.wrappedValue.sanitized(for: taxonomy), today: store.today)
         Group {
-            if taxonomy.root.isEmpty {
+            if let scopeProblem, !store.isWholePortfolioScope {
+                EmptyState("Rebalancing Needs a Wider Scope", symbol: "scope", message: scopeProblem) {
+                    Button("Show Whole Portfolio") { store.scopeSelection = .portfolio }
+                        .buttonStyle(.borderedProminent)
+                }
+            } else if taxonomy.root.isEmpty {
                 EmptyState(
                     "No Classifications Yet", symbol: "scalemass",
                     message: "Rebalancing compares what you hold with target weights. Add classifications to “\(taxonomy.name)” and give them targets first."
@@ -33,7 +59,7 @@ struct RebalancingTab: View {
                     Button("Add Classifications") { session.tab = .edit }
                         .buttonStyle(.borderedProminent)
                 }
-            } else if let model = model.value {
+            } else if let model = model.value, model.isScopeSupported {
                 if !model.hasTargets {
                     EmptyState(
                         "No Target Weights", symbol: "scope",
@@ -103,11 +129,10 @@ struct RebalancingTab: View {
     // MARK: Inputs
 
     private func inputs(_ model: RebalancingModel) -> some View {
-        let inputs = session.rebalancing
-        return ViewThatFits(in: .horizontal) {
+        ViewThatFits(in: .horizontal) {
             HStack(spacing: DS.Spacing.l) {
                 cashInput(model)
-                toggles(inputs)
+                toggles(model)
                 Spacer(minLength: DS.Spacing.s)
                 modePicker
             }
@@ -117,7 +142,7 @@ struct RebalancingTab: View {
                     Spacer(minLength: DS.Spacing.s)
                     modePicker
                 }
-                HStack(spacing: DS.Spacing.l) { toggles(inputs) }
+                HStack(spacing: DS.Spacing.l) { toggles(model) }
             }
         }
         .padding(.horizontal, DS.Spacing.l)
@@ -126,31 +151,33 @@ struct RebalancingTab: View {
 
     private func cashInput(_ model: RebalancingModel) -> some View {
         HStack(spacing: DS.Spacing.s) {
-            Picker("Direction", selection: $session.rebalancing.direction) {
+            Picker("Direction", selection: inputs.direction) {
                 ForEach(RebalancingInputs.Direction.allCases) { Text($0.title).tag($0) }
             }
             .pickerStyle(.segmented)
             .labelsHidden()
             .fixedSize()
             .help("Invest fresh money, or take money out of the portfolio. Leave the amount empty to rebalance in place.")
-            MoneyField(session.rebalancing.direction == .invest ? "Cash to invest" : "Cash to withdraw", minor: $session.rebalancing.amount, currency: model.currency)
+            MoneyField(inputs.wrappedValue.direction == .invest ? "Cash to invest" : "Cash to withdraw", minor: inputs.amount, currency: model.currency)
                 .textFieldStyle(.roundedBorder)
                 .frame(width: 150)
         }
     }
 
     @ViewBuilder
-    private func toggles(_ inputs: RebalancingInputs) -> some View {
-        Toggle(inputs.direction == .invest ? "Buy only" : "Sell only", isOn: $session.rebalancing.buyOnly)
-            .help(inputs.direction == .invest
+    private func toggles(_ model: RebalancingModel) -> some View {
+        let direction = inputs.wrappedValue.direction
+        Toggle(direction == .invest ? "Buy only" : "Sell only", isOn: inputs.buyOnly)
+            .help(direction == .invest
                 ? "Never sell: the new money goes to the most underweight classifications first."
                 : "Never buy: the money is taken from the most overweight classifications first.")
-        Toggle("Whole shares", isOn: $session.rebalancing.wholeShares)
-            .help("Round every order down to whole shares at the latest price. What cannot be placed stays as leftover cash.")
-        if inputs.hasExclusions {
-            Button("Include All (\(inputs.excludedClassifications.count + inputs.excludedVehicles.count) excluded)") {
-                session.rebalancing.excludedClassifications = []
-                session.rebalancing.excludedVehicles = []
+        Toggle("Whole shares", isOn: inputs.wholeShares)
+            .help("Round every order down to whole shares at the latest price. Purchases never exceed the money that is available; what cannot be placed stays as leftover cash.")
+        // Only exclusions that exist in this taxonomy count.
+        if model.exclusionCount > 0 {
+            Button("Include All (\(model.exclusionCount) excluded)") {
+                inputs.wrappedValue.excludedClassifications = []
+                inputs.wrappedValue.excludedVehicles = []
             }
             .buttonStyle(.link)
             .help("Clear all exclusions")
@@ -174,12 +201,18 @@ struct RebalancingTab: View {
             figure("Sell", Fmt.money(minor: model.securitySells, currency: model.currency), help: "Sales of securities")
             if model.hasAccountOrders {
                 figure("Cash accounts", Fmt.money(minor: model.accountChange, currency: model.currency, signed: true),
-                       help: "Cash accounts that are part of this taxonomy should hold this much more (+) or less (−). No transaction is needed for that.")
+                       help: "Cash accounts that are part of this taxonomy should hold this much more (+) or less (−). The purchases are paid from them and the sales credited to them; no extra transaction is needed.")
             }
-            figure(model.residualCash < 0 ? "Shortfall" : "Leftover cash", Fmt.money(minor: abs(model.residualCash), currency: model.currency),
-                   help: model.residualCash < 0
-                       ? "The orders need this much more cash than is available — sales were rounded down to whole shares, or there is not enough to sell."
-                       : "Money that is not placed — because of whole-share rounding, or because nothing suitable can be bought.")
+            if model.unraisedCash > 0 {
+                figure("Shortfall", Fmt.money(minor: model.unraisedCash, currency: model.currency),
+                       help: "This much of the requested amount cannot be raised — there is not enough to sell.")
+            } else if model.residualCash < 0 {
+                figure("Extra from cash", Fmt.money(minor: -model.residualCash, currency: model.currency),
+                       help: "Sales were rounded down to whole shares (or there was too little to sell), so the cash accounts provide this much more than planned.")
+            } else {
+                figure("Leftover cash", Fmt.money(minor: model.residualCash, currency: model.currency),
+                       help: "Money that is not placed — because of whole-share rounding, or because nothing suitable can be bought. It stays on the cash accounts.")
+            }
             VStack(alignment: .leading, spacing: DS.Spacing.xxs) {
                 HelpLabel("Furthest from target", topic: .rebalancing)
                     .font(.kontorCaption)
@@ -194,6 +227,8 @@ struct RebalancingTab: View {
                     Text(Fmt.percentagePoints(model.driftAfter).replacingOccurrences(of: "+", with: ""))
                 }
                 .font(.kontorValue)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
             }
             Spacer(minLength: 0)
             if model.orderCount == 0 {
@@ -210,7 +245,7 @@ struct RebalancingTab: View {
     }
 
     private func idleMessage(_ model: RebalancingModel) -> String {
-        if session.rebalancing.buyOnly, model.cash == 0 {
+        if inputs.wrappedValue.buyOnly, model.cash == 0 {
             return "Nothing to do: without new cash and without sales there is nothing to trade. Enter an amount, or turn off “Buy only”."
         }
         return "No orders needed — the allocation is as close to its targets as these settings allow."
@@ -267,7 +302,7 @@ struct RebalancingTab: View {
                 } content: {
                     includeToggle(row)
                     if let color = row.color {
-                        ColorDot(color: color)
+                        ColorDot(color: color, dashed: row.isUnassigned)
                             .opacity(row.isExcluded ? 0.5 : 1)
                         Text(row.name)
                             .fontWeight(row.depth == 0 ? .medium : .regular)
@@ -279,59 +314,63 @@ struct RebalancingTab: View {
                             .foregroundStyle(.tertiary)
                             .frame(width: 12)
                         Text(row.name)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(row.isExcluded ? .tertiary : .secondary)
                             .lineLimit(1)
                     }
-                    if row.isExcluded, row.classificationID != nil {
-                        Text("excluded")
-                            .font(.caption2.weight(.medium))
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1)
-                            .background(.quaternary, in: Capsule())
+                    if let badge = row.badge {
+                        ExcludedBadge(text: badge)
                     }
                 }
             }
-            .width(min: 170, ideal: compact ? 200 : 300)
+            .width(min: 140, ideal: compact ? 150 : 280)
             TableColumn("Current") { row in
                 Text(Fmt.money(minor: row.value, currency: model.currency))
-                    .numeric()
-                    .foregroundStyle(row.vehicle != nil ? .secondary : .primary)
+                    .numericCell()
+                    .foregroundStyle(row.vehicle != nil || row.isUnassigned ? .secondary : .primary)
             }
-            .width(min: 92, ideal: compact ? 100 : 122, max: 160)
+            .width(min: 92, ideal: compact ? 96 : 140, max: 190)
             .alignment(.trailing)
             TableColumn("Share") { row in
-                Text(Fmt.percent(row.share)).numeric().foregroundStyle(.secondary)
+                if !row.isUnassigned {
+                    Text(Fmt.percent(row.share)).numericCell().foregroundStyle(.secondary)
+                }
             }
-            .width(min: 56, ideal: compact ? 58 : 66, max: 84)
+            .width(min: 56, ideal: compact ? 60 : 76, max: 96)
             .alignment(.trailing)
             TableColumn("Target") { row in
                 if row.classificationID != nil {
                     Text(Fmt.percent(row.targetShare))
-                        .numeric()
+                        .numericCell()
                         .foregroundStyle(row.targetShare == nil ? .tertiary : .primary)
+                        .help(row.targetShare == nil
+                            ? "No target here: this classification is left untouched"
+                            : "The share this classification should have, given what is left untouched next to it")
                 }
             }
-            .width(min: 56, ideal: compact ? 58 : 66, max: 84)
+            .width(min: 56, ideal: compact ? 60 : 76, max: 96)
             .alignment(.trailing)
             TableColumn("Buy / Sell") { row in
-                OrderAmountText(amount: row.amount, currency: model.currency)
+                if !row.isUnassigned {
+                    OrderAmountText(amount: row.amount, currency: model.currency)
+                }
             }
-            .width(min: 96, ideal: compact ? 104 : 124, max: 160)
+            .width(min: 96, ideal: compact ? 100 : 140, max: 190)
             .alignment(.trailing)
             TableColumn("After") { row in
                 if let value = row.resultingValue {
-                    Text(Fmt.money(minor: value, currency: model.currency)).numeric()
+                    Text(Fmt.money(minor: value, currency: model.currency))
+                        .numericCell()
+                        .foregroundStyle(row.vehicle != nil ? .secondary : .primary)
                 }
             }
-            .width(min: 92, ideal: compact ? 100 : 122, max: 160)
+            .width(min: 92, ideal: compact ? 96 : 140, max: 190)
             .alignment(.trailing)
             TableColumn("Share After") { row in
                 if row.classificationID != nil {
-                    Text(Fmt.percent(row.resultingShare)).numeric()
+                    Text(Fmt.percent(row.resultingShare)).numericCell()
                 }
             }
-            .width(min: 66, ideal: compact ? 70 : 80, max: 96)
+            .width(min: 62, ideal: compact ? 66 : 84, max: 100)
             .alignment(.trailing)
         }
         .onKeyPress(.rightArrow) { setExpansion(true, rows: visible) }
@@ -345,18 +384,21 @@ struct RebalancingTab: View {
     @ViewBuilder
     private func includeToggle(_ row: ProposalRow) -> some View {
         if let id = row.classificationID {
+            let taxonomy = taxonomy
+            // Shows what really happens: unchecked whenever the classification is left untouched,
+            // also below an unchecked parent.
             Toggle("Include \(row.name)", isOn: Binding(
-                get: { !session.rebalancing.excludedClassifications.contains(id) },
-                set: { included in
-                    if included { session.rebalancing.excludedClassifications.remove(id) } else { session.rebalancing.excludedClassifications.insert(id) }
-                }))
+                get: { !row.isExcluded },
+                set: { inputs.wrappedValue.setIncluded($0, classification: id, in: taxonomy) }))
                 .labelsHidden()
                 .toggleStyle(.checkbox)
                 .controlSize(.small)
                 .disabled(!row.canExclude)
                 .help(row.canExclude
-                    ? "Uncheck to leave this classification untouched"
-                    : "Only classifications with a target weight take part in rebalancing")
+                    ? "Uncheck to leave this classification and everything below it untouched: nothing in it is bought or sold"
+                    : row.isExcluded
+                        ? "Left untouched together with the classification above"
+                        : "Only classifications with a target weight take part in rebalancing")
         } else if let vehicle = row.vehicle {
             vehicleToggle(vehicle, name: row.name)
         }
@@ -364,18 +406,18 @@ struct RebalancingTab: View {
 
     private func vehicleToggle(_ vehicle: AllocationVehicle, name: String) -> some View {
         Toggle("Include \(name)", isOn: Binding(
-            get: { !session.rebalancing.excludedVehicles.contains(vehicle) },
+            get: { !inputs.wrappedValue.excludedVehicles.contains(vehicle) },
             set: { included in
-                if included { session.rebalancing.excludedVehicles.remove(vehicle) } else { session.rebalancing.excludedVehicles.insert(vehicle) }
+                if included { inputs.wrappedValue.excludedVehicles.remove(vehicle) } else { inputs.wrappedValue.excludedVehicles.insert(vehicle) }
             }))
             .labelsHidden()
             .toggleStyle(.checkbox)
             .controlSize(.small)
-            .help("Uncheck to leave this position out of the calculation: it is neither bought nor sold and does not count towards the targets")
+            .help("Uncheck to keep this position as it is: it is neither bought nor sold, but still counts towards its classification")
     }
 
     private func orderTable(_ model: RebalancingModel, compact: Bool) -> some View {
-        let rows = onlyOrders ? model.vehicleRows.filter { $0.amount != 0 || $0.isExcluded } : model.vehicleRows
+        let rows = onlyOrders ? model.vehicleRows.filter { ($0.vehicle.isSecurity && $0.amount != 0) || $0.isExcluded } : model.vehicleRows
         return Table(rows, selection: $selection) {
             TableColumn("") { row in
                 vehicleToggle(row.vehicle, name: row.name)
@@ -389,37 +431,32 @@ struct RebalancingTab: View {
                         .frame(width: 12)
                     Text(row.name).lineLimit(1)
                     if row.isExcluded {
-                        Text("excluded")
-                            .font(.caption2.weight(.medium))
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1)
-                            .background(.quaternary, in: Capsule())
+                        ExcludedBadge(text: "excluded")
                     }
                 }
                 .opacity(row.isExcluded ? 0.55 : 1)
                 .help(row.classes)
             }
-            .width(min: 150, ideal: compact ? 170 : 280)
+            .width(min: 140, ideal: compact ? 150 : 240)
             if !compact {
                 TableColumn("Held") { row in
                     if let shares = row.sharesHeld {
-                        Text(Fmt.shares(shares)).numeric().foregroundStyle(.secondary)
+                        Text(Fmt.shares(shares)).numericCell().foregroundStyle(.secondary)
                     }
                 }
-                .width(min: 60, ideal: compact ? 64 : 96, max: 130)
+                .width(min: 70, ideal: 124, max: 160)
                 .alignment(.trailing)
             }
             TableColumn("Current") { row in
-                Text(Fmt.money(minor: row.value, currency: model.currency)).numeric()
+                Text(Fmt.money(minor: row.value, currency: model.currency)).numericCell()
             }
-            .width(min: 92, ideal: compact ? 100 : 122, max: 160)
+            .width(min: 92, ideal: compact ? 96 : 140, max: 190)
             .alignment(.trailing)
             if !compact {
                 TableColumn("Weight") { row in
-                    Text(Fmt.percent(row.share)).numeric().foregroundStyle(.secondary)
+                    Text(Fmt.percent(row.share)).numericCell().foregroundStyle(.secondary)
                 }
-                .width(min: 56, ideal: compact ? 58 : 66, max: 84)
+                .width(min: 62, ideal: 76, max: 96)
                 .alignment(.trailing)
             }
             TableColumn("Order") { row in
@@ -431,25 +468,28 @@ struct RebalancingTab: View {
                             Text(Fmt.shares(Shares(raw: abs(shares.raw)))).numeric().fontWeight(.medium)
                         }
                     }
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
                     .help(row.price.map { "At \(Fmt.money(minor: Int64($0.rounded()), currency: model.currency)) per share" } ?? "")
                 }
             }
-            .width(min: 64, ideal: compact ? 70 : 92, max: 130)
+            .width(min: 66, ideal: compact ? 70 : 104, max: 150)
             .alignment(.trailing)
             TableColumn("Amount") { row in
                 OrderAmountText(amount: row.amount, currency: model.currency)
+                    .help(row.vehicle.isSecurity || row.amount == 0 ? "" : "What the transactions add to or take from this account — no extra transaction is needed")
             }
-            .width(min: 96, ideal: compact ? 104 : 124, max: 160)
+            .width(min: 96, ideal: compact ? 100 : 140, max: 190)
             .alignment(.trailing)
             TableColumn("After") { row in
-                Text(Fmt.money(minor: row.resultingValue, currency: model.currency)).numeric()
+                Text(Fmt.money(minor: row.resultingValue, currency: model.currency)).numericCell()
             }
-            .width(min: 92, ideal: compact ? 100 : 122, max: 160)
+            .width(min: 92, ideal: compact ? 96 : 140, max: 190)
             .alignment(.trailing)
             TableColumn("Weight After") { row in
-                Text(Fmt.percent(row.resultingShare)).numeric()
+                Text(Fmt.percent(row.resultingShare)).numericCell()
             }
-            .width(min: 70, ideal: compact ? 74 : 86, max: 100)
+            .width(min: 66, ideal: compact ? 70 : 90, max: 110)
             .alignment(.trailing)
         }
         .contextMenu(forSelectionType: String.self) { ids in
@@ -501,17 +541,47 @@ struct RebalancingTab: View {
         let orders = model.orderCount
         var text = orders == 0 ? "No orders" : "\(orders) \(orders == 1 ? "order" : "orders")"
         text += " · as of \(Fmt.day(model.day, style: .medium)) · \(store.scopeTitle)"
+        // The base of every share on this tab (the same one the Allocation tab uses).
+        if model.unassignedValue != 0 {
+            text += " · shares of the classified \(Fmt.money(minor: model.valueBefore, currency: model.currency)), \(Fmt.money(minor: model.unassignedValue, currency: model.currency)) unassigned"
+        }
         return text
     }
 
     private func review() {
-        var payload = session.rebalancing.payload
+        var payload = inputs.wrappedValue.sanitized(for: taxonomy).payload
         payload["taxonomy"] = taxonomy.id.uuidString
         store.present(.custom(id: RebalancingReviewSheet.requestID, payload: payload))
     }
 }
 
 extension ProposalRow: TreeRow {}
+
+/// "excluded" / "not in scope" next to a row that is left untouched.
+struct ExcludedBadge: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(.caption2.weight(.medium))
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .fixedSize()
+            .padding(.horizontal, 5)
+            .padding(.vertical, 1)
+            .background(.quaternary, in: Capsule())
+    }
+}
+
+extension View {
+    /// A number in a table cell: tabular digits, one line, and — before it would be cut off with
+    /// an ellipsis — slightly smaller type. Money and percentages must never lose digits.
+    func numericCell() -> some View {
+        numeric()
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
+    }
+}
 
 /// "+€500.00" to buy, "−€300.00" to sell, "–" for nothing. An order is not a gain or a loss, so it
 /// carries a sign and weight instead of gain/loss colors.
@@ -526,7 +596,7 @@ struct OrderAmountText: View {
                 .accessibilityLabel("No order")
         } else {
             Text(Fmt.money(minor: amount, currency: currency, signed: true))
-                .numeric()
+                .numericCell()
                 .fontWeight(.medium)
                 .accessibilityLabel("\(amount > 0 ? "Buy" : "Sell") \(Fmt.money(minor: abs(amount), currency: currency))")
         }
@@ -545,7 +615,9 @@ struct RebalancingReviewSheet: View {
 
     @Environment(PortfolioStore.self) private var store
     @State private var model = Loadable<RebalancingModel>()
-    @State private var skipped = Set<UUID>()
+    /// Draft ids are stable across recomputations (see `DraftTransaction.id`), so what the user
+    /// unchecked stays unchecked when quotes or the document change while the sheet is open.
+    @State private var skipped = Set<String>()
     @State private var date: Day?
     @State private var includesCash = false
 
@@ -557,7 +629,7 @@ struct RebalancingReviewSheet: View {
     var body: some View {
         let inputs = RebalancingInputs(payload: payload)
         let taxonomy = taxonomy
-        let key = RebalancingKey(taxonomy: taxonomy?.id ?? UUID(), inputs: inputs, today: store.today)
+        let key = RebalancingKey(taxonomy: taxonomy?.id ?? UUID(), inputs: taxonomy.map(inputs.sanitized(for:)) ?? inputs, today: store.today)
         VStack(alignment: .leading, spacing: 0) {
             header
             Divider()
@@ -608,8 +680,30 @@ struct RebalancingReviewSheet: View {
         .padding(DS.Spacing.xl)
     }
 
+    /// A lazy stack in a scroll view, not a `List`: nothing here is selectable, and a `List` with a
+    /// few hundred drafts trips AppKit's row-height estimation ("reentrant operation in its
+    /// NSTableView delegate").
     private func list(_ model: RebalancingModel) -> some View {
-        List {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 0) {
+                drafts(model)
+            }
+            .padding(.horizontal, DS.Spacing.xl)
+            .padding(.vertical, DS.Spacing.s)
+        }
+    }
+
+    private func sectionHeader(_ title: String) -> some View {
+        Text(title)
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(.secondary)
+            .padding(.top, DS.Spacing.l)
+            .padding(.bottom, DS.Spacing.xs)
+            .accessibilityAddTraits(.isHeader)
+    }
+
+    @ViewBuilder
+    private func drafts(_ model: RebalancingModel) -> some View {
             ForEach(model.drafts) { draft in
                 HStack(spacing: DS.Spacing.m) {
                     Toggle("Include", isOn: Binding(
@@ -647,12 +741,14 @@ struct RebalancingReviewSheet: View {
                         .fontWeight(.medium)
                         .frame(width: 112, alignment: .trailing)
                 }
-                .padding(.vertical, 2)
+                .padding(.vertical, DS.Spacing.xs)
                 .opacity(draft.transaction == nil || skipped.contains(draft.id) ? 0.55 : 1)
                 .accessibilityElement(children: .combine)
+                Divider()
             }
             if let cash = model.cashDraft {
-                Section("Cash") {
+                sectionHeader("Cash")
+                Group {
                     Toggle(isOn: $includesCash) {
                         VStack(alignment: .leading, spacing: 0) {
                             Text(cash.kind == .deposit
@@ -668,16 +764,46 @@ struct RebalancingReviewSheet: View {
                     .toggleStyle(.checkbox)
                 }
             }
-            if !model.cashNotes.isEmpty {
-                Section("Cash accounts in this taxonomy — no transaction needed") {
-                    ForEach(model.cashNotes, id: \.self) { note in
-                        Label(note, systemImage: "banknote")
-                            .foregroundStyle(.secondary)
+            if !model.accounts.isEmpty {
+                sectionHeader("Cash accounts after these transactions")
+                Group {
+                    ForEach(model.accounts) { account in
+                        let balance = account.projected(skipping: skipped, includesCash: includesCash)
+                        HStack(spacing: DS.Spacing.m) {
+                            Label(account.name, systemImage: "banknote")
+                                .foregroundStyle(.secondary)
+                            if balance < 0 {
+                                Label("Overdrawn — \(overdraftAdvice(model))", systemImage: "exclamationmark.triangle.fill")
+                                    .font(.caption)
+                                    .foregroundStyle(DS.Colors.warning)
+                                    .lineLimit(1)
+                            }
+                            Spacer(minLength: DS.Spacing.s)
+                            Text(Fmt.money(minor: account.balance, currency: account.currency))
+                                .numeric()
+                                .foregroundStyle(.secondary)
+                            Image(systemName: "arrow.right")
+                                .font(.caption)
+                                .foregroundStyle(.tertiary)
+                                .accessibilityLabel("becomes")
+                            Text(Fmt.money(minor: balance, currency: account.currency))
+                                .numeric()
+                                .fontWeight(.medium)
+                                .foregroundStyle(balance < 0 ? AnyShapeStyle(DS.Colors.warning) : AnyShapeStyle(.primary))
+                                .frame(minWidth: 112, alignment: .trailing)
+                        }
+                        .padding(.vertical, DS.Spacing.xs)
+                        .accessibilityElement(children: .combine)
+                        Divider()
                     }
                 }
             }
-        }
-        .listStyle(.inset)
+    }
+
+    private func overdraftAdvice(_ model: RebalancingModel) -> String {
+        if let cash = model.cashDraft, cash.kind == .deposit, !includesCash { return "record the deposit, or transfer money first" }
+        if model.cashDraft?.kind == .withdrawal, includesCash { return "transfer money here first, or withdraw less" }
+        return "transfer money here first"
     }
 
     private var selected: [Transaction] {

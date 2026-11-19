@@ -66,7 +66,9 @@ struct ImportTag: Hashable, Sendable {
 struct PortfolioPerformanceResult: Sendable, Hashable {
     var fileName: String
     var byteCount: Int
-    /// The converted document; transactions carry `tag.source` (plan executions keep `plan:<id>`).
+    /// The converted document; transactions carry `tag.source`. Plan executions keep `plan:<id>` (the
+    /// Plans screen finds them by it); `ImportRecord` in the file's settings says which of them came
+    /// with this import.
     var file: PortfolioFile
     var report: ImportReport
     var tag: ImportTag
@@ -74,13 +76,24 @@ struct PortfolioPerformanceResult: Sendable, Hashable {
     var lastDay: Day?
     /// Number of transactions per kind, most frequent first.
     var kinds: [KindCount]
-    /// What merging into the open portfolio would do; nil when that portfolio is empty.
+    /// What merging into the open portfolio would do; nil when that portfolio is untouched (the
+    /// file then simply becomes its content).
     var mergePreview: PortfolioMerge.Summary?
 
     struct KindCount: Sendable, Hashable, Identifiable {
         var kind: Transaction.Kind
         var count: Int
         var id: Transaction.Kind { kind }
+    }
+
+    /// Currencies used in the file for which it holds no exchange rates. Portfolio Performance
+    /// downloads rates itself and does not store them, so this is the normal case for a file with
+    /// more than one currency: until rates are downloaded, amounts in these currencies count as 0.
+    var currenciesWithoutRates: [CurrencyCode] {
+        let base = file.settings.baseCurrency
+        return file.currencies.filter { currency in
+            currency != base && !file.exchangeRates.contains { !$0.days.isEmpty && ($0.base == currency || $0.quote == currency) }
+        }.sorted()
     }
 
     var warnings: [ImportWarning] { report.warnings.filter { $0.severity == .warning } }
@@ -170,6 +183,8 @@ enum ImportLoader {
             last = max(last ?? transaction.date, transaction.date)
             counts[transaction.kind, default: 0] += 1
         }
+        // Plan executions keep their plan tag; note which ones belong to this import.
+        ImportRecord(planExecutionsIn: file.transactions)?.write(for: tag.source, to: &file.settings.preferences)
         let order = Dictionary(uniqueKeysWithValues: Transaction.Kind.allCases.enumerated().map { ($1, $0) })
         let kinds = counts
             .map { PortfolioPerformanceResult.KindCount(kind: $0.key, count: $0.value) }
@@ -177,14 +192,102 @@ enum ImportLoader {
         return PortfolioPerformanceResult(
             fileName: fileName, byteCount: byteCount, file: file, report: result.report, tag: tag,
             firstDay: first, lastDay: last, kinds: kinds,
-            mergePreview: current.isBlank ? nil : PortfolioMerge.merge(file, into: current).summary)
+            mergePreview: current.isUntouched ? nil : PortfolioMerge.merge(file, into: current).summary)
     }
 }
 
 extension PortfolioFile {
-    /// Nothing in it yet — an import may simply become the document.
+    /// Nothing at all in it.
     var isBlank: Bool {
         securities.isEmpty && accounts.isEmpty && depots.isEmpty && transactions.isEmpty && taxonomies.isEmpty && plans.isEmpty
+    }
+
+    /// Nothing has been recorded yet — an import may simply become the document. True for an empty
+    /// file and for a new portfolio as the app creates it (one cash account, one depot and empty
+    /// taxonomy templates): no securities, transactions or plans, nothing classified, nothing watched.
+    /// A portfolio with several hand-made accounts or depots is not untouched; an import merges into it.
+    var isUntouched: Bool {
+        guard securities.isEmpty, transactions.isEmpty, plans.isEmpty, accounts.count <= 1, depots.count <= 1 else { return false }
+        guard watchlists.allSatisfy(\.securityIDs.isEmpty) else { return false }
+        return taxonomies.allSatisfy { !$0.root.contains(where: \.hasAssignments) }
+    }
+}
+
+extension Classification {
+    /// Anything assigned here or below.
+    var hasAssignments: Bool { !assignments.isEmpty || children.contains(where: \.hasAssignments) }
+}
+
+// MARK: - Import records
+
+/// Which plan executions an import brought. Transactions normally carry their import's tag in
+/// `source`, but plan executions must keep `plan:<id>` (that is how plans find their bookings), so
+/// the import notes them in the document's settings: `import.plan-executions:<import tag>` =
+/// `<last day>|<plan id>,<plan id>…`. "Recent Imports" counts and removes them with the import.
+struct ImportRecord: Hashable, Sendable {
+    static let keyPrefix = "import.plan-executions:"
+
+    /// The plans whose executions came with the import.
+    var planIDs: Set<UUID>
+    /// The date of the last imported execution: later bookings of these plans were made in Kontor.
+    var through: Day
+
+    init(planIDs: Set<UUID>, through: Day) {
+        self.planIDs = planIDs
+        self.through = through
+    }
+
+    /// The record for the plan executions among `transactions`; nil if there are none.
+    init?(planExecutionsIn transactions: some Sequence<Transaction>) {
+        var ids = Set<UUID>()
+        var last: Day?
+        for transaction in transactions {
+            guard let id = Self.planID(of: transaction) else { continue }
+            ids.insert(id)
+            last = max(last ?? transaction.date, transaction.date)
+        }
+        guard let last else { return nil }
+        self.init(planIDs: ids, through: last)
+    }
+
+    init?(value: String) {
+        let parts = value.split(separator: "|", maxSplits: 1, omittingEmptySubsequences: false)
+        guard parts.count == 2, let day = Day(iso: parts[0]) else { return nil }
+        let ids = parts[1].split(separator: ",").compactMap { UUID(uuidString: String($0)) }
+        guard !ids.isEmpty else { return nil }
+        self.init(planIDs: Set(ids), through: day)
+    }
+
+    var value: String { "\(through.iso)|" + planIDs.map(\.uuidString).sorted().joined(separator: ",") }
+
+    /// The plan a transaction is an execution of (`source` = `plan:<uuid>`).
+    static func planID(of transaction: Transaction) -> UUID? {
+        guard let source = transaction.source, source.count > 5, source.prefix(5).lowercased() == "plan:" else { return nil }
+        return UUID(uuidString: String(source.dropFirst(5)))
+    }
+
+    func contains(_ transaction: Transaction) -> Bool {
+        guard transaction.date <= through, let id = Self.planID(of: transaction) else { return false }
+        return planIDs.contains(id)
+    }
+
+    /// Stores the record for the import tagged `source`, extending one that is already there.
+    func write(for source: String, to preferences: inout [String: String]) {
+        var record = self
+        if let existing = preferences[Self.keyPrefix + source].flatMap(ImportRecord.init(value:)) {
+            record.planIDs.formUnion(existing.planIDs)
+            record.through = max(record.through, existing.through)
+        }
+        preferences[Self.keyPrefix + source] = record.value
+    }
+
+    /// All records of a document, by import tag.
+    static func all(in preferences: [String: String]) -> [String: ImportRecord] {
+        var result: [String: ImportRecord] = [:]
+        for (key, value) in preferences where key.hasPrefix(keyPrefix) {
+            if let record = ImportRecord(value: value) { result[String(key.dropFirst(keyPrefix.count))] = record }
+        }
+        return result
     }
 }
 
@@ -202,12 +305,15 @@ struct RecentImport: Sendable, Hashable, Identifiable {
 
     var id: String { source }
 
-    /// Groups the ledger by import tag, most recent import first (untagged dates last).
-    static func list(_ transactions: [Transaction]) -> [RecentImport] {
+    /// Groups the ledger by import tag, most recent import first (untagged dates last). `preferences`
+    /// are the document's (`Settings.preferences`): they hold the `ImportRecord`s, which add the plan
+    /// executions a Portfolio Performance import brought to that import.
+    static func list(_ transactions: [Transaction], preferences: [String: String] = [:]) -> [RecentImport] {
+        let membership = Membership(preferences: preferences)
         var bySource: [String: RecentImport] = [:]
         var firstEntry: [String: Transaction] = [:]
         for transaction in transactions {
-            guard let source = transaction.source, source.hasPrefix("csv-import") || source.hasPrefix("pp-import") else { continue }
+            guard let source = membership.importSource(of: transaction) else { continue }
             if var entry = bySource[source] {
                 entry.count += 1
                 entry.firstDay = min(entry.firstDay, transaction.date)
@@ -232,5 +338,51 @@ struct RecentImport: Sendable, Hashable, Identifiable {
             default: return a.source.localizedStandardCompare(b.source) == .orderedAscending
             }
         }
+    }
+
+    /// Removes everything `source` imported from `file`: the transactions carrying the tag and the plan
+    /// executions its record names (and the record). Securities, accounts and plans stay.
+    /// Returns the number of transactions removed.
+    @discardableResult
+    static func remove(_ source: String, from file: inout PortfolioFile) -> Int {
+        let membership = Membership(preferences: file.settings.preferences)
+        let before = file.transactions.count
+        file.transactions.removeAll { membership.importSource(of: $0) == source }
+        file.settings.preferences[ImportRecord.keyPrefix + source] = nil
+        return before - file.transactions.count
+    }
+
+    /// Which import a transaction belongs to.
+    struct Membership: Sendable {
+        private var records: [(source: String, record: ImportRecord)]
+        private var planIDs = Set<UUID>()
+
+        init(preferences: [String: String]) {
+            // Deterministic when two imports name the same plan: the older import (lower tag) wins.
+            records = ImportRecord.all(in: preferences).sorted { $0.key < $1.key }.map { (source: $0.key, record: $0.value) }
+            for entry in records { planIDs.formUnion(entry.record.planIDs) }
+        }
+
+        func importSource(of transaction: Transaction) -> String? {
+            guard let source = transaction.source else { return nil }
+            if source.hasPrefix("csv-import") || source.hasPrefix("pp-import") { return source }
+            guard !records.isEmpty, let id = ImportRecord.planID(of: transaction), planIDs.contains(id) else { return nil }
+            return records.first { $0.record.contains(transaction) }?.source
+        }
+    }
+}
+
+// MARK: - Small text helpers
+
+enum ImportText {
+    /// "Jun 2026" when both days fall into one month, "Mar 2019 – Jun 2026" otherwise.
+    static func months(_ first: Day, _ last: Day) -> String {
+        let from = Fmt.day(first, style: .shortMonthYear), to = Fmt.day(last, style: .shortMonthYear)
+        return from == to ? from : "\(from) – \(to)"
+    }
+
+    /// "1 row", "2 rows".
+    static func count(_ count: Int, _ singular: String, _ plural: String) -> String {
+        "\(Fmt.integer(count)) \(count == 1 ? singular : plural)"
     }
 }

@@ -9,12 +9,17 @@ import KontorUI
 ///
 /// Sheets owned by this feature:
 /// * `.importFile(URL?)` — `ImportSheet`: Portfolio Performance summary, CSV wizard, guidance.
+/// * `.custom(id: "import.file", payload: ["path": …, "target": transactions|quotes|securities])` —
+///   the same sheet for a file chosen from one of the "Choose CSV…" entry points: the request itself
+///   says what the file is expected to contain (no shared state between windows or requests).
 /// * `.export(ExportRequest)` — `ExportSheet`.
 /// * `.custom(id: "import.export", payload: ["format": …])` — the export sheet opened on a format
 ///   `ExportRequest` cannot name (`holdings`, `pp`, `json`, also `transactions`, `quotes`, `securities`).
 public enum ImportFeature {
     /// Id of the feature-private export request (see above).
     public static let exportSheetID = "import.export"
+    /// Id of the feature-private import request that carries the expected content (see above).
+    public static let importSheetID = "import.file"
 
     @MainActor public static var module: FeatureModule {
         FeatureModule(.`import`) { ImportScreen() }
@@ -24,6 +29,10 @@ public enum ImportFeature {
                     ImportSheet(url: url)
                 } else if case .export(let export) = request {
                     ExportSheet(request: export)
+                } else if case .custom(id: importSheetID, let payload) = request {
+                    ImportSheet(
+                        url: payload["path"].map { URL(fileURLWithPath: $0) },
+                        expectedTarget: payload["target"].flatMap(CSVImportTarget.init(rawValue:)))
                 } else if case .custom(id: exportSheetID, let payload) = request {
                     ExportSheet(request: ExportRequest(), initialFormat: payload["format"].flatMap(ExportFormat.init(rawValue:)))
                 }
@@ -63,8 +72,23 @@ public enum ImportFeature {
     /// Asks for a file (open panel) and hands it to the import sheet. `target` pre-selects what a CSV contains.
     @MainActor static func chooseFile(_ store: PortfolioStore, target: CSVImportTarget?) {
         guard let url = ImportPanels.chooseFile(message: message(for: target)) else { return }
-        ImportHints.preferredTarget = target
-        store.present(.importFile(url))
+        store.present(importRequest(url, target: target))
+    }
+
+    /// The sheet request for `url`. The expectation travels with the request — it applies to this
+    /// file only, and only if the file turns out to be a CSV.
+    nonisolated static func importRequest(_ url: URL, target: CSVImportTarget?) -> SheetRequest {
+        guard let target, url.isFileURL else { return .importFile(url) }
+        return .custom(id: importSheetID, payload: ["path": url.path, "target": target.rawValue])
+    }
+
+    /// Hands dropped files to the importer: the first one now, the others one after another (sheet
+    /// requests queue), so nothing that was dropped is ignored.
+    @MainActor static func importDropped(_ urls: [URL], into store: PortfolioStore) -> Bool {
+        let files = urls.filter(\.isFileURL)
+        guard !files.isEmpty else { return false }
+        for url in files { store.present(.importFile(url)) }
+        return true
     }
 
     nonisolated private static func message(for target: CSVImportTarget?) -> String {

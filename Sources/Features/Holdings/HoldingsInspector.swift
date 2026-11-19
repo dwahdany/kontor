@@ -6,6 +6,9 @@ struct HoldingDetail: Sendable {
     struct Query: Hashable, Sendable {
         var securityID: UUID?
         var accountID: UUID?
+        /// The statement day; nil = the end of the analysis interval (see `HoldingsQuery.day`).
+        var day: Day?
+        var hasPeriodFigures = true
     }
 
     struct DepotLine: Sendable, Identifiable {
@@ -40,6 +43,11 @@ struct HoldingDetail: Sendable {
     var isHeld = false
     var isValued = true
     var isClassificationScope = false
+    /// Part of the position inside the scope in basis points; nil = all of it.
+    var assignedWeight: Int?
+    var valuationIssue: HoldingRow.ValuationIssue?
+    var hasPeriodFigures = true
+    /// The part of the position inside the scope (scaled like its value in a classification scope).
     var shares: Shares?
     var price: Price?
     var priceDay: Day?
@@ -69,7 +77,9 @@ struct HoldingDetail: Sendable {
 
     init(_ analysis: Analysis, query: Query) {
         let ledger = analysis.ledger
-        let snapshot = analysis.snapshot
+        let statementDay = query.day ?? analysis.interval.end
+        let snapshot = statementDay == analysis.interval.end ? analysis.snapshot : ledger.snapshot(on: statementDay, scope: analysis.scope)
+        hasPeriodFigures = query.hasPeriodFigures
         day = snapshot.day
         reportingCurrency = analysis.currency
         chartStart = snapshot.day.advanced(by: -365)
@@ -90,16 +100,24 @@ struct HoldingDetail: Sendable {
             let chartInterval = DayInterval(start: chartStart, end: day)
             levels = ledger.priceLevels(securityID: id, in: chartInterval) ?? []
             markers = ChartMarker.markers(for: ledger.transactions(forSecurity: id).filter { chartInterval.contains($0.date) })
-            if let record = analysis.security(id) {
+            if query.hasPeriodFigures, let record = analysis.security(id) {
                 ttwror = record.ttwror
                 irr = record.irr
                 dividends = record.dividends
                 realized = record.realizedGain
             }
             if let position = snapshot.position(id) {
+                // In a classification scope every share count is the assigned part, like the money.
+                let scopeWeight = Int32(clamping: position.weight)
+                func inScope(_ shares: Shares) -> Shares {
+                    position.weight == 10_000 ? shares : Shares(raw: FixedMath.weighted(shares.raw, scopeWeight))
+                }
                 isHeld = true
                 isValued = position.isValued
-                shares = position.shares
+                if !position.isValued { valuationIssue = position.price == nil ? .noPrice : .noExchangeRate }
+                // Value and cost of a classification scope are the assigned part; so are the shares.
+                if position.weight != 10_000 { assignedWeight = position.weight }
+                shares = inScope(position.shares)
                 localValue = position.valueInSecurityCurrency.minor
                 value = position.value.minor
                 weight = snapshot.share(of: position)
@@ -110,7 +128,7 @@ struct HoldingDetail: Sendable {
                 purchaseLevel = position.purchasePrice?.doubleValue
                 depots = position.holdings.map { holding in
                     DepotLine(
-                        id: holding.depotID, name: ledger.depot(holding.depotID)?.name ?? "Depot", shares: holding.shares,
+                        id: holding.depotID, name: ledger.depot(holding.depotID)?.name ?? "Depot", shares: inScope(holding.shares),
                         value: holding.value.minor, costBasis: holding.costBasis.minor,
                         share: position.value.minor > 0 ? Double(holding.value.minor) / Double(position.value.minor) : nil)
                 }
@@ -118,7 +136,7 @@ struct HoldingDetail: Sendable {
                 let open = ledger.openLots(on: day, scope: analysis.scope).filter { $0.securityID == id }
                 lots = open.sorted { $0.acquired < $1.acquired }.enumerated().map { index, lot in
                     Lot(
-                        id: index, acquired: lot.acquired, depotName: ledger.depot(lot.depotID)?.name ?? "Depot", shares: lot.shares,
+                        id: index, acquired: lot.acquired, depotName: ledger.depot(lot.depotID)?.name ?? "Depot", shares: inScope(lot.shares),
                         cost: lot.cost,
                         value: position.shares.raw != 0 ? mulDiv(position.value.minor, lot.shares.raw, position.shares.raw) : 0,
                         holdingDays: lot.acquired.distance(to: day))
@@ -132,6 +150,7 @@ struct HoldingDetail: Sendable {
             if let cash = snapshot.cash(id) {
                 isHeld = true
                 isValued = cash.isValued
+                if !cash.isValued { valuationIssue = .noExchangeRate }
                 localValue = cash.balance.minor
                 value = cash.value.minor
                 weight = snapshot.totalValue.minor > 0 ? Double(cash.value.minor) / Double(snapshot.totalValue.minor) : nil
@@ -148,7 +167,9 @@ struct HoldingsInspector: View {
 
     var body: some View {
         let state = HoldingsViewState.of(store)
-        let query = HoldingDetail.Query(securityID: store.route.securityID, accountID: store.route.accountID)
+        let period = state.statementPeriod(in: store)
+        let query = HoldingDetail.Query(
+            securityID: store.route.securityID, accountID: store.route.accountID, day: period.day, hasPeriodFigures: period.hasFigures)
         ScrollView {
             VStack(alignment: .leading, spacing: DS.Spacing.l) {
                 if let detail = detail.value {
@@ -164,7 +185,7 @@ struct HoldingsInspector: View {
             .opacity(detail.isRefreshing ? 0.7 : 1)
         }
         .loadingOverlay(detail.isInitialLoad)
-        .analysisTask($detail, id: "holdings.detail", interval: state.interval(in: store), variant: query) { analysis in
+        .analysisTask($detail, id: "holdings.detail", interval: period.interval, variant: query) { analysis in
             HoldingDetail(analysis, query: query)
         }
     }
@@ -204,8 +225,18 @@ struct HoldingsInspector: View {
         if d.isHeld {
             section("Position") {
                 kv("Shares", d.shares.map { Fmt.shares($0) } ?? "")
+                if let weight = d.assignedWeight {
+                    Text("\(Fmt.percent(basisPoints: weight, decimals: weight % 100 == 0 ? 0 : 2)) of the position is in \(store.scopeTitle). Shares, value and cost are that part.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 kv("Price", d.price.map { Fmt.price($0, currency: d.currency) } ?? "")
-                kv("Market Value", Fmt.money(minor: d.value, currency: d.reportingCurrency))
+                if d.isValued {
+                    kv("Market Value", Fmt.money(minor: d.value, currency: d.reportingCurrency))
+                } else {
+                    kv("Market Value", d.valuationIssue == .noExchangeRate ? "No \(d.currency) rate" : "No price")
+                }
                 if d.currency != d.reportingCurrency, let local = d.localValue {
                     kv("in \(d.currency)", Fmt.money(minor: local, currency: d.currency))
                 }
@@ -235,7 +266,14 @@ struct HoldingsInspector: View {
                 .foregroundStyle(.secondary)
         }
 
-        section("Period · \(store.period.title)") {
+        let period = HoldingsViewState.of(store).statementPeriod(in: store)
+        section("Period · \(period.title(of: store.period))") {
+            if let note = period.note(of: store.period) {
+                Text(note)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             labeled("TTWROR", topic: .ttwror) {
                 if let value = d.ttwror { GainText(percent: value) } else { Text(Fmt.missing) }
             }

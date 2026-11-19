@@ -140,11 +140,16 @@ struct PlansModel: Sendable {
     var dueCount = 0
     /// Names of the plans with open executions ("ETF Plan (2)").
     var dueSummary: [String] = []
-    /// What the active plans move per month, in the reporting currency.
+    /// What the plans that are running today move per month, in the reporting currency. Plans that
+    /// have not started yet, have ended or cannot be executed are not part of it.
     var monthlyPurchases: Int64 = 0
     var monthlyDeposits: Int64 = 0
     var monthlyWithdrawals: Int64 = 0
+    /// Plans that have dates ahead (running or not started yet) and can be executed.
     var activeCount = 0
+    /// Running plans left out of the monthly figures because their amount cannot be converted
+    /// into the reporting currency.
+    var unconvertedCount = 0
     var currency: CurrencyCode = ""
 
     struct Query: Hashable, Sendable {
@@ -171,8 +176,10 @@ struct PlansModel: Sendable {
             var row = PlanRow(
                 id: plan.id, name: plan.name, kind: plan.kind, kindTitle: plan.kind.title, target: target,
                 securityID: plan.securityID, accountID: plan.accountID, amount: plan.amount,
-                intervalMonths: plan.intervalMonths, start: plan.start, end: plan.end, nextDue: status.nextDue,
-                executions: executions.count, total: executions.reduce(0) { $0 + $1.amount.minor },
+                intervalMonths: plan.intervalMonths, start: plan.start, end: plan.end,
+                // A plan that cannot be executed has no meaningful "next due".
+                nextDue: status.problem == nil ? status.nextDue : nil,
+                executions: executions.count, total: executions.reduce(0) { ProjectionBase.saturatingSum($0, $1.amount.minor) },
                 missing: status.problem == nil ? status.missing : [], skipped: status.skipped.count, state: state)
             if case .problem(let text) = state { row.problem = text }
             rows.append(row)
@@ -183,13 +190,20 @@ struct PlansModel: Sendable {
             }
             if status.nextDue != nil, status.problem == nil, plan.intervalMonths > 0 {
                 activeCount += 1
-                let converted = ledger.converter.convert(
-                    minor: plan.amount.minor, from: plan.amount.currency, to: currency, on: today) ?? 0
-                let perMonth = Int64((Double(converted) / Double(plan.intervalMonths)).rounded())
+                // "Per month" describes what happens now: a plan whose first execution is still
+                // ahead moves nothing yet.
+                guard plan.start <= today else { continue }
+                guard let converted = ledger.converter.convert(
+                    minor: plan.amount.minor, from: plan.amount.currency, to: currency, on: today)
+                else {
+                    unconvertedCount += 1
+                    continue
+                }
+                let perMonth = FixedMath.saturatingInt64(Double(converted) / Double(plan.intervalMonths))
                 switch plan.kind {
-                case .purchase: monthlyPurchases += perMonth
-                case .deposit: monthlyDeposits += perMonth
-                case .withdrawal: monthlyWithdrawals += perMonth
+                case .purchase: monthlyPurchases = ProjectionBase.saturatingSum(monthlyPurchases, perMonth)
+                case .deposit: monthlyDeposits = ProjectionBase.saturatingSum(monthlyDeposits, perMonth)
+                case .withdrawal: monthlyWithdrawals = ProjectionBase.saturatingSum(monthlyWithdrawals, perMonth)
                 }
             }
         }
@@ -280,6 +294,7 @@ struct PlanDetail: Sendable {
     var history: [PlanTimelineEntry]
     var executions: Int
     var missing: [Day]
+    /// Dates the user skipped and that are not accounted for by a transaction booked on another day.
     var skipped: [Day]
     var total: Money
     var firstExecution: Day?
@@ -310,16 +325,21 @@ struct PlanDetail: Sendable {
         let security = plan.securityID.flatMap { ledger.security($0) }
         state = PlansModel.state(plan, status: status, today: today, security: security?.name)
         if case .problem(let text) = state { problem = text }
-        nextDue = status.nextDue
+        nextDue = status.problem == nil ? status.nextDue : nil
         missing = status.problem == nil ? status.missing : []
-        skipped = status.skipped
 
         let transactions = PlanExecutions(ledger).transactions(of: plan)
+        // Skipped dates whose execution sits in the ledger on another day — the history of a plan
+        // whose execution day was changed "from the next execution on", or a transaction moved by
+        // more than the engine's week. They are shown as what they are: booked, on that other day.
+        let settled = GenerationProposal.settled(plan: plan, dates: status.skipped, status: status, executions: transactions)
+        skipped = settled.isEmpty ? status.skipped : status.skipped.filter { settled[$0] == nil }
         executions = transactions.count
-        total = Money(minor: transactions.reduce(0) { $0 + $1.amount.minor }, currency: plan.amount.currency)
+        total = Money(minor: transactions.reduce(0) { ProjectionBase.saturatingSum($0, $1.amount.minor) }, currency: plan.amount.currency)
         firstExecution = transactions.first?.date
 
-        let dueByTransaction = Dictionary(status.executions.map { ($0.transactionID, $0.due) }, uniquingKeysWith: { a, _ in a })
+        var dueByTransaction = Dictionary(status.executions.map { ($0.transactionID, $0.due) }, uniquingKeysWith: { a, _ in a })
+        for (due, transaction) in settled { dueByTransaction[transaction.id] = due }
         var entries: [PlanTimelineEntry] = transactions.map { t in
             PlanTimelineEntry(
                 id: "t-\(t.id.uuidString)", kind: .executed(transactionID: t.id), due: dueByTransaction[t.id] ?? t.date,
@@ -332,8 +352,9 @@ struct PlanDetail: Sendable {
 
         // The next dates: the schedule up to a horizon that surely contains them, skipped ones included.
         upcoming = []
-        if plan.intervalMonths > 0 {
-            let horizon = today.addingMonths(max(plan.intervalMonths, 1) * (Self.upcomingCount + 2))
+        // (Counted from the first execution if that is still ahead; nothing for a plan that cannot run.)
+        if plan.intervalMonths > 0, status.problem == nil {
+            let horizon = max(today, plan.start).addingMonths(min(plan.intervalMonths, 1_200) * (Self.upcomingCount + 2))
             let skippedSet = Set(plan.skippedDueDates(through: horizon))
             upcoming = plan.dueDates(through: horizon, includingSkipped: true)
                 .filter { $0 > today }
@@ -377,7 +398,7 @@ struct PlanDetail: Sendable {
         let valuation = own.valuation(in: interval, scope: scope)
         let snapshot = own.snapshot(on: interval.end, scope: scope)
         let shares = purchases.reduce(Shares.zero) { $0 + $1.shares }
-        let paid = purchases.reduce(0) { $0 + $1.amount.minor }
+        let paid = purchases.reduce(0) { ProjectionBase.saturatingSum($0, $1.amount.minor) }
         return PlanPerformance(
             currency: valuation.currency, invested: valuation.totalInflows - valuation.totalOutflows,
             value: valuation.finalValue, irr: valuation.irr(),

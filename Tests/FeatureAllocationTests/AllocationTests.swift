@@ -84,10 +84,13 @@ private let today = Day(year: 2026, month: 6, day: 30)
         #expect(t.targetStatus(ofParent: nil).isComplete)
 
         (t, _) = sample()
-        t.normalizeTargets(ofParent: nil)               // 60 : 30 scaled to 100 %
-        #expect(t.root.map(\.targetWeight) == [6_667, 3_333, 0])
+        t.normalizeTargets(ofParent: nil)               // 60 : 30 scaled to 100 %, C stays without a target
+        #expect(t.root.map(\.targetWeight) == [6_667, 3_333, nil])
         status = t.targetStatus(ofParent: nil)
-        #expect(status.isComplete)
+        #expect(status.isValid && !status.isComplete)
+        // Nothing is missing any more, so "Distribute Remainder" must not invent a 0 % target either.
+        t.distributeRemainder(ofParent: nil)
+        #expect(t.root.map(\.targetWeight) == [6_667, 3_333, nil])
 
         t.equalizeTargets(ofParent: nil)
         #expect(t.root.compactMap(\.targetWeight).reduce(0, +) == 10_000)
@@ -169,7 +172,7 @@ private let today = Day(year: 2026, month: 6, day: 30)
     @Test func demoAllocationAddsUp() async throws {
         let store = demoStore()
         let taxonomy = try #require(store.file.taxonomies.first)
-        let model = try await store.analyze("allocation.model", variant: taxonomy.id) { AllocationModel($0, taxonomy: taxonomy) }
+        let model = try await store.analyze("allocation.model", variant: store.allocationKey(for: taxonomy)) { AllocationModel($0, taxonomy: taxonomy) }
         #expect(model.hasValue && model.hasTargets)
         #expect(model.rows.reduce(0) { $0 + $1.value } == model.totalValue)
         #expect(model.classifiedValue + model.unassignedValue == model.totalValue)
@@ -218,7 +221,11 @@ private let today = Day(year: 2026, month: 6, day: 30)
             inputs.wholeShares = whole
             let m = try await model(store, inputs)
             #expect(m.securityBuys - m.securitySells + m.accountChange + m.residualCash == inputs.cash)
-            #expect(m.vehicleRows.reduce(0) { $0 + $1.amount } == inputs.cash - m.residualCash)
+            // Purchases never need more money than there is.
+            #expect(m.residualCash >= 0)
+            // Security orders plus what they do to the cash accounts account for every cent.
+            #expect(m.vehicleRows.reduce(0) { $0 + $1.amount } == inputs.cash)
+            #expect(m.valueAfter == m.valueBefore + inputs.cash)
             if buyOnly {
                 #expect(m.securitySells == 0)
                 #expect(m.vehicleRows.allSatisfy { $0.amount >= 0 })

@@ -154,7 +154,9 @@ import Testing
         #expect(apple.currency == "USD")
         #expect(apple.prices.count == 1409)
         #expect(apple.prices.price(on: day("2010-01-04")) == Price(30.57))
-        #expect(apple.prices.latest == PricePoint(day: day("2015-08-07"), price: Price(115.51)))
+        // The file holds 115.51 as the last historic price and 115.52 as the latest quote of the same day;
+        // Portfolio Performance values with the latest one, and so does the import.
+        #expect(apple.prices.latest == PricePoint(day: day("2015-08-07"), price: Price(115.52)))
         #expect(apple.events.map(\.kind) == [.split])
         #expect(apple.events[0].detail == "7:1")
         #expect(apple.events[0].day == day("2014-06-09"))

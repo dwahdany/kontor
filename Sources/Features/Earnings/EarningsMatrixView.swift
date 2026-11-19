@@ -8,18 +8,23 @@ struct EarningsMatrixView: View {
     let model: EarningsModel
     /// Width of the screen's content area: the columns are sized from it.
     let width: CGFloat
-    /// Show the payments of one month (`year × 12 + month − 1`).
+    /// Show the dividend payments of one month (`year × 12 + month − 1`).
     let showPayments: (Int) -> Void
 
     private let yearWidth: CGFloat = 62
     private let growthWidth: CGFloat = 74
     private let gap: CGFloat = 2
+    /// Sets the Total column apart from December.
+    private let totalGap: CGFloat = 10
 
     /// Twelve months and the total share what is left of the card.
     private var columnWidth: CGFloat {
         let inner = width - 2 * DS.Spacing.xl - 2 * DS.Spacing.l - 16
-        return max(30, ((inner - yearWidth - growthWidth - 14 * gap) / 13).rounded(.down))
+        return max(30, ((inner - yearWidth - growthWidth - totalGap - 14 * gap) / 13).rounded(.down))
     }
+
+    /// The Payments view lists dividend payments, so a month leads there only for dividends.
+    private var drillsDown: Bool { model.kind == .dividends }
 
     private var isCompact: Bool { columnWidth < 52 }
     /// Cents only where the columns are wide enough for them.
@@ -39,9 +44,15 @@ struct EarningsMatrixView: View {
                                 .font(.callout)
                                 .foregroundStyle(.secondary)
                             Spacer()
-                            Text("Click a month to see its payments")
-                                .font(.caption)
-                                .foregroundStyle(.tertiary)
+                            if drillsDown {
+                                Text("Click a month to see its payments")
+                                    .font(.caption)
+                                    .foregroundStyle(.tertiary)
+                            } else if model.kind.isCost {
+                                Text("Negative: more was refunded than charged")
+                                    .font(.caption)
+                                    .foregroundStyle(.tertiary)
+                            }
                         }
                         .lineLimit(1)
                         if model.matrix.isEmpty || model.matrixMaximum == 0 {
@@ -77,10 +88,10 @@ struct EarningsMatrixView: View {
                 ForEach(0..<12, id: \.self) { month in
                     Text(ChartLabels.shortMonth(month + 1)).padding(.trailing, inset).frame(width: columnWidth, alignment: .trailing)
                 }
-                Text("Total").padding(.trailing, inset).frame(width: columnWidth, alignment: .trailing)
+                Text("Total").padding(.trailing, inset).frame(width: columnWidth, alignment: .trailing).padding(.leading, totalGap)
                 Text(isCompact ? "vs. Prior" : "vs. Prior Year")
                     .frame(width: growthWidth, alignment: .trailing)
-                    .help("Change against the year before. For the current year: against the same days of last year.")
+                    .help("Change against the year before. For the current year: against the same days of last year. Shown only while both amounts are positive.")
             }
             .font(.kontorCaption)
             .foregroundStyle(.secondary)
@@ -100,9 +111,10 @@ struct EarningsMatrixView: View {
                     }
                     Text(amount(row.total))
                         .fontWeight(.semibold)
-                        .foregroundStyle(row.total < 0 ? AnyShapeStyle(gainStyle.loss) : AnyShapeStyle(.primary))
+                        .foregroundStyle(style(for: row.total))
                         .padding(.trailing, inset)
                         .frame(width: columnWidth, height: 26, alignment: .trailing)
+                        .padding(.leading, totalGap)
                         .help(Fmt.money(minor: row.total, currency: model.currency))
                     growth(row)
                 }
@@ -125,23 +137,25 @@ struct EarningsMatrixView: View {
                     .fontWeight(.bold)
                     .padding(.trailing, inset)
                     .frame(width: columnWidth, alignment: .trailing)
+                    .padding(.leading, totalGap)
                     .help(Fmt.money(minor: model.totalValue, currency: model.currency))
             }
-            HStack(spacing: gap) {
-                Text("Share")
-                    .frame(width: yearWidth, alignment: .leading)
-                    .help("How much of the total falls into each calendar month.")
-                ForEach(0..<12, id: \.self) { month in
-                    let value = model.matrixColumnTotals[month]
-                    Text(model.totalValue > 0 && value != 0
-                         ? Fmt.percent(Double(value) / Double(model.totalValue), decimals: 0)
-                         : Fmt.missing)
-                        .padding(.trailing, inset)
-                        .frame(width: columnWidth, alignment: .trailing)
+            // Shares of a total only while every month pulls in the same direction.
+            if model.matrixSharesAreMeaningful, model.totalValue != 0 {
+                HStack(spacing: gap) {
+                    Text("Share")
+                        .frame(width: yearWidth, alignment: .leading)
+                        .help("How much of the total falls into each calendar month.")
+                    ForEach(0..<12, id: \.self) { month in
+                        let value = model.matrixColumnTotals[month]
+                        Text(value != 0 ? Fmt.percent(Double(value) / Double(model.totalValue), decimals: 0) : Fmt.missing)
+                            .padding(.trailing, inset)
+                            .frame(width: columnWidth, alignment: .trailing)
+                    }
                 }
+                .font(.callout)
+                .foregroundStyle(.secondary)
             }
-            .font(.callout)
-            .foregroundStyle(.secondary)
         }
         .font(isCompact ? .callout : .body)
         .numeric()
@@ -165,21 +179,42 @@ struct EarningsMatrixView: View {
                 .frame(width: columnWidth, height: 26, alignment: .trailing)
         } else {
             let intensity = model.matrixMaximum > 0 ? Double(abs(value)) / Double(model.matrixMaximum) : 0
-            let tint = value < 0 ? gainStyle.loss : model.kind.color
-            Button {
-                showPayments(row.year * 12 + month)
-            } label: {
-                Text(amount(value))
-                    .foregroundStyle(value < 0 ? AnyShapeStyle(gainStyle.loss) : AnyShapeStyle(.primary))
-                    .padding(.trailing, inset)
-                    .frame(width: columnWidth, height: 26, alignment: .trailing)
-                    .background(tint.opacity(0.06 + 0.26 * intensity), in: RoundedRectangle(cornerRadius: DS.Radius.small, style: .continuous))
-                    .contentShape(Rectangle())
+            let name = Fmt.month(year: row.year, month: month + 1, long: true)
+            let exact = Fmt.money(minor: value, currency: model.currency)
+            let label = Text(amount(value))
+                .foregroundStyle(style(for: value))
+                .padding(.trailing, inset)
+                .frame(width: columnWidth, height: 26, alignment: .trailing)
+                .background(tint(for: value).opacity(0.06 + 0.26 * intensity), in: RoundedRectangle(cornerRadius: DS.Radius.small, style: .continuous))
+            if drillsDown {
+                Button {
+                    showPayments(row.year * 12 + month)
+                } label: {
+                    label.contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("\(name): \(exact) — click to see the payments")
+                .accessibilityLabel("\(name), \(exact)")
+                .accessibilityHint("Shows the dividend payments of this month")
+            } else {
+                label
+                    .help(model.kind.isCost && value < 0 ? "\(name): \(exact) (net refund)" : "\(name): \(exact)")
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("\(name), \(exact)")
             }
-            .buttonStyle(.plain)
-            .help("\(Fmt.month(year: row.year, month: month + 1, long: true)): \(Fmt.money(minor: value, currency: model.currency))")
-            .accessibilityLabel("\(Fmt.month(year: row.year, month: month + 1, long: true)), \(Fmt.money(minor: value, currency: model.currency))")
         }
+    }
+
+    /// Text color of an amount. A negative fee or tax figure is a net refund — good news, not a
+    /// loss; negative income (Net, Interest after charges) is one.
+    private func style(for value: Int64) -> AnyShapeStyle {
+        guard value < 0 else { return AnyShapeStyle(.primary) }
+        return AnyShapeStyle(model.kind.isCost ? gainStyle.gain : gainStyle.loss)
+    }
+
+    private func tint(for value: Int64) -> Color {
+        guard value < 0 else { return model.kind.color }
+        return model.kind.isCost ? gainStyle.gain : gainStyle.loss
     }
 
     @ViewBuilder private func growth(_ row: EarningsModel.MatrixRow) -> some View {
@@ -197,6 +232,7 @@ struct EarningsMatrixView: View {
         .frame(width: growthWidth, alignment: .trailing)
         .help(row.growthIsSamePeriod
               ? "\(String(row.year)) so far against the same days of \(String(row.year - 1))"
-              : row.growth == nil ? "No complete year to compare with" : "\(String(row.year)) against \(String(row.year - 1))")
+              : row.growth == nil ? "Not comparable: needs two complete years with positive amounts"
+              : "\(String(row.year)) against \(String(row.year - 1))")
     }
 }

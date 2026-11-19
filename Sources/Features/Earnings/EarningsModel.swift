@@ -129,6 +129,8 @@ struct EarningsModel: Sendable {
         var lastYear: Int64
         /// Last year against the year before; nil when undefined.
         var lastYearGrowth: Double?
+        /// The twelve months up to and including today (`today − 12 months`, exclusive, … today):
+        /// one window for the tile, the monthly average, the projection basis and yield on cost.
         var trailing: Int64
         var trailingInterval: DayInterval
         var averagePerMonth: Int64
@@ -172,8 +174,10 @@ struct EarningsModel: Sendable {
         var detail: String
         var amount: Int64
         var share: Double
+        /// Dividend payments (bookings of one day in several depots are one payment).
         var count: Int
         var lastDay: Day?
+        /// Gross amount of the last dividend payment, all its bookings together.
         var lastGross: Int64
         var perShare: Price?
         var yieldOnCost: Double?
@@ -208,19 +212,24 @@ struct EarningsModel: Sendable {
         var earlier: [Bool]
         var paymentsPerYear: Int
         var shares: Shares
-        /// Expected gross dividends for the twelve upcoming months, aligned with `Calendar.months`.
+        /// Expected gross dividends of the twelve months ahead, aligned with `Calendar.months`.
         var expected: [Int64]
         var expectedTotal: Int64
     }
 
     struct Calendar: Sendable {
         var rows: [CalendarRow] = []
-        /// The twelve months after the current one.
+        /// The calendar months touched by the twelve months after today: twelve on the last day
+        /// of a month, otherwise thirteen (the rest of this month … the start of the same month
+        /// next year).
         var months: [BarCategory] = []
         var expected: [Int64] = []
+        /// `expected` folded onto calendar months (January first).
+        var expectedByCalendarMonth = [Int64](repeating: 0, count: 12)
         var expectedTotal: Int64 = 0
+        /// The twelve months after today.
         var interval: DayInterval
-        /// The twelve months whose payments the projection repeats.
+        /// The twelve months up to today, whose payments the projection repeats.
         var basisInterval: DayInterval
         var isEmpty: Bool { rows.isEmpty }
     }
@@ -246,6 +255,19 @@ struct EarningsModel: Sendable {
     var securities: [SecurityRow]
     var accounts: [AccountRow]
     var calendar: Calendar
+    /// Whether "share of the total" says anything for the month columns, the securities and the
+    /// accounts (decided once per table: not when refunds or costs flip the sign of some parts).
+    var matrixSharesAreMeaningful: Bool
+    var securitySharesAreMeaningful: Bool
+    var accountSharesAreMeaningful: Bool
+    /// The scope is one cash account: the figures are what was booked on it.
+    var isAccountScope: Bool
+    /// Bookings of the selected interval the engine could not convert (counted as zero).
+    var unconverted: UnconvertedBookings
+
+    /// The dividend columns (payments, last dividend, per share, yield on cost) belong to
+    /// figures that consist of dividends.
+    var showsDividendColumns: Bool { kind == .dividends || kind == .earnings }
 
     init(_ analysis: Analysis, query: Query) {
         let ledger = analysis.ledger
@@ -253,22 +275,27 @@ struct EarningsModel: Sendable {
         let kind = query.kind
         let metric = kind.metric
         let today = query.today
-        let report = analysis.earnings
+        let account = EarningsData.bookedAccount(of: scope)
+        let report = EarningsData.make(analysis)
 
         self.kind = kind
         currency = analysis.currency
         self.today = today
         interval = analysis.interval
+        isAccountScope = account != nil
         total = report.total
         totalValue = report.total[metric]
         monthCount = report.months.count
-        paymentCount = report.payments.count
+        unconverted = UnconvertedBookings.find(ledger: ledger, scope: scope, interval: analysis.interval)
 
         // Tiles: fixed calendar windows, each an engine report of its own (one cheap pass each).
-        let all = ledger.earnings(in: query.allYears, scope: scope)
+        func totals(_ interval: DayInterval) -> EarningsData {
+            EarningsData.make(ledger: ledger, scope: scope, interval: interval, detailed: false)
+        }
+        let all = analysis.interval == query.allYears ? report : totals(query.allYears)
         isEmpty = all.total.isZero && all.payments.isEmpty
         let year = today.year
-        func value(_ interval: DayInterval) -> Int64 { ledger.earnings(in: interval, scope: scope).total[metric] }
+        func value(_ interval: DayInterval) -> Int64 { totals(interval).total[metric] }
         func calendarYear(_ y: Int) -> DayInterval {
             DayInterval(start: Day(year: y, month: 1, day: 1).advanced(by: -1), end: Day(year: y, month: 12, day: 31))
         }
@@ -277,21 +304,25 @@ struct EarningsModel: Sendable {
         let yearBefore = value(calendarYear(year - 2))
         let samePeriodInterval = DayInterval(start: Day(year: year - 1, month: 1, day: 1).advanced(by: -1), end: today.addingYears(-1))
         let samePeriod = value(samePeriodInterval)
-        let trailingInterval = DayInterval(start: today.startOfMonth.addingMonths(-11).advanced(by: -1), end: today)
-        let trailingReport = ledger.earnings(in: trailingInterval, scope: scope)
+        let trailingInterval = Self.trailingInterval(today: today)
+        let trailingReport = totals(trailingInterval)
         let trailing = trailingReport.total[metric]
         tiles = Tiles(
             year: year, thisYear: thisYear, lastYear: lastYear,
-            lastYearGrowth: Self.growth(lastYear, over: yearBefore),
+            lastYearGrowth: EarningsRules.growth(lastYear, over: yearBefore),
             trailing: trailing, trailingInterval: trailingInterval, averagePerMonth: trailing / 12,
-            samePeriodLastYear: samePeriod, samePeriodGrowth: Self.growth(thisYear, over: samePeriod),
+            samePeriodLastYear: samePeriod, samePeriodGrowth: EarningsRules.growth(thisYear, over: samePeriod),
             samePeriodInterval: samePeriodInterval)
+
+        // Dividend payments: the bookings of one security and day are one payment.
+        let withoutShares = all.payments.isEmpty ? [] : DividendGroup.bookingsWithoutShares(in: ledger)
+        let groups = DividendGroup.groups(report.payments, withoutShares: withoutShares)
+        paymentCount = groups.count
 
         // Chart
         charts = Self.makeCharts(report, kind: kind, ledger: ledger)
 
         // Matrix (newest year first)
-        let growth = report.yearOverYear(metric)
         let first = analysis.interval.firstDay
         let firstMonthIndex = first.year * 12 + first.month - 1
         let lastMonthIndex = analysis.interval.end.year * 12 + analysis.interval.end.month - 1
@@ -300,7 +331,7 @@ struct EarningsModel: Sendable {
         var rows: [MatrixRow] = []
         let years = report.years
         for (index, row) in years.enumerated() {
-            let values = row.values(metric)
+            let values = row.months.map { $0[metric] }
             let covered = (0..<12).map { m in
                 let i = row.year * 12 + m
                 return i >= firstMonthIndex && i <= lastMonthIndex
@@ -308,11 +339,9 @@ struct EarningsModel: Sendable {
             let isCurrent = row.year == year && analysis.interval.end >= today
             let endsMidYear = row.year == analysis.interval.end.year
                 && !(analysis.interval.end.month == 12 && analysis.interval.end.dayOfMonth == 31)
-            var rowGrowth = index < growth.count ? growth[index].growth : nil
+            var rowGrowth = index > 0 ? EarningsRules.growth(row.total[metric], over: years[index - 1].total[metric]) : nil
             var samePeriodGrowth = false
-            if index == 0 {
-                rowGrowth = nil
-            } else if index == 1, startsMidYear, !reachesBackToInception {
+            if index == 1, startsMidYear, !reachesBackToInception {
                 // The first year of a cut-off period is incomplete: comparing against it misleads.
                 rowGrowth = nil
             }
@@ -339,16 +368,23 @@ struct EarningsModel: Sendable {
         matrixColumnTotals = columns
         matrixMaximum = maximum
 
-        // By security. Yield on cost is the engine's figure for the trailing twelve months.
-        let yieldInterval = DayInterval(start: today.addingMonths(-12), end: today)
+        matrixSharesAreMeaningful = EarningsRules.sharesAreMeaningful(columns)
+
+        // By security. Yield on cost is the engine's figure for the same trailing twelve months
+        // (per security it does not depend on the account a dividend was booked on).
         var yields: [UUID: Double] = [:]
-        if !report.bySecurity.isEmpty {
-            for security in ledger.performance(in: yieldInterval, scope: scope).securities {
+        if kind == .dividends || kind == .earnings, !report.payments.isEmpty {
+            let positions: Scope = account == nil ? scope : .portfolio
+            for security in ledger.securityPerformance(in: trailingInterval, scope: positions) {
                 if let y = security.dividendYieldOnCost, security.dividends > 0 { yields[security.securityID] = y }
             }
         }
-        var lastPayment: [UUID: DividendPayment] = [:]
-        for payment in report.payments { lastPayment[payment.securityID] = payment }
+        var lastPayment: [UUID: DividendGroup] = [:]
+        var paymentCounts: [UUID: Int] = [:]
+        for group in groups {
+            lastPayment[group.securityID] = group
+            paymentCounts[group.securityID, default: 0] += 1
+        }
         let denominator = Double(totalValue)
         func share(_ amount: Int64) -> Double { denominator != 0 ? Double(amount) / denominator : 0 }
         var securityRows: [SecurityRow] = report.bySecurity.compactMap { entry in
@@ -358,7 +394,8 @@ struct EarningsModel: Sendable {
             let last = lastPayment[entry.securityID]
             return SecurityRow(
                 id: entry.securityID, securityID: entry.securityID, name: security?.name ?? "Unknown Security",
-                detail: Self.detail(of: security), amount: amount, share: share(amount), count: entry.dividendCount,
+                detail: Self.detail(of: security), amount: amount, share: share(amount),
+                count: paymentCounts[entry.securityID] ?? 0,
                 lastDay: last?.day, lastGross: last?.gross ?? 0, perShare: last?.perShare,
                 yieldOnCost: yields[entry.securityID], isRetired: security?.isRetired ?? false)
         }
@@ -370,6 +407,7 @@ struct EarningsModel: Sendable {
                 lastDay: nil, lastGross: 0, perShare: nil, yieldOnCost: nil, isRetired: false))
         }
         securities = securityRows
+        securitySharesAreMeaningful = EarningsRules.sharesAreMeaningful(securityRows.lazy.map(\.amount))
 
         // By account
         accounts = report.byAccount.map { entry in
@@ -381,14 +419,29 @@ struct EarningsModel: Sendable {
                 fees: entry.amounts.fees, taxes: entry.amounts.taxes, net: entry.amounts.net,
                 amount: amount, share: share(amount))
         }
+        accountSharesAreMeaningful = EarningsRules.sharesAreMeaningful(accounts.lazy.map(\.amount))
 
-        calendar = Self.makeCalendar(all: all, trailing: trailingReport, ledger: ledger, scope: scope, today: today)
+        // Calendar: all years, independent of the selected interval. The shares a payment was made
+        // for and the shares held today come from the positions — for an account scope the whole
+        // portfolio's, since a cash account holds none.
+        if all.payments.isEmpty {
+            calendar = Self.makeCalendar(groups: [], sharesThen: nil, held: [:], securities: [], today: today)
+        } else {
+            let positions: Scope = account == nil ? scope : .portfolio
+            var held: [UUID: Shares] = [:]
+            for position in ledger.snapshot(on: today, scope: positions).positions { held[position.securityID] = position.shares }
+            var sharesThen: [DividendGroup]?
+            if account != nil {
+                sharesThen = DividendGroup.groups(ledger.earnings(in: trailingInterval, scope: .portfolio).payments, withoutShares: withoutShares)
+            }
+            let allGroups = analysis.interval == query.allYears ? groups : DividendGroup.groups(all.payments, withoutShares: withoutShares)
+            calendar = Self.makeCalendar(groups: allGroups, sharesThen: sharesThen, held: held, securities: ledger.securities, today: today)
+        }
     }
 
-    /// `value / previous − 1`, undefined unless the previous value is positive (the engine's rule
-    /// for `EarningsReport.yearOverYear`).
-    static func growth(_ value: Int64, over previous: Int64) -> Double? {
-        previous > 0 ? Double(value) / Double(previous) - 1 : nil
+    /// The twelve months up to and including `today`, as an engine interval (start exclusive).
+    static func trailingInterval(today: Day) -> DayInterval {
+        DayInterval(start: today.addingMonths(-12), end: today)
     }
 
     static func detail(of security: Security?) -> String {
@@ -400,7 +453,7 @@ struct EarningsModel: Sendable {
 
     // MARK: Chart
 
-    private static func makeCharts(_ report: EarningsReport, kind: EarningsKind, ledger: Ledger) -> [EarningsGrouping: Chart] {
+    private static func makeCharts(_ report: EarningsData, kind: EarningsKind, ledger: Ledger) -> [EarningsGrouping: Chart] {
         let metric = kind.metric
         let months = report.months
         guard !months.isEmpty else { return [:] }
@@ -440,7 +493,7 @@ struct EarningsModel: Sendable {
         var perSecurity: [UUID: [Int64]] = [:]
         var order: [(id: UUID, total: Int64)] = []
         if attributable {
-            let base = months.first!.id
+            let base = months.first!.index
             var totals: [UUID: Int64] = [:]
             for p in report.payments {
                 let index = p.day.year * 12 + p.day.month - 1 - base
@@ -493,20 +546,22 @@ struct EarningsModel: Sendable {
                     for entry in order.dropFirst(slots) {
                         for (i, v) in perSecurity[entry.id]!.enumerated() { rest[i] += v }
                     }
-                    series.append(BarSeries(id: "other", "\(order.count - slots) others", values: bucketed(rest), color: ChartColors.other))
+                    let others = order.count - slots
+                    series.append(BarSeries(id: "other", others == 1 ? "1 other" : "\(others) others", values: bucketed(rest), color: ChartColors.other))
                 }
                 if kind == .earnings, interestNet.contains(where: { $0 != 0 }) {
                     series.append(BarSeries(id: "interest", "Interest", values: bucketed(interestNet), color: EarningsKind.interest.color))
                 }
                 chart.bySecurity = series
             }
-            if grouping != .year, trailing.contains(where: \.isComplete) {
+            if grouping != .year, trailing.contains(where: { $0 != nil }) {
                 let divisor: Double = grouping == .month ? 12 : 4
                 var line = [Double?](repeating: nil, count: count)
-                for (i, t) in trailing.enumerated() where t.isComplete {
+                for (i, sum) in trailing.enumerated() {
+                    guard let sum else { continue }
                     // The rolling sum at the last month of a bar, scaled to one bar's width.
                     let isLastOfBucket = i + 1 == trailing.count || bucket[i + 1] != bucket[i]
-                    if isLastOfBucket { line[bucket[i]] = Double(t.value) / divisor }
+                    if isLastOfBucket { line[bucket[i]] = Double(sum) / divisor }
                 }
                 chart.average = line
             }
@@ -517,64 +572,90 @@ struct EarningsModel: Sendable {
 
     // MARK: Calendar and projection
 
-    /// Payment months per security and a deliberately simple projection: every dividend of the
-    /// last twelve months is expected again twelve months later, at the same amount per share,
-    /// for the shares held today.
-    private static func makeCalendar(all: EarningsReport, trailing: EarningsReport, ledger: Ledger, scope: Scope, today: Day) -> Calendar {
-        let basis = trailing.interval
-        let firstUpcoming = today.endOfMonth.advanced(by: 1)
-        let upcomingEnd = firstUpcoming.addingMonths(12).advanced(by: -1)
-        var calendar = Calendar(interval: DayInterval(start: today.endOfMonth, end: upcomingEnd), basisInterval: basis)
-        calendar.months = (0..<12).map { offset in
-            let day = firstUpcoming.addingMonths(offset)
-            return BarCategory(id: "\(day.year)-\(day.month)", label: ChartLabels.shortMonth(day.month),
-                               detail: Fmt.month(year: day.year, month: day.month, long: true))
+    /// Payment months per security and a deliberately simple projection: every dividend payment
+    /// of the last twelve months is expected again twelve months later, at the same amount per
+    /// share, for the shares held today.
+    ///
+    /// - Parameters:
+    ///   - groups: all dividend payments of the scope (bookings of one day merged), chronological.
+    ///   - sharesThen: payments that state the shares each payment was made for, when `groups`
+    ///     cannot (an account scope sees only the bookings on that account); nil = `groups`.
+    ///   - held: shares held today per security.
+    static func makeCalendar(groups: [DividendGroup], sharesThen: [DividendGroup]?, held: [UUID: Shares],
+                             securities: [Security], today: Day) -> Calendar {
+        let basis = trailingInterval(today: today)
+        let firstUpcoming = today.advanced(by: 1)
+        let lastUpcoming = today.addingMonths(12)
+        let firstIndex = firstUpcoming.year * 12 + firstUpcoming.month - 1
+        let lastIndex = lastUpcoming.year * 12 + lastUpcoming.month - 1
+        let count = max(lastIndex - firstIndex + 1, 12)
+        var calendar = Calendar(interval: DayInterval(start: today, end: lastUpcoming), basisInterval: basis)
+        calendar.months = (0..<count).map { slot in
+            let index = firstIndex + slot
+            let year = index / 12, month = index % 12 + 1
+            var detail = Fmt.month(year: year, month: month, long: true)
+            // A partial month at either end says so.
+            if slot == 0, firstUpcoming.dayOfMonth != 1 {
+                detail += ", from \(Fmt.day(firstUpcoming, style: .dayMonth))"
+            } else if slot == count - 1, count > 12 {
+                detail += ", through \(Fmt.day(lastUpcoming, style: .dayMonth))"
+            }
+            // Thirteen months start and end in the same calendar month: the year tells them apart.
+            let isEnd = slot == 0 || slot == count - 1
+            let label = count > 12 && isEnd ? Fmt.month(year: year, month: month) : ChartLabels.shortMonth(month)
+            return BarCategory(id: "\(year)-\(month)", label: label, detail: detail)
         }
-        calendar.expected = [Int64](repeating: 0, count: 12)
-        guard !all.payments.isEmpty else { return calendar }
+        calendar.expected = [Int64](repeating: 0, count: count)
+        guard !groups.isEmpty else { return calendar }
 
-        var held: [UUID: Shares] = [:]
-        for position in ledger.snapshot(on: today, scope: scope).positions { held[position.securityID] = position.shares }
+        struct Key: Hashable {
+            var securityID: UUID
+            var day: Day
+        }
+        var shares: [Key: Shares] = [:]
+        for group in sharesThen ?? [] { shares[Key(securityID: group.securityID, day: group.day)] = group.shares }
 
         struct Entry {
             var recent = [Bool](repeating: false, count: 12)
             var earlier = [Bool](repeating: false, count: 12)
             var recentMonths = Set<Int>()
-            var expected = [Int64](repeating: 0, count: 12)
+            var expected: [Int64]
         }
         var entries: [UUID: Entry] = [:]
         let earlierStart = basis.start.addingMonths(-24)
-        let firstUpcomingIndex = firstUpcoming.year * 12 + firstUpcoming.month - 1
-        for payment in all.payments where payment.day > earlierStart && payment.day <= today {
-            var entry = entries[payment.securityID] ?? Entry()
-            let month = payment.day.month - 1
-            if payment.day > basis.start {
+        for group in groups where group.day > earlierStart && group.day <= today {
+            var entry = entries[group.securityID] ?? Entry(expected: [Int64](repeating: 0, count: count))
+            let month = group.day.month - 1
+            if group.day > basis.start {
                 entry.recent[month] = true
-                entry.recentMonths.insert(payment.day.year * 12 + month)
-                if let perShare = payment.perShare, let shares = held[payment.securityID], shares.raw > 0 {
-                    let slot = payment.day.year * 12 + month + 12 - firstUpcomingIndex
-                    if (0..<12).contains(slot) { entry.expected[slot] += perShare.value(of: shares) }
+                entry.recentMonths.insert(group.day.year * 12 + month)
+                if let heldNow = held[group.securityID] {
+                    let then = sharesThen == nil ? group.shares : shares[Key(securityID: group.securityID, day: group.day)] ?? .zero
+                    let again = group.day.addingMonths(12)
+                    let slot = min(max(again.year * 12 + again.month - 1 - firstIndex, 0), count - 1)
+                    entry.expected[slot] += group.expected(for: heldNow, sharesThen: then)
                 }
             } else {
                 entry.earlier[month] = true
             }
-            entries[payment.securityID] = entry
+            entries[group.securityID] = entry
         }
         var rows: [CalendarRow] = []
-        for security in ledger.securities {
+        for security in securities {
             guard let entry = entries[security.id] else { continue }
             let total = entry.expected.reduce(0, +)
             rows.append(CalendarRow(
                 id: security.id, name: security.name, detail: detail(of: security), recent: entry.recent,
                 earlier: entry.earlier, paymentsPerYear: entry.recentMonths.count, shares: held[security.id] ?? .zero,
                 expected: entry.expected, expectedTotal: total))
-            for i in 0..<12 { calendar.expected[i] += entry.expected[i] }
+            for i in 0..<count { calendar.expected[i] += entry.expected[i] }
         }
         rows.sort { a, b in
             a.expectedTotal != b.expectedTotal ? a.expectedTotal > b.expectedTotal
                 : a.name.localizedStandardCompare(b.name) == .orderedAscending
         }
         calendar.rows = rows
+        for slot in 0..<count { calendar.expectedByCalendarMonth[(firstIndex + slot) % 12] += calendar.expected[slot] }
         calendar.expectedTotal = calendar.expected.reduce(0, +)
         return calendar
     }
@@ -615,6 +696,9 @@ struct PaymentRow: Identifiable, Sendable, Hashable {
     var fees: Int64
     var net: Int64
     var yield: Double?
+    /// False when there is no exchange rate for the booking's currency: its amounts are unknown
+    /// in the reporting currency (the engine counts them as zero).
+    var isConverted = true
 
     var perShareSortKey: Int64 { perShare?.raw ?? Int64.min }
     var yieldSortKey: Double { yield ?? -Double.infinity }
@@ -623,13 +707,16 @@ struct PaymentRow: Identifiable, Sendable, Hashable {
 struct PaymentsModel: Sendable {
     struct Query: Hashable, Sendable {
         var filter: String
-        /// `year × 12 + month − 1`, or nil for every month.
-        var month: Int?
+        /// `year × 12 + month − 1` of the first and last month, or nil for every month.
+        var months: ClosedRange<Int>?
         var securityID: UUID?
         var sortOrder: [KeyPathComparator<PaymentRow>]
     }
 
     var rows: [PaymentRow]
+    /// Changes whenever the set of rows changes (a selection must not outlive its rows).
+    var rowsSignature: Int
+    var unconverted: UnconvertedBookings
     var totalCount: Int
     var currency: CurrencyCode
     var gross: Int64
@@ -639,7 +726,11 @@ struct PaymentsModel: Sendable {
 
     init(_ analysis: Analysis, query: Query) {
         let ledger = analysis.ledger
-        let payments = analysis.earnings.payments
+        // What was booked in the scope — for a cash account: on that account (see `EarningsData`).
+        let payments = EarningsData.make(analysis, detailed: false).payments
+        let unconverted = UnconvertedBookings.find(ledger: ledger, scope: analysis.scope, interval: analysis.interval)
+        var shown = UnconvertedBookings()
+        var signature = Hasher()
         let filter = QuickFilter(query.filter)
         var rows: [PaymentRow] = []
         rows.reserveCapacity(payments.count)
@@ -647,7 +738,7 @@ struct PaymentsModel: Sendable {
         var accounts: [UUID: String] = [:]
         var gross: Int64 = 0, taxes: Int64 = 0, fees: Int64 = 0
         for p in payments {
-            if let month = query.month, p.day.year * 12 + p.day.month - 1 != month { continue }
+            if let months = query.months, !months.contains(p.day.year * 12 + p.day.month - 1) { continue }
             if let id = query.securityID, p.securityID != id { continue }
             let security = names[p.securityID] ?? {
                 let name = ledger.security(p.securityID)?.name ?? "Unknown Security"
@@ -663,12 +754,17 @@ struct PaymentsModel: Sendable {
             rows.append(PaymentRow(
                 id: p.transactionID, day: p.day, securityID: p.securityID, accountID: p.accountID, security: security,
                 account: account, shares: p.shares, perShare: p.perShare, gross: p.gross, taxes: p.taxes, fees: p.fees,
-                net: p.net, yield: p.yield))
+                net: p.net, yield: p.yield, isConverted: !unconverted.transactionIDs.contains(p.transactionID)))
+            if unconverted.transactionIDs.contains(p.transactionID) { shown.transactionIDs.insert(p.transactionID) }
+            signature.combine(p.transactionID)
             gross += p.gross
             taxes += p.taxes
             fees += p.fees
         }
         self.rows = rows.sorted(using: query.sortOrder)
+        rowsSignature = signature.finalize()
+        shown.currencies = unconverted.currencies
+        self.unconverted = shown
         totalCount = payments.count
         currency = analysis.currency
         self.gross = gross

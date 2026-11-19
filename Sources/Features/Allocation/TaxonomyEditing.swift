@@ -78,7 +78,11 @@ struct TargetGroupStatus: Equatable, Sendable {
     var sum: Int
 
     var hasTargets: Bool { targeted > 0 }
+    /// Nothing to say about this group: no targets at all, or every sibling has one and they add up.
     var isComplete: Bool { !hasTargets || (sum == 10_000 && targeted == count) }
+    /// The targets that exist add up to 100 %. Siblings without a target are fine then: rebalancing
+    /// leaves them untouched (that is a choice, not an error).
+    var isValid: Bool { !hasTargets || sum == 10_000 }
     /// What is missing to 100 % (negative: too much).
     var remainder: Int { 10_000 - sum }
 }
@@ -255,28 +259,28 @@ extension Taxonomy {
         return TargetGroupStatus(count: level.count, targeted: targets.count { $0 != nil }, sum: targets.reduce(0) { $0 + max($1 ?? 0, 0) })
     }
 
-    /// Scales the targets of one sibling group proportionally so that they sum to 100 %. Siblings
-    /// without a target get 0 %.
+    /// Scales the existing targets of one sibling group proportionally so that they sum to 100 %.
+    /// Siblings without a target stay without one: "no target" means "leave untouched" to
+    /// rebalancing, whereas a target of 0 % would mean "sell everything".
     mutating func normalizeTargets(ofParent parent: UUID?) {
         withSiblings(ofParent: parent) { siblings in
-            let weights = siblings.map { max($0.targetWeight ?? 0, 0) }
+            let targeted = siblings.indices.filter { siblings[$0].targetWeight != nil }
+            let weights = targeted.map { max(siblings[$0].targetWeight ?? 0, 0) }
             guard weights.contains(where: { $0 > 0 }) else { return }
             let parts = apportion(10_000, weights: weights)
-            for i in siblings.indices { siblings[i].targetWeight = parts[i] }
+            for (n, i) in targeted.enumerated() { siblings[i].targetWeight = parts[n] }
         }
     }
 
     /// Spreads what is missing to 100 % equally over the siblings without a target — or, if every
-    /// sibling has one (or the group is over 100 %), equally over all of them.
+    /// sibling has one (or the group is over 100 %), equally over all of them. Nothing changes when
+    /// the targets already add up: siblings without a target are not turned into 0 % targets.
     mutating func distributeRemainder(ofParent parent: UUID?) {
         withSiblings(ofParent: parent) { siblings in
             guard !siblings.isEmpty else { return }
             let sum = siblings.reduce(0) { $0 + max($1.targetWeight ?? 0, 0) }
             let remainder = 10_000 - sum
-            guard remainder != 0 else {
-                for i in siblings.indices where siblings[i].targetWeight == nil { siblings[i].targetWeight = 0 }
-                return
-            }
+            guard remainder != 0 else { return }
             let open = siblings.indices.filter { siblings[$0].targetWeight == nil }
             if remainder > 0, !open.isEmpty {
                 let parts = apportion(remainder, weights: [Int](repeating: 1, count: open.count))
@@ -343,6 +347,8 @@ extension Taxonomy {
     @discardableResult
     mutating func assign(_ vehicle: AllocationVehicle, to classification: UUID, weight: Int? = nil) -> Bool {
         guard contains(classification) else { return false }
+        // Ghost entries (weight 0, e.g. from an import) would otherwise survive next to the new one.
+        update(classification) { $0.assignments.removeAll { $0.refers(to: vehicle) && $0.weight <= 0 } }
         var amount = weight ?? unassignedWeight(of: vehicle)
         if weight == nil, amount == 0 {
             removeAssignments(of: vehicle)
@@ -382,10 +388,16 @@ extension Taxonomy {
         visit(&root)
     }
 
+    /// Changes the weight of an existing assignment. A weight of 0 removes the assignment (like
+    /// `setSplit`): a 0 % assignment would be a ghost entry in the file.
     mutating func setWeight(_ weight: Int, of vehicle: AllocationVehicle, in classification: UUID) {
+        guard weight > 0 else {
+            unassign(vehicle, from: classification)
+            return
+        }
         update(classification) { node in
             if let i = node.assignments.firstIndex(where: { $0.refers(to: vehicle) }) {
-                node.assignments[i].weight = min(max(weight, 0), 10_000)
+                node.assignments[i].weight = min(weight, 10_000)
             }
         }
     }
@@ -452,7 +464,7 @@ enum TaxonomyTemplate: String, CaseIterable, Identifiable, Sendable {
 
     var summary: String {
         switch self {
-        case .assetClasses: "Equity, bonds, commodities, real estate, cash — with a 60/20/20 starting target."
+        case .assetClasses: "Equity, bonds, commodities, real estate, cash — with 60 / 20 / 5 / 5 / 10 as starting targets."
         case .regions: "North America, Europe, Asia-Pacific, emerging markets."
         case .sectors: "The eleven common equity sectors."
         case .investmentType: "Funds & ETFs, single stocks, crypto, cash accounts."

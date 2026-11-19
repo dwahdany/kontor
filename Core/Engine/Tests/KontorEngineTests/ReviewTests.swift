@@ -566,6 +566,45 @@ import Testing
         }
     }
 
+    /// An entry without a time of day means "some time that day", not "before everything timed":
+    /// a transfer or sale entered by hand on the day of a purchase that carries a time (typical for
+    /// Portfolio Performance files: statement imports have times, manual entries do not) must not
+    /// become a short sale.
+    @Test func untimedRemovalFloatsPastATimedPurchaseOfTheSameDay() {
+        for method in [CostMethod.fifo, .average] {
+            var f = Fixture()
+            f.file.settings.costMethod = method
+            let account = f.account("Cash"), depot = f.depot("B"), other = f.depot("A")
+            let stock = f.security("Stock", prices: [("2025-03-31", 100)])
+            f.add(.deposit, "2025-03-01", account: account, amount: 5_000)
+            f.add(.buy, "2025-03-31", account: account, depot: depot, security: stock, shares: 18, amount: 1_800, minute: 649)
+            f.add(.securityTransfer, "2025-03-31", depot: depot, security: stock, shares: 18, amount: 1_800, counterDepot: other)
+            let ledger = f.ledger
+            let day = d("2025-04-01")
+            let snapshot = ledger.snapshot(on: day)
+            #expect(!snapshot.diagnostics.contains { if case .shortPosition = $0 { return true } else { return false } })
+            #expect(snapshot.position(stock)?.shares == Shares(18) && snapshot.position(stock)?.costBasis.minor == 180_000)
+            #expect(snapshot.position(stock)?.holdings.map(\.depotID) == [other])
+            let trades = ledger.trades(on: day)
+            #expect(trades.closed.isEmpty && trades.open.allSatisfy { !$0.isShort })
+            #expect(ledger.consistencyIssues(options: .init(today: day)).isEmpty)
+            // The listing order is untouched: untimed entries still come first.
+            #expect(ledger.transactions.map(\.id) == f.file.transactions.sorted(by: Transaction.chronological).map(\.id))
+        }
+    }
+
+    /// … and an untimed sale on the day of a timed purchase realizes a normal, long trade.
+    @Test func untimedSaleFloatsPastATimedPurchaseOfTheSameDay() {
+        var f = Fixture()
+        let account = f.account("Cash"), depot = f.depot("Depot")
+        let stock = f.security("Stock", prices: [("2024-01-02", 100)])
+        f.add(.buy, "2024-01-02", account: account, depot: depot, security: stock, shares: 5, amount: 450, minute: 900)
+        let sale = f.add(.sell, "2024-01-02", account: account, depot: depot, security: stock, shares: 5, amount: 500)
+        let trades = f.ledger.trades(on: d("2024-01-03"))
+        #expect(trades.closed.count == 1 && !trades.closed[0].isShort && trades.closed[0].gain == 5_000)
+        #expect(trades.closed[0].closingTransactionID == sale)
+    }
+
     /// A time of day is respected: a timed sale before a timed purchase really is a short sale.
     @Test func timedOrderIsRespected() {
         var f = Fixture()
@@ -771,5 +810,36 @@ import Testing
         #expect(ledger.breakdown(in: interval, scope: .depot(b)).dividends == 6_700)
         #expect(ledger.breakdown(in: interval, scope: .depot(c)).dividends == 0)
         #expect(ledger.breakdown(in: interval).dividends == 6_700)
+    }
+}
+
+/// A portfolio that is younger than the selected period: figures must describe the days that
+/// exist, not the nominal length of the period.
+@Suite struct ReviewYoungPortfolioTests {
+    @Test func annualFiguresUseTheDaysThePortfolioExisted() {
+        var f = Fixture()
+        let account = f.account("Cash"), depot = f.depot("Depot")
+        let stock = f.security("Stock")
+        f.add(.deposit, "2026-06-01", account: account, amount: 5_000)
+        f.add(.buy, "2026-06-02", account: account, depot: depot, security: stock, shares: 10, amount: 1_001, fees: 1)
+        let ledger = f.ledger
+        // "Last year" for a portfolio that is four weeks old.
+        let analysis = Analysis(ledger: ledger, interval: DayInterval(start: d("2025-06-30"), end: d("2026-06-30")))
+        #expect(analysis.interval.dayCount == 365)
+        #expect(analysis.measuredInterval == DayInterval(start: d("2026-05-31"), end: d("2026-06-30")))
+        // One euro of fees lost on 5,000: −0.02 % for the period, whatever that is per year.
+        let period = try! #require(analysis.irrOfPeriod)
+        #expect(abs(period - (-1.0 / 5_000)) < 2e-5)
+        let annual = try! #require(analysis.irr)
+        #expect(annual < period)
+        // The time-weighted return per year is annualized over those 30 days, not over 365.
+        #expect(analysis.ttwrorAnnualized == Returns.annualize(total: analysis.ttwror, days: 30))
+
+        // A period inside the portfolio's life is not shortened.
+        let inside = Analysis(ledger: ledger, interval: DayInterval(start: d("2026-06-10"), end: d("2026-06-30")))
+        #expect(inside.measuredInterval == inside.interval)
+        // Nothing recorded: the interval is what it is.
+        let empty = Analysis(ledger: Ledger(PortfolioFile()), interval: DayInterval(start: d("2025-06-30"), end: d("2026-06-30")))
+        #expect(empty.measuredInterval == empty.interval && empty.irrOfPeriod == nil)
     }
 }

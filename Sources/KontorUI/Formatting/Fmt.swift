@@ -71,8 +71,8 @@ public enum Fmt {
     }
     public static func time(minuteOfDay: Int) -> String { current.time(minuteOfDay: minuteOfDay) }
     public static func bytes(_ count: Int) -> String { current.bytes(count) }
-    public static func price(_ price: Price, currency: CurrencyCode? = nil, maxDecimals: Int? = nil) -> String {
-        current.price(price, currency: currency, maxDecimals: maxDecimals)
+    public static func price(_ price: Price, currency: CurrencyCode? = nil, maxDecimals: Int? = nil, signed: Bool = false) -> String {
+        current.price(price, currency: currency, maxDecimals: maxDecimals, signed: signed)
     }
     public static func rate(_ rate: Double) -> String { current.rate(rate) }
     public static func currencySymbol(_ code: CurrencyCode) -> String { current.currencySymbol(code) }

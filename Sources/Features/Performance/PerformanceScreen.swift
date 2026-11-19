@@ -46,7 +46,7 @@ public struct PerformanceScreen: View {
 
     @State private var pinnedHover: Day?
     @State private var pinnedHoverFraction: Double?
-    @State private var pinnedRange: DayInterval?
+    @State private var range = ChartRangeState()
     @State private var selectedLine: StatementLine?
     @State private var contentWidth: CGFloat = 1_100
     @State private var didReadLaunchState = false
@@ -59,7 +59,7 @@ public struct PerformanceScreen: View {
     public init() {}
 
     public var body: some View {
-        let compare = compareIDs
+        let query = OverviewQuery(compare: compareIDs, scopeName: store.isWholePortfolioScope ? "Portfolio" : store.scopeTitle)
         Group {
             if store.file.transactions.isEmpty {
                 onboarding
@@ -69,10 +69,10 @@ public struct PerformanceScreen: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(nsColor: .windowBackgroundColor))
-        .analysisTask($overview, id: "performance.overview", variant: compare) { analysis in
-            OverviewModel(analysis, compare: compare)
+        .analysisTask($overview, id: "performance.overview", variant: query) { analysis in
+            OverviewModel(analysis, compare: query.compare, scopeName: query.scopeName)
         }
-        .toolbar { ToolbarItem { ScopePicker() } }
+        .toolbar { ToolbarItem { ScopePicker(store: store) } }
         .onAppear(perform: readLaunchState)
         .onChange(of: tab) { _, value in storedTab = value }
         .onChange(of: chartMode) { _, value in storedChartMode = value }
@@ -90,6 +90,9 @@ public struct PerformanceScreen: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: DS.Spacing.l) {
                     heading.id(Self.topAnchor)
+                    if let warnings = overview.value?.warnings, !warnings.isEmpty {
+                        DataWarningBanner(warnings: warnings)
+                    }
                     if let model = overview.value, !model.hasActivity {
                         nothingToMeasure(model)
                     } else {
@@ -143,7 +146,7 @@ public struct PerformanceScreen: View {
     @ViewBuilder private var chartRow: some View {
         let chart = PerformanceChartCard(
             model: overview, mode: $chartMode, pinnedHover: pinnedHover ?? pinnedHoverFraction.flatMap { f in overview.value?.day(at: f) },
-            pinnedRange: $pinnedRange, compare: compareIDs, addComparison: addComparison, removeComparison: removeComparison)
+            range: $range, compare: compareIDs, addComparison: addComparison, removeComparison: removeComparison)
         if isWide {
             HStack(alignment: .top, spacing: DS.Spacing.l) {
                 chart
@@ -180,7 +183,7 @@ public struct PerformanceScreen: View {
             case .risk:
                 RiskTab(model: $risk, isWide: isWide) { interval in
                     chartMode = .drawdown
-                    pinnedRange = interval
+                    range.pin(interval)
                     scrollToTop += 1
                 }
             case .securities:
@@ -229,12 +232,19 @@ public struct PerformanceScreen: View {
     }
 
     private func nothingToMeasure(_ model: OverviewModel) -> some View {
-        Card {
-            EmptyState("Nothing to Measure", symbol: "chart.line.flattrend.xyaxis",
-                       message: "\(store.scopeTitle) held nothing in this period (\(Fmt.interval(model.interval))). Choose a longer period\(store.isWholePortfolioScope ? "" : " or another scope").") {
-                Button("Show All Time") { store.period = .allTime }
-                if !store.isWholePortfolioScope {
+        let advice = NothingToMeasureAdvice(
+            scopeTitle: store.scopeTitle, isWholePortfolio: store.isWholePortfolioScope, interval: model.interval,
+            allTime: store.interval(for: .allTime), firstTransactionDay: store.inception, today: store.today)
+        return Card {
+            EmptyState("Nothing to Measure", symbol: "chart.line.flattrend.xyaxis", message: advice.message) {
+                if advice.offersAllTime {
+                    Button("Show All Time") { store.period = .allTime }
+                }
+                if advice.offersWholePortfolio {
                     Button("Whole Portfolio") { store.scopeSelection = .portfolio }
+                }
+                if advice.offersTransactions {
+                    Button("Show Transactions") { store.navigate(to: .transactions) }
                 }
             }
             .frame(minHeight: 320)
@@ -252,6 +262,10 @@ public struct PerformanceScreen: View {
     private func addComparison(_ id: UUID) {
         var ids = compareIDs
         guard !ids.contains(id), !store.file.settings.benchmarkSecurityIDs.contains(id) else { return }
+        guard ComparisonRules.canDraw(id, ledger: store.ledger, on: store.periodInterval.start) else {
+            store.toast("\(store.security(id)?.name ?? "This security") has no prices to compare", style: .info)
+            return
+        }
         let limit = OverviewModel.comparisonLimit - store.file.settings.benchmarkSecurityIDs.count
         guard ids.count < limit else {
             store.toast("The chart compares up to \(OverviewModel.comparisonLimit) securities", style: .info)
@@ -277,10 +291,10 @@ public struct PerformanceScreen: View {
         if let hover = store.launchValue("hover") {
             if let day = Day(iso: hover) { pinnedHover = day } else if let fraction = Double(hover) { pinnedHoverFraction = fraction }
         }
-        if let range = store.launchValue("range") {
-            let parts = range.components(separatedBy: "..")
+        if let text = store.launchValue("range") {
+            let parts = text.components(separatedBy: "..")
             if parts.count == 2, let from = Day(iso: parts[0]), let to = Day(iso: parts[1]), from < to {
-                pinnedRange = DayInterval(start: from, end: to)
+                range.pin(DayInterval(start: from, end: to))
             }
         }
         if let compare = store.launchValue("compare") { compareList = compare }
@@ -336,10 +350,11 @@ struct TileSet: View {
         case 0:
             MetricTile("TTWROR", topic: .ttwror, value: m.map { Fmt.percent($0.ttwror, signed: true) } ?? Fmt.missing,
                        trend: m.map { Trend($0.ttwror) },
-                       footnote: m.map { $0.showsAnnualized ? "\(Fmt.percent($0.ttwrorAnnualized, signed: true)) per year" : "over \(Fmt.duration(days: $0.interval.dayCount))" })
+                       footnote: m.map { $0.showsAnnualized ? "\(Fmt.percent($0.ttwrorAnnualized, signed: true)) per year" : "over \(Fmt.duration(days: $0.measuredDays))" })
         case 1:
-            MetricTile("IRR", topic: .irr, value: m.map { Fmt.percent($0.irr, signed: true) } ?? Fmt.missing,
-                       trend: m.map { Trend(optional: $0.irr) }, footnote: "per year, money-weighted")
+            MetricTile("IRR", topic: .irr, value: m.map { Fmt.percent($0.moneyWeightedReturn, signed: true) } ?? Fmt.missing,
+                       trend: m.map { Trend(optional: $0.moneyWeightedReturn) },
+                       footnote: m.map { ReturnHorizon.moneyWeightedCaption(days: $0.measuredDays) } ?? "money-weighted")
         case 2:
             MetricTile("Gain", topic: .absolutePerformance,
                        value: m.map { Fmt.money(minor: $0.absolutePerformance, currency: $0.currency, signed: true) } ?? Fmt.missing,
@@ -352,10 +367,48 @@ struct TileSet: View {
                        value: m.map { $0.maxDrawdown.map { Fmt.percent(-$0.depth) } ?? Fmt.percent(0) } ?? Fmt.missing,
                        footnote: m.map { $0.maxDrawdown.map { "low on \(Fmt.day($0.trough, style: .medium))" } ?? "never below a peak" })
         case 5:
-            MetricTile("Volatility", topic: .volatility, value: m.map { Fmt.percent($0.volatility) } ?? Fmt.missing, footnote: "per year")
+            MetricTile("Volatility", topic: .volatility, value: m.map { $0.showsVolatility ? Fmt.percent($0.volatility) : Fmt.missing } ?? Fmt.missing,
+                       footnote: m.map { $0.showsVolatility ? "per year" : "needs a month of history" } ?? "per year")
         default:
-            MetricTile("Sharpe Ratio", topic: .sharpeRatio, value: m.map { Fmt.ratio($0.sharpeRatio) } ?? Fmt.missing,
-                       footnote: m.map { "risk-free rate \(Fmt.percent($0.riskFreeRate))" })
+            MetricTile("Sharpe Ratio", topic: .sharpeRatio, value: m.map { Fmt.ratio($0.shownSharpeRatio) } ?? Fmt.missing,
+                       footnote: m.map { $0.showsSharpeRatio ? "risk-free rate \(Fmt.percent($0.riskFreeRate))" : "needs a full year" })
         }
+    }
+}
+
+// MARK: - Data warnings
+
+/// What the engine had to leave out or estimate, right above the figures it changes.
+struct DataWarningBanner: View {
+    @Environment(PortfolioStore.self) private var store
+    let warnings: [DataWarning]
+
+    var body: some View {
+        HStack(alignment: .top, spacing: DS.Spacing.m) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(DS.Colors.warning)
+                .font(.title3)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: DS.Spacing.xs) {
+                Text(warnings.count == 1 ? "These figures are incomplete" : "These figures are incomplete in \(Fmt.integer(warnings.count)) ways")
+                    .font(.callout.weight(.semibold))
+                ForEach(warnings) { warning in
+                    Text(warning.message)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Spacer(minLength: DS.Spacing.m)
+            Button("Check Consistency…") { store.present(.consistencyReport) }
+                .controlSize(.small)
+                .help("Lists every problem in the file with a way to fix it")
+        }
+        .padding(DS.Spacing.m)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(DS.Colors.warning.opacity(0.12), in: RoundedRectangle(cornerRadius: DS.Radius.control, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: DS.Radius.control, style: .continuous).strokeBorder(DS.Colors.warning.opacity(0.35), lineWidth: 0.5))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Data warnings")
     }
 }

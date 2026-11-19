@@ -2,6 +2,9 @@ import SwiftUI
 import KontorUI
 
 /// The editor behind `.newPlan(PlanPrefill)` and `.editPlan(id)`.
+///
+/// Launch state (screenshots): `start=<YYYY-MM-DD>` and `interval=<months>` change the schedule of
+/// the plan being edited, `history=due|keep` answers the question that follows.
 struct PlanEditor: View {
     enum Mode: Hashable {
         case new(PlanPrefill)
@@ -16,11 +19,33 @@ struct PlanEditor: View {
     /// Until the user types a name, new plans are named after what they do.
     @State private var hasCustomName = false
     @FocusState private var nameFocused: Bool
+    /// The plan as it was when the editor opened (edit mode).
+    @State private var original: InvestmentPlan?
+    /// What the schedule in the draft does to the plan's past, compared with `original`.
+    @State private var impact = ScheduleImpact()
+    /// The user's answer to "what about the past dates?"; nil = the default for this plan.
+    @State private var keepsHistoryChoice: Bool?
 
     private var isEditing: Bool { if case .edit = mode { true } else { false } }
+    private var keepsHistory: Bool { keepsHistoryChoice ?? impact.keepsHistoryByDefault }
+
+    /// The inputs of `impact`.
+    private struct ScheduleKey: Hashable {
+        var start: Day
+        var end: Day?
+        var intervalMonths: Int
+        var revision: Int
+    }
 
     var body: some View {
         VStack(spacing: 0) {
+            Text(isEditing ? "Edit Plan" : "New Plan")
+                .font(.title3.weight(.semibold))
+                .accessibilityAddTraits(.isHeader)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, DS.Spacing.l)
+                .padding(.top, DS.Spacing.l)
+                .padding(.bottom, DS.Spacing.s)
             Form {
                 Section {
                     Picker("Type", selection: $draft.kind) {
@@ -47,6 +72,18 @@ struct PlanEditor: View {
                 Section {
                     if draft.kind == .purchase {
                         LabeledContent("Security") { SecurityPicker(selection: $draft.securityID) }
+                        if store.file.securities.isEmpty {
+                            // A savings plan needs something to buy; do not leave a new user stuck here.
+                            HStack(alignment: .firstTextBaseline, spacing: DS.Spacing.m) {
+                                Label("This portfolio has no securities yet. Add the fund or share the plan should buy, then come back.",
+                                      systemImage: "info.circle")
+                                    .font(.callout)
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                Spacer(minLength: DS.Spacing.s)
+                                Button("New Security…", action: addSecurityFirst)
+                            }
+                        }
                         LabeledContent("Depot") { DepotPicker(selection: $draft.depotID) }
                         LabeledContent("Paid From") {
                             AccountPicker(selection: $draft.accountID, allowsNone: true)
@@ -105,6 +142,9 @@ struct PlanEditor: View {
         .frame(width: 540)
         .frame(minHeight: 560, idealHeight: 720, maxHeight: 760)
         .onAppear(perform: load)
+        .task(id: ScheduleKey(start: draft.start, end: draft.end, intervalMonths: draft.intervalMonths, revision: store.revision)) {
+            await updateImpact()
+        }
         .onChange(of: draft.kind) { _, _ in applyDefaults() }
         .onChange(of: draft.depotID) { old, new in depotChanged(from: old, to: new) }
     }
@@ -169,6 +209,37 @@ struct PlanEditor: View {
             .font(.callout)
             .foregroundStyle(.secondary)
         }
+        if isEditing, !impact.newlyDue.isEmpty {
+            pastDatesQuestion
+        }
+    }
+
+    /// Shown when the edited schedule leaves past dates without a matching transaction — moving
+    /// the execution day does that to the whole history. Nothing becomes due behind the user's back.
+    @ViewBuilder private var pastDatesQuestion: some View {
+        let count = impact.newlyDue.count
+        let dates = count == 1 ? "1 past date" : "\(Fmt.integer(count)) past dates"
+        VStack(alignment: .leading, spacing: DS.Spacing.s) {
+            Label {
+                Text(PlanDraft.pastDatesMessage(impact))
+                    .fixedSize(horizontal: false, vertical: true)
+            } icon: {
+                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(DS.Colors.warning)
+            }
+            Picker("Past dates", selection: Binding(get: { keepsHistory }, set: { keepsHistoryChoice = $0 })) {
+                Text("Apply from the next execution").tag(true)
+                Text("Make \(dates) due").tag(false)
+            }
+            .pickerStyle(.radioGroup)
+            .labelsHidden()
+            Text(keepsHistory
+                ? "The \(dates) \(count == 1 ? "is" : "are") marked as skipped. Everything already booked stays as it is, and nothing is proposed again."
+                : "Kontor will offer to generate \(count == 1 ? "a transaction for this date" : "transactions for these dates"). Choose this only if \(count == 1 ? "it is" : "they are") really missing in your ledger.")
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .font(.callout)
+        .accessibilityElement(children: .contain)
     }
 
     private func weekdayName(_ day: Day) -> String {
@@ -225,7 +296,16 @@ struct PlanEditor: View {
                 return
             }
             draft = PlanDraft(plan)
+            original = plan
             hasCustomName = true
+            // Screenshot mode: a changed schedule, to show the question about past dates.
+            if let start = store.launchValue("start").flatMap({ Day(iso: $0) }) { draft.start = start }
+            if let months = store.launchValue("interval").flatMap({ Int($0) }), months > 0 { draft.intervalMonths = months }
+            switch store.launchValue("history") {
+            case "due": keepsHistoryChoice = false
+            case "keep": keepsHistoryChoice = true
+            default: break
+            }
         case .new(let prefill):
             draft = PlanDraft(prefill: prefill, file: store.file, today: store.today)
         }
@@ -248,11 +328,47 @@ struct PlanEditor: View {
         }
     }
 
+    /// Recomputes what the draft's schedule does to the plan's past (off the main actor).
+    private func updateImpact() async {
+        guard isLoaded, let original else { return }
+        let edited = draft.plan(currency: original.amount.currency)
+        guard edited.intervalMonths > 0 else {
+            impact = ScheduleImpact()
+            return
+        }
+        let today = store.today
+        struct Key: Hashable, Sendable {
+            var old: InvestmentPlan
+            var new: InvestmentPlan
+            var today: Day
+        }
+        if let result = try? await store.compute(Key(old: original, new: edited, today: today), { ledger in
+            ScheduleImpact(ledger, old: original, new: edited, today: today)
+        }) {
+            impact = result
+        }
+    }
+
+    /// Leaves the editor for the security editor and comes back to a new plan afterwards.
+    private func addSecurityFirst() {
+        let prefill = PlanPrefill(
+            kind: draft.kind, depotID: draft.depotID, accountID: draft.accountID,
+            amount: draft.amountMinor > 0 ? Money(minor: draft.amountMinor, currency: currency) : nil, start: draft.start)
+        store.dismissSheet()
+        store.present(.newSecurity)
+        if !isEditing { store.present(.newPlan(prefill)) }
+    }
+
     private func save() {
         var plan = draft.plan(currency: currency)
         if plan.name.trimmingCharacters(in: .whitespaces).isEmpty { plan.name = suggestedName }
         switch mode {
         case .edit:
+            if let original {
+                // Decided on the plan exactly as it is saved (the displayed impact may lag a keystroke).
+                let impact = ScheduleImpact(store.ledger, old: original, new: plan, today: store.today)
+                if keepsHistoryChoice ?? impact.keepsHistoryByDefault { impact.keepHistory(in: &plan) }
+            }
             store.updatePlan(plan)
         case .new:
             store.addPlan(plan)
@@ -338,7 +454,10 @@ struct PlanDraft: Hashable {
 
     /// The first thing that keeps the plan from being saved, in plain language; nil if it is fine.
     /// Mirrors the engine's `PlanProblem`s so that a saved plan can always be executed.
-    func validate(security: Security?, depot: Depot?, account: Account?) -> String? {
+    ///
+    /// `currency` is the currency of a stored plan's amount (the editor derives it from the account,
+    /// so there it cannot differ).
+    func validate(security: Security?, depot: Depot?, account: Account?, currency: CurrencyCode? = nil) -> String? {
         switch kind {
         case .purchase:
             if security == nil { return "Choose the security to buy." }
@@ -346,11 +465,27 @@ struct PlanDraft: Hashable {
         case .deposit, .withdrawal:
             if account == nil { return "Choose the account." }
         }
+        if kind == .purchase, accountID != nil, account == nil { return "Choose the account the purchase is paid from." }
+        if let currency, let account, account.currency != currency { return "The amount must be in \(account.currency), the currency of the account." }
         if amountMinor <= 0 { return "Enter the amount." }
         if kind == .purchase, fees >= amountMinor { return "The fees must be smaller than the amount." }
         if intervalMonths <= 0 { return "Choose how often the plan repeats." }
         if let end, end < start { return "The end is before the first execution." }
         return nil
+    }
+
+    /// The editor's warning when a schedule change leaves past dates open.
+    static func pastDatesMessage(_ impact: ScheduleImpact) -> String {
+        guard let first = impact.newlyDue.first else { return "" }
+        let count = impact.newlyDue.count
+        let dates = count == 1
+            ? "1 past date (\(Fmt.day(first, style: .medium))) has"
+            : "\(Fmt.integer(count)) past dates since \(Fmt.day(first, style: .medium)) have"
+        var text = "With this schedule, \(dates) no matching transaction."
+        if impact.unmatched > 0 {
+            text += " \(impact.unmatched == 1 ? "1 booked execution no longer falls" : "\(Fmt.integer(impact.unmatched)) booked executions no longer fall") on a scheduled day."
+        }
+        return text
     }
 
     struct Preview: Equatable {

@@ -24,6 +24,8 @@ import KontorUI
 /// | `line` | a file line number | review step: highlights that row and shows its full message |
 /// | `remembered` | `on` | wizard as on the second import of a known layout (mapping remembered, opens at review) |
 /// | `notes` | `collapsed` | Portfolio Performance summary with the "left out on purpose" list folded |
+/// | `matches` | `expanded` `collapsed` | Portfolio Performance summary (merge): the "matched to what you already have" list (default: expanded if anything was matched without an ISIN) |
+/// | `asof` | `yyyy-MM-dd` | export sheet, holdings: the day of the statement (default: today) |
 /// | `format` | `transactions` `holdings` `quotes` `securities` `pp` `json` | export sheet format (with `--sheet export`) |
 /// | `preset` | `international` `german` | CSV notation of the export sheet |
 public struct ImportScreen: View {
@@ -58,18 +60,18 @@ public struct ImportScreen: View {
             }
         }
         .dropDestination(for: URL.self) { urls, _ in
-            guard let url = urls.first(where: \.isFileURL) else { return false }
-            store.present(.importFile(url))
-            return true
+            ImportFeature.importDropped(urls, into: store)
         } isTargeted: { isDropTargeted = $0 }
-        .ledgerTask($recent, id: "import.recent") { ledger in RecentImport.list(ledger.transactions) }
+        .ledgerTask($recent, id: "import.recent") { ledger in
+            RecentImport.list(ledger.transactions, preferences: ledger.settings.preferences)
+        }
         .onAppear { pinsDropState = store.launchValue("drop") == "on" }
     }
 
     // MARK: Getting data in
 
     @ViewBuilder private var intake: some View {
-        if store.file.isBlank {
+        if store.file.isUntouched {
             VStack(alignment: .leading, spacing: DS.Spacing.xs) {
                 Text("Bring your portfolio to Kontor")
                     .font(.title2.weight(.semibold))
@@ -84,7 +86,9 @@ public struct ImportScreen: View {
         LazyVGrid(columns: [GridItem(.adaptive(minimum: 300), spacing: DS.Spacing.l, alignment: .top)], spacing: DS.Spacing.l) {
             PathCard(
                 symbol: "shippingbox", title: "Portfolio Performance",
-                text: "Move a whole portfolio: securities with their quotes, accounts, all transactions, taxonomies and savings plans. Open it as a new portfolio or merge it into this one.",
+                text: store.file.isUntouched
+                    ? "Move a whole portfolio: securities with their quotes, accounts, all transactions, taxonomies and savings plans. It becomes the content of this portfolio, or opens as a new one."
+                    : "Move a whole portfolio: securities with their quotes, accounts, all transactions, taxonomies and savings plans. Open it as a new portfolio or merge it into this one.",
                 detail: "Use an .xml file. For password-protected or binary files choose File › Save As › XML in Portfolio Performance first."
             ) {
                 Button("Choose File…") { ImportFeature.chooseFile(store, target: nil) }
@@ -99,7 +103,7 @@ public struct ImportScreen: View {
             PathCard(
                 symbol: "chart.line.uptrend.xyaxis", title: "Quotes",
                 text: "Historical prices for one security — a date and a price per row, for example a download from a quote website.",
-                detail: store.file.securities.isEmpty ? "Add the security first; then import its history." : "Existing days are kept; new days are added."
+                detail: store.file.securities.isEmpty ? "Add the security first; then import its history." : "New days are added. A day whose quote differs is replaced — the review marks those rows before anything changes."
             ) {
                 Button("Choose CSV…") { ImportFeature.chooseFile(store, target: .quotes) }
                     .disabled(store.file.securities.isEmpty)
@@ -113,7 +117,7 @@ public struct ImportScreen: View {
             }
         }
 
-        if store.file.isBlank {
+        if store.file.isUntouched {
             HStack(spacing: DS.Spacing.s) {
                 Text("Starting from scratch?")
                     .foregroundStyle(.secondary)
@@ -242,7 +246,8 @@ private struct RecentImportRow: View {
                 Button("Show in Transactions") { store.navigate(to: .transaction(entry.firstTransactionID)) }
                 Button("Copy Source Tag") { Pasteboard.copy(entry.source) }
                 Divider()
-                Button("Remove These \(Fmt.integer(entry.count)) Transactions", role: .destructive, action: remove)
+                Button("Remove \(entry.count == 1 ? "This Transaction" : "These \(Fmt.integer(entry.count)) Transactions")", role: .destructive, action: remove)
+                    .help("Removes every transaction this import added. Securities, accounts and plans it created stay. Undo brings the transactions back.")
             } label: {
                 Image(systemName: "ellipsis.circle")
             }
@@ -257,20 +262,21 @@ private struct RecentImportRow: View {
     private var subtitle: String {
         var parts: [String] = []
         if let day = entry.tag.day { parts.append(Fmt.relativeDay(day, today: store.today)) }
-        parts.append("\(Fmt.integer(entry.count)) \(entry.count == 1 ? "transaction" : "transactions")")
-        parts.append(entry.firstDay == entry.lastDay
-            ? Fmt.day(entry.firstDay, style: .medium)
-            : "\(Fmt.day(entry.firstDay, style: .shortMonthYear)) – \(Fmt.day(entry.lastDay, style: .shortMonthYear))")
+        parts.append(ImportText.count(entry.count, "transaction", "transactions"))
+        parts.append(entry.firstDay == entry.lastDay ? Fmt.day(entry.firstDay, style: .medium) : ImportText.months(entry.firstDay, entry.lastDay))
         return parts.joined(separator: " · ")
     }
 
     private func remove() {
         let source = entry.source
+        var removed = 0
         let changed = store.mutate("Remove Imported Transactions") { file in
-            file.transactions.removeAll { $0.source == source }
+            removed = RecentImport.remove(source, from: &file)
         }
         if changed {
-            store.toast("Removed \(Fmt.integer(entry.count)) imported \(entry.count == 1 ? "transaction" : "transactions")", message: "Undo with ⌘Z.", style: .info)
+            store.toast(
+                "Removed \(ImportText.count(removed, "imported transaction", "imported transactions"))",
+                message: "Securities, accounts and plans stay. Undo with ⌘Z.", style: .info)
         }
     }
 }

@@ -32,7 +32,7 @@ public enum DashboardFeature {
                            subtitle: "Add, remove, move and resize widgets", symbol: "square.and.pencil",
                            keywords: ["customize", "layout", "widgets", "arrange"], shortcut: "⌘E") {
                 store.navigate(to: .dashboard)
-                session.isEditing.toggle()
+                store.toggleDashboardEditing()
             },
             PaletteCommand(id: "dashboard.add-widget", title: "Add Widget…", subtitle: "Dashboard “\(current.name)”",
                            symbol: "rectangle.badge.plus", keywords: ["gallery", "dashboard", "tile", "chart"]) {
@@ -61,11 +61,18 @@ public enum DashboardFeature {
                 store.deleteCurrentDashboard()
             })
         }
+        for (offset, title) in [(-1, "Move Dashboard “\(current.name)” Left"), (1, "Move Dashboard “\(current.name)” Right")]
+        where store.canMoveCurrentDashboard(by: offset) {
+            commands.append(PaletteCommand(id: "dashboard.move.\(offset)", title: title, subtitle: "Order of the dashboard switcher",
+                                           symbol: offset < 0 ? "arrow.left" : "arrow.right", keywords: ["reorder", "order", "tab"]) {
+                store.navigate(to: .dashboard)
+                store.moveCurrentDashboard(by: offset)
+            })
+        }
         for dashboard in store.file.dashboards where dashboard.id != current.id {
             commands.append(PaletteCommand(id: "dashboard.show.\(dashboard.id.uuidString)", title: "Show Dashboard “\(dashboard.name)”",
                                            symbol: "rectangle.3.group", category: .navigation, keywords: ["switch", "open"]) {
-                session.showsCatalog = false
-                session.selectedID = dashboard.id
+                store.selectDashboard(dashboard.id)
                 store.navigate(to: .dashboard)
             })
         }

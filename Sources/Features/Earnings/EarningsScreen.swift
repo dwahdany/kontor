@@ -19,10 +19,12 @@ import KontorUI
 /// | `average` | `off` | chart: hide the 12-month average line |
 /// | `select` | a bar id: `2025-05`, `2025-Q2`, `2025` | chart: select a bar (breakdown card follows) |
 /// | `hover` | a bar id (as above); calendar: `2026-7` (year-month of an upcoming month) | pin the chart tooltip |
-/// | `month` | `2025-05` | payments: only that month |
+/// | `month` | `2025-05` · `2025-Q2` · `2025` | payments: only that month, quarter or year |
 /// | `filter` | text | payments: quick filter |
 ///
 /// Scope comes from `--scope`, the period from `--period` (used with `range=period`).
+///
+/// The figure, the view and the range survive a relaunch (`@SceneStorage("earnings.…")`).
 public struct EarningsScreen: View {
     @Environment(PortfolioStore.self) private var store
 
@@ -33,6 +35,10 @@ public struct EarningsScreen: View {
     @State private var chartOptions = EarningsChartOptions()
     @State private var paymentsFilter = PaymentsFilter()
     @State private var didReadLaunchState = false
+    // `@State` is the source of truth; these only carry it across relaunches.
+    @SceneStorage("earnings.kind") private var storedKind = EarningsKind.dividends.rawValue
+    @SceneStorage("earnings.view") private var storedView = EarningsView.chart.rawValue
+    @SceneStorage("earnings.range") private var storedRange = EarningsRange.all.rawValue
 
     public init() {}
 
@@ -73,6 +79,9 @@ public struct EarningsScreen: View {
             // Choosing a period in the toolbar means "show me that period".
             range = .period
         }
+        .onChange(of: kind) { _, new in storedKind = new.rawValue }
+        .onChange(of: view) { _, new in storedView = new.rawValue }
+        .onChange(of: range) { _, new in storedRange = new.rawValue }
     }
 
     // MARK: Content
@@ -93,9 +102,21 @@ public struct EarningsScreen: View {
                     .help("What to look at. Dividends and interest are shown before fees and taxes; Net is what is left after them.")
                     HelpButton(.grossVersusNet)
                     Spacer(minLength: DS.Spacing.s)
-                    rangePicker
+                    if value.isAccountScope {
+                        Text("Booked on \(store.scopeTitle)")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .help("For a cash account this screen shows everything that was booked on it: dividends, interest, and the fees and taxes of its bookings.")
+                    }
                 }
-                EarningsTiles(model: value, isCompact: isCompact)
+                EarningsTiles(model: value, isCompact: isCompact, isNarrow: width < 1100)
+                if !value.unconverted.isEmpty {
+                    EarningsWarning(text: value.unconverted.message(reportingCurrency: value.currency),
+                                    advice: "Add the exchange rate to include them.") {
+                        store.present(.consistencyReport)
+                    }
+                }
                 HStack(spacing: DS.Spacing.m) {
                     Picker("View", selection: $view) {
                         ForEach(EarningsView.allCases) { view in
@@ -106,11 +127,7 @@ public struct EarningsScreen: View {
                     .labelsHidden()
                     .fixedSize()
                     Spacer(minLength: DS.Spacing.s)
-                    Text(Fmt.interval(value.interval))
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .numeric()
-                        .lineLimit(1)
+                    viewCaption(value, isCompact: isCompact)
                 }
             }
             .frame(width: max(0, width - 2 * DS.Spacing.xl), alignment: .leading)
@@ -121,13 +138,13 @@ public struct EarningsScreen: View {
             Group {
                 switch view {
                 case .chart:
-                    EarningsChartView(model: value, options: $chartOptions, isRefreshing: model.isRefreshing) { month in
-                        paymentsFilter = PaymentsFilter(month: month)
+                    EarningsChartView(model: value, options: $chartOptions, isRefreshing: model.isRefreshing) { months in
+                        paymentsFilter = PaymentsFilter(months: months)
                         view = .payments
                     }
                 case .matrix:
                     EarningsMatrixView(model: value, width: width) { month in
-                        paymentsFilter = PaymentsFilter(month: month)
+                        paymentsFilter = PaymentsFilter(months: month...month)
                         view = .payments
                     }
                 case .securities:
@@ -138,7 +155,7 @@ public struct EarningsScreen: View {
                 case .accounts:
                     EarningsAccountsTable(model: value)
                 case .payments:
-                    EarningsPaymentsView(interval: interval, filter: $paymentsFilter)
+                    EarningsPaymentsView(interval: interval, filter: $paymentsFilter, width: width)
                 case .calendar:
                     EarningsCalendarView(model: value, pinnedMonth: chartOptions.pinnedHover, width: width)
                 }
@@ -148,14 +165,45 @@ public struct EarningsScreen: View {
         }
     }
 
+    /// Says what the view below covers. The range belongs to the views (the tiles above name
+    /// their own periods); Payments and Calendar are about dividends whatever the figure is.
+    @ViewBuilder private func viewCaption(_ value: EarningsModel, isCompact: Bool) -> some View {
+        HStack(spacing: DS.Spacing.s) {
+            if view == .calendar {
+                Text(isCompact ? "Dividends" : "Dividends · last and next 12 months")
+                    .help("The calendar always shows dividends: the payments of the last three years and an estimate for the next twelve months, whatever figure and years are selected.")
+            } else {
+                if view == .payments, kind != .dividends {
+                    Text(isCompact ? "Dividends ·" : "Dividend payments ·")
+                        .help("This list always shows dividend payments, whatever figure is selected above.")
+                }
+                rangePicker
+                if !isCompact {
+                    Text(Fmt.interval(value.interval)).numeric()
+                }
+            }
+        }
+        .font(.callout)
+        .foregroundStyle(.secondary)
+        .lineLimit(1)
+    }
+
     private var rangePicker: some View {
         Picker("Years", selection: $range) {
             Text("All Years").tag(EarningsRange.all)
-            Text(store.period.title).tag(EarningsRange.period)
+            Text(periodTitle).tag(EarningsRange.period)
         }
         .pickerStyle(.menu)
+        .labelsHidden()
         .fixedSize()
-        .help("All Years shows everything since the first transaction. The other choice follows the period selected in the toolbar.")
+        .help("The years the views below cover. All Years shows everything since the first transaction; the other choice follows the period selected in the toolbar. The tiles above always show their own periods.")
+    }
+
+    /// The window's period. "Last year" would read like the calendar year next to the tiles: it
+    /// is the rolling twelve months.
+    private var periodTitle: String {
+        if case .lastYears(1) = store.period { return "Last 12 months" }
+        return store.period.title
     }
 
     private var emptyState: some View {
@@ -164,7 +212,7 @@ public struct EarningsScreen: View {
             symbol: "banknote",
             message: store.isWholePortfolioScope
                 ? "Record a dividend or an interest payment and Kontor shows what your portfolio pays you: per month, per security, after fees and taxes."
-                : "Nothing was paid or charged in this part of the portfolio. Choose another scope in the toolbar, or record a payment."
+                : "No dividends, interest, fees or taxes were booked in this part of the portfolio. Choose another scope in the toolbar, or record a payment."
         ) {
             Button("Record Dividend…") { record(.dividend) }
                 .keyboardShortcut(.defaultAction)
@@ -180,7 +228,7 @@ public struct EarningsScreen: View {
     // MARK: Toolbar, shortcuts
 
     @ToolbarContentBuilder private var toolbar: some ToolbarContent {
-        ToolbarItem { ScopePicker() }
+        ToolbarItem { ScopePicker(store: store) }
         ToolbarItem {
             Menu {
                 Button("Record Dividend…", systemImage: Transaction.Kind.dividend.symbol) { record(.dividend) }
@@ -244,18 +292,15 @@ public struct EarningsScreen: View {
     private func readLaunchState() {
         guard !didReadLaunchState else { return }
         didReadLaunchState = true
-        kind = store.launchValue("metric", as: EarningsKind.self) ?? kind
-        view = store.launchValue("view", as: EarningsView.self) ?? view
-        range = store.launchValue("range", as: EarningsRange.self) ?? range
+        kind = store.launchValue("metric", as: EarningsKind.self) ?? EarningsKind(rawValue: storedKind) ?? kind
+        view = store.launchValue("view", as: EarningsView.self) ?? EarningsView(rawValue: storedView) ?? view
+        range = store.launchValue("range", as: EarningsRange.self) ?? EarningsRange(rawValue: storedRange) ?? range
         chartOptions.grouping = store.launchValue("group", as: EarningsGrouping.self) ?? chartOptions.grouping
         chartOptions.stacksBySecurity = store.launchValue("stack") == "security"
         chartOptions.showsAverage = store.launchValue("average") != "off"
         chartOptions.selection = store.launchValue("select")
         chartOptions.pinnedHover = store.launchValue("hover")
-        if let month = store.launchValue("month") {
-            let parts = month.split(separator: "-").compactMap { Int($0) }
-            if parts.count == 2, (1...12).contains(parts[1]) { paymentsFilter.month = parts[0] * 12 + parts[1] - 1 }
-        }
+        if let months = store.launchValue("month").flatMap(EarningsRules.months(ofBar:)) { paymentsFilter.months = months }
         paymentsFilter.text = store.launchValue("filter") ?? ""
     }
 }
@@ -272,12 +317,12 @@ struct EarningsChartOptions: Equatable {
 
 struct PaymentsFilter: Equatable {
     var text = ""
-    /// `year × 12 + month − 1`
-    var month: Int?
+    /// First and last month, each `year × 12 + month − 1`.
+    var months: ClosedRange<Int>?
     var securityID: UUID?
 
     func query(sortOrder: [KeyPathComparator<PaymentRow>]) -> PaymentsModel.Query {
-        PaymentsModel.Query(filter: text, month: month, securityID: securityID, sortOrder: sortOrder)
+        PaymentsModel.Query(filter: text, months: months, securityID: securityID, sortOrder: sortOrder)
     }
 }
 
@@ -302,10 +347,11 @@ struct PaymentsFilter: Equatable {
 struct EarningsTiles: View {
     let model: EarningsModel
     var isCompact = false
+    /// Not much room per tile (inspector open, small window): shorter footnotes.
+    var isNarrow = false
 
     var body: some View {
         let tiles = model.tiles
-        let currency = model.currency
         HStack(spacing: isCompact ? DS.Spacing.s : DS.Spacing.m) {
             StatTile("\(String(tiles.year)) so far", value: money(tiles.thisYear),
                      footnote: "through \(Fmt.day(model.today, style: .dayMonth))")
@@ -314,16 +360,13 @@ struct EarningsTiles: View {
                      delta: delta(tiles.lastYearGrowth), footnote: growthFootnote(tiles.lastYearGrowth, reference: "vs. \(String(tiles.year - 2))"))
                 .help("\(model.kind.title) in \(String(tiles.year - 1)): \(exact(tiles.lastYear))")
             StatTile("Last 12 Months", value: money(tiles.trailing),
-                     footnote: "since \(Fmt.day(tiles.trailingInterval.firstDay, style: .shortMonthYear))")
-                .help("\(model.kind.title) in the current month and the eleven before it: \(exact(tiles.trailing))")
+                     footnote: "since \(Fmt.day(tiles.trailingInterval.firstDay, style: isNarrow ? .short : .medium))")
+                .help("\(model.kind.title) in the twelve months through today (\(Fmt.interval(tiles.trailingInterval))): \(exact(tiles.trailing))")
             StatTile(isCompact ? "Per Month" : "Average per Month", value: money(tiles.averagePerMonth), footnote: "last 12 months")
                 .help("The last 12 months divided by twelve: \(exact(tiles.averagePerMonth))")
             StatTile(isCompact ? "Growth" : "Growth vs. Last Year", value: Fmt.percent(tiles.samePeriodGrowth, decimals: 1, signed: true),
-                     footnote: tiles.samePeriodGrowth == nil
-                        ? "nothing a year earlier"
-                        : isCompact ? "vs. \(Fmt.money(minor: tiles.samePeriodLastYear, currency: currency))"
-                        : "\(Fmt.money(minor: tiles.samePeriodLastYear, currency: currency)) same days \(String(tiles.year - 1))")
-                .help("\(String(tiles.year)) so far compared with \(Fmt.interval(tiles.samePeriodInterval)) — the same part of last year, so a year in progress is compared fairly.")
+                     footnote: samePeriodFootnote(tiles))
+                .help("\(String(tiles.year)) so far (\(exact(tiles.thisYear))) compared with \(Fmt.interval(tiles.samePeriodInterval)) (\(exact(tiles.samePeriodLastYear))) — the same part of last year, so a year in progress is compared fairly. A growth rate is only shown while both amounts are positive.")
         }
         .numeric()
     }
@@ -334,10 +377,11 @@ struct EarningsTiles: View {
         return isCompact ? Fmt.moneyRounded(money) : Fmt.money(money)
     }
 
-    /// Growth of income is good news and gets the gain color; growth of fees or taxes is stated neutrally.
+    /// Growth of income is good news and gets the gain color; growth of fees or taxes is stated
+    /// neutrally. One decimal, like every growth figure of this screen (`DeltaLabel` prints two).
     private func delta(_ growth: Double?) -> DeltaLabel? {
         guard let growth, !model.kind.isCost else { return nil }
-        return DeltaLabel(fraction: growth)
+        return DeltaLabel(fraction: (growth * 1000).rounded() / 1000, decimals: 1)
     }
 
     private func exact(_ minor: Int64) -> String { Fmt.money(minor: minor, currency: model.currency) }
@@ -346,5 +390,44 @@ struct EarningsTiles: View {
         guard let growth else { return "full year" }
         if isCompact { return model.kind.isCost ? Fmt.percent(growth, decimals: 1, signed: true) : "" }
         return model.kind.isCost ? "\(Fmt.percent(growth, decimals: 1, signed: true)) \(reference)" : reference
+    }
+
+    /// What the growth tile compares with — also when there is no growth rate to show.
+    private func samePeriodFootnote(_ tiles: EarningsModel.Tiles) -> String {
+        let reference = isCompact
+            ? Fmt.moneyRounded(Money(minor: tiles.samePeriodLastYear, currency: model.currency))
+            : Fmt.money(minor: tiles.samePeriodLastYear, currency: model.currency)
+        if tiles.samePeriodGrowth == nil {
+            if tiles.samePeriodLastYear == 0 { return "nothing a year earlier" }
+            return isCompact || isNarrow ? "not comparable" : "not comparable with \(reference)"
+        }
+        return isCompact || isNarrow ? "vs. \(reference)" : "\(reference) same days \(String(tiles.year - 1))"
+    }
+}
+
+// MARK: - Warning banner
+
+/// Amounts are missing from the figures: say so, and offer the way to fix it.
+struct EarningsWarning: View {
+    let text: String
+    let advice: String
+    let showIssues: () -> Void
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: DS.Spacing.s) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(DS.Colors.warning)
+                .accessibilityHidden(true)
+            Text("\(text) \(advice)")
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: DS.Spacing.s)
+            Button("Check Consistency…", action: showIssues)
+                .controlSize(.small)
+                .help("Lists the currencies without an exchange rate")
+        }
+        .font(.callout)
+        .padding(.horizontal, DS.Spacing.m)
+        .padding(.vertical, DS.Spacing.s)
+        .background(DS.Colors.warning.opacity(0.12), in: RoundedRectangle(cornerRadius: DS.Radius.small, style: .continuous))
     }
 }

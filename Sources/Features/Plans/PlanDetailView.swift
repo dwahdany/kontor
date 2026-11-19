@@ -86,11 +86,13 @@ struct PlanDetailView: View {
                     Button("Resume") { PlanActions.resume(plan.id, in: store) }
                         .help("Clears the end date. Dates missed while the plan was paused are marked as skipped.")
                 } else {
+                    let canPause = PlanActions.canPause(plan, today: store.today)
                     Button("Pause") { PlanActions.pause(plan.id, in: store) }
-                        .help("Ends the plan today, so nothing new comes due. Resume it at any time.")
+                        .disabled(!canPause)
+                        .help(canPause ? PlanActions.pauseHelp : PlanActions.cannotPauseHelp)
                 }
                 Menu {
-                    Button("Duplicate") { PlanActions.duplicate(plan.id, in: store) }
+                    Button("Duplicate…") { PlanActions.duplicate(plan.id, in: store) }
                     if let securityID = plan.securityID {
                         Button("Show Security") { store.navigate(to: .security(securityID)) }
                     }
@@ -151,7 +153,14 @@ struct PlanDetailView: View {
     @ViewBuilder private func tileViews(_ detail: PlanDetail) -> some View {
         if let performance = detail.performance {
             PlanTile("Invested via Plan", help: .investedCapital, value: Fmt.money(minor: performance.invested, currency: performance.currency), maxWidth: 264) {
-                Text("\(Fmt.integer(detail.executions)) \(detail.executions == 1 ? "execution" : "executions")")
+                // Paid in another currency: the tile is in the reporting currency (each execution at
+                // its day's rate), the list's "Total So Far" in the plan's — show both.
+                if performance.currency == detail.total.currency {
+                    Text(Self.executionCount(detail.executions))
+                } else {
+                    Text("\(Fmt.money(detail.total)) at each day's rate")
+                        .help("\(Self.executionCount(detail.executions)) paid in \(detail.total.currency), converted to \(performance.currency) at the exchange rate of each execution day.")
+                }
             }
             PlanTile("Value Today", value: performance.isValued ? Fmt.money(minor: performance.value, currency: performance.currency) : Fmt.missing, maxWidth: 264) {
                 if performance.isValued {
@@ -173,24 +182,33 @@ struct PlanDetailView: View {
             }
         } else {
             PlanTile(totalTitle(detail.kind), value: Fmt.money(detail.total), maxWidth: 264) {
-                Text("\(Fmt.integer(detail.executions)) \(detail.executions == 1 ? "execution" : "executions")")
+                Text(Self.executionCount(detail.executions))
             }
-            PlanTile("Per Year", value: plan.intervalMonths > 0
-                ? Fmt.money(minor: Int64((Double(plan.amount.minor) * 12 / Double(plan.intervalMonths)).rounded()), currency: plan.amount.currency)
-                : Fmt.missing, maxWidth: 264) {
-                Text(plan.intervalMonths > 0 && 12 % plan.intervalMonths == 0
-                    ? "\(Fmt.integer(12 / plan.intervalMonths)) × \(Fmt.money(plan.amount))" : "on average")
+            // What the plan moves per year — only while it still has dates ahead.
+            if detail.nextDue != nil {
+                PlanTile("Per Year", value: plan.intervalMonths > 0
+                    ? Fmt.money(minor: FixedMath.saturatingInt64(Double(plan.amount.minor) * 12 / Double(plan.intervalMonths)), currency: plan.amount.currency)
+                    : Fmt.missing, maxWidth: 264) {
+                    Text(plan.intervalMonths > 0 && 12 % plan.intervalMonths == 0
+                        ? "\(Fmt.integer(12 / plan.intervalMonths)) × \(Fmt.money(plan.amount))" : "on average")
+                }
             }
         }
         PlanTile("Next Execution", help: .savingsPlan, value: detail.nextDue.map { Fmt.day($0, style: .medium) } ?? Fmt.missing, maxWidth: 264) {
             if let next = detail.nextDue {
                 Text(PlanText.distance(from: store.today, to: next))
+            } else if detail.problem != nil {
+                Text("Not until the plan is fixed")
             } else if let end = plan.end {
                 Text("Ended \(Fmt.day(end, style: .medium))")
             } else {
                 Text("Nothing scheduled")
             }
         }
+    }
+
+    private static func executionCount(_ count: Int) -> String {
+        "\(Fmt.integer(count)) \(count == 1 ? "execution" : "executions")"
     }
 
     private func totalTitle(_ kind: InvestmentPlan.Kind) -> String {
@@ -242,7 +260,9 @@ struct PlanDetailView: View {
         Card("Timeline", symbol: "calendar.day.timeline.left") {
             VStack(alignment: .leading, spacing: 0) {
                 if detail.upcoming.isEmpty && detail.history.isEmpty {
-                    Text("Nothing has happened yet and nothing is scheduled.")
+                    Text(detail.problem != nil
+                        ? "Nothing has happened yet. Dates are scheduled once the plan can be executed."
+                        : "Nothing has happened yet and nothing is scheduled.")
                         .foregroundStyle(.secondary)
                         .padding(.vertical, DS.Spacing.s)
                 }
@@ -399,7 +419,13 @@ private struct TimelineRow: View {
     /// Set when the booking day differs from the scheduled day (holidays, manual corrections).
     private var note: String? {
         guard case .executed = entry.kind, let booked = entry.booked, booked != entry.due else { return nil }
-        return "booked \(Fmt.day(booked, style: .dayMonth))"
+        return Self.bookingNote(booked, afterShares: entry.shares != nil && entry.price != nil)
+    }
+
+    /// "3.7 × 133.81 € · booked 2 Jan" for purchases; for plain bookings the status already reads
+    /// "Booked", so only the day follows: "Booked · on 2 Jan".
+    static func bookingNote(_ booked: Day, afterShares: Bool) -> String {
+        "\(afterShares ? "booked" : "on") \(Fmt.day(booked, style: .dayMonth))"
     }
 
     @ViewBuilder private var actions: some View {

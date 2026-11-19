@@ -24,7 +24,6 @@ public struct DashboardScreen: View {
     @Environment(PortfolioStore.self) private var store
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @SceneStorage("dashboard.selected") private var storedSelection = ""
-    @State private var nameDraft = ""
     @State private var didAppear = false
 
     public init() {}
@@ -60,9 +59,8 @@ public struct DashboardScreen: View {
         .toolbar { toolbar(dashboard) }
         .onAppear { appear() }
         .onChange(of: session.selectedID) { _, id in storedSelection = id?.uuidString ?? "" }
-        .onChange(of: dashboard.id, initial: true) { _, _ in nameDraft = dashboard.name }
-        .onChange(of: dashboard.name) { _, name in nameDraft = name }
-        .onExitCommand { if session.isEditing { session.isEditing = false } }
+        // Esc leaves edit mode and discards a half-typed name (layout changes are already saved).
+        .onExitCommand { if session.isEditing { store.finishDashboardEditing(commitName: false) } }
     }
 
     // MARK: Grid
@@ -71,7 +69,7 @@ public struct DashboardScreen: View {
         DashboardGridLayout {
             ForEach(dashboard.widgets) { widget in
                 WidgetView(widget: widget, mode: isEditing ? .editing : .live)
-                    .dashboardSpan(widget.clampedSpan)
+                    .dashboardSpan(widget.clampedSpan, isTile: widget.widgetKind?.shape == .tile)
             }
         }
         .animation(DS.Motion.standard(reduceMotion), value: dashboard.widgets.map(\.id))
@@ -92,26 +90,25 @@ public struct DashboardScreen: View {
     private func header(_ dashboard: Dashboard) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: DS.Spacing.m) {
             if store.file.dashboards.count > 1, !store.dashboardSession.showsCatalog {
-                Picker("Dashboard", selection: Binding(get: { dashboard.id }, set: { store.dashboardSession.selectedID = $0 })) {
-                    ForEach(store.file.dashboards) { Text($0.name.isEmpty ? "Untitled" : $0.name).tag($0.id) }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .fixedSize()
+                DashboardSwitcher(dashboards: store.file.dashboards, selection: dashboard.id) { store.selectDashboard($0) }
             } else {
                 Text(dashboard.name.isEmpty ? "Dashboard" : dashboard.name)
                     .font(.title2.weight(.semibold))
+                    .lineLimit(1)
                     .accessibilityAddTraits(.isHeader)
             }
-            Spacer(minLength: DS.Spacing.m)
+            Spacer(minLength: 0)
             HStack(spacing: DS.Spacing.xs) {
                 Text("\(store.scopeTitle) · \(Fmt.interval(store.periodInterval))")
                     .numeric()
+                    .lineLimit(1)
+                    .truncationMode(.middle)
                 HelpButton(.reportingPeriod)
             }
             .font(.callout)
             .foregroundStyle(.secondary)
-            .lineLimit(1)
+            // What the numbers cover outranks the switcher, which has a compact form to fall back to.
+            .layoutPriority(1)
         }
     }
 
@@ -120,10 +117,10 @@ public struct DashboardScreen: View {
             Image(systemName: "square.grid.2x2")
                 .foregroundStyle(Color.accentColor)
                 .accessibilityHidden(true)
-            TextField("Dashboard Name", text: $nameDraft)
+            TextField("Dashboard Name", text: Binding(get: { store.dashboardNameText }, set: { store.setDashboardNameDraft($0) }))
                 .textFieldStyle(.roundedBorder)
-                .frame(width: 200)
-                .onSubmit { store.renameDashboard(nameDraft) }
+                .frame(minWidth: 110, idealWidth: 200, maxWidth: 200)
+                .onSubmit { store.commitDashboardName() }
                 .disabled(store.dashboardSession.showsCatalog)
                 .accessibilityLabel("Dashboard name")
             // The hint gives way first when the window is narrow.
@@ -139,7 +136,7 @@ public struct DashboardScreen: View {
                 .help("Add a widget from the gallery (⌥⇧⌘N)")
             Button("Reset to Default") { withAnimation(DS.Motion.standard(reduceMotion)) { store.resetDashboardToDefault() } }
                 .help("Replace this dashboard's widgets with the default layout (undoable)")
-            Button("Done") { finishEditing() }
+            Button("Done") { store.finishDashboardEditing() }
                 .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.defaultAction)
         }
@@ -154,7 +151,7 @@ public struct DashboardScreen: View {
 
     @ToolbarContentBuilder
     private func toolbar(_ dashboard: Dashboard) -> some ToolbarContent {
-        ToolbarItem { ScopePicker() }
+        ToolbarItem { ScopePicker(store: store) }
         ToolbarItem {
             Menu {
                 if !store.file.dashboards.isEmpty {
@@ -162,7 +159,7 @@ public struct DashboardScreen: View {
                         ForEach(store.file.dashboards) { item in
                             Toggle(item.name.isEmpty ? "Untitled" : item.name, isOn: Binding(
                                 get: { item.id == dashboard.id },
-                                set: { if $0 { store.dashboardSession.showsCatalog = false; store.dashboardSession.selectedID = item.id } }))
+                                set: { if $0 { store.selectDashboard(item.id) } }))
                         }
                     }
                 }
@@ -172,8 +169,16 @@ public struct DashboardScreen: View {
                     Button("Delete “\(dashboard.name)”", systemImage: "trash", role: .destructive) { store.deleteCurrentDashboard() }
                         .disabled(!store.file.dashboards.contains { $0.id == dashboard.id })
                 }
+                if store.file.dashboards.count > 1 {
+                    Section {
+                        Button("Move “\(dashboard.name)” Left", systemImage: "arrow.left") { store.moveCurrentDashboard(by: -1) }
+                            .disabled(!store.canMoveCurrentDashboard(by: -1))
+                        Button("Move “\(dashboard.name)” Right", systemImage: "arrow.right") { store.moveCurrentDashboard(by: 1) }
+                            .disabled(!store.canMoveCurrentDashboard(by: 1))
+                    }
+                }
                 Section {
-                    Button(store.dashboardSession.isEditing ? "Finish Editing" : "Edit Dashboard", systemImage: "square.and.pencil") { toggleEditing() }
+                    Button(store.dashboardSession.isEditing ? "Finish Editing" : "Edit Dashboard", systemImage: "square.and.pencil") { store.toggleDashboardEditing() }
                     Button("Add Widget…", systemImage: "rectangle.badge.plus") { presentGallery() }
                     Button("Reset to Default", systemImage: "arrow.counterclockwise") { store.resetDashboardToDefault() }
                 }
@@ -184,7 +189,7 @@ public struct DashboardScreen: View {
         }
         ToolbarItem {
             Button(store.dashboardSession.isEditing ? "Done" : "Edit", systemImage: store.dashboardSession.isEditing ? "checkmark" : "square.and.pencil") {
-                toggleEditing()
+                store.toggleDashboardEditing()
             }
             .keyboardShortcut("e", modifiers: .command)
             .help(store.dashboardSession.isEditing ? "Finish editing the dashboard (⌘E)" : "Edit the dashboard: add, remove, move and resize widgets (⌘E)")
@@ -192,15 +197,6 @@ public struct DashboardScreen: View {
     }
 
     // MARK: Actions
-
-    private func toggleEditing() {
-        if store.dashboardSession.isEditing { finishEditing() } else { store.dashboardSession.isEditing = true }
-    }
-
-    private func finishEditing() {
-        store.renameDashboard(nameDraft)
-        store.dashboardSession.isEditing = false
-    }
 
     private func presentGallery() {
         store.present(.custom(id: DashboardFeature.gallerySheetID))
@@ -235,6 +231,35 @@ public struct DashboardScreen: View {
         if let widget = store.launchValue("configure") {
             store.present(.custom(id: DashboardFeature.widgetSheetID, payload: ["widget": widget]))
         }
+    }
+}
+
+// MARK: - Dashboard switcher
+
+/// Switches between the file's dashboards: a segmented control while all names fit the header, a
+/// pop-up menu once they do not. The number of dashboards is unbounded, so the switcher must never
+/// dictate the width of the screen.
+struct DashboardSwitcher: View {
+    let dashboards: [Dashboard]
+    let selection: UUID
+    let select: (UUID) -> Void
+
+    var body: some View {
+        let binding = Binding(get: { selection }, set: { select($0) })
+        ViewThatFits(in: .horizontal) {
+            picker(binding).pickerStyle(.segmented).fixedSize()
+            picker(binding).pickerStyle(.menu).fixedSize()
+            // Even one long name can be too wide: let the pop-up truncate.
+            picker(binding).pickerStyle(.menu).frame(minWidth: 80, maxWidth: 240)
+        }
+    }
+
+    private func picker(_ binding: Binding<UUID>) -> some View {
+        Picker("Dashboard", selection: binding) {
+            ForEach(dashboards) { Text($0.name.isEmpty ? "Untitled" : $0.name).tag($0.id) }
+        }
+        .labelsHidden()
+        .accessibilityLabel("Dashboard")
     }
 }
 

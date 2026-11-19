@@ -286,7 +286,9 @@ public func apply(_ result: UpdateResult, to file: inout PortfolioFile) -> Apply
                     touched = true
                 }
             }
-            file.securities[i].updatedAt = update.fetchedAt
+            // Whole seconds: the document stores ISO 8601 time stamps without fractions, and a
+            // file must be equal to itself after saving and reopening.
+            file.securities[i].updatedAt = Date(timeIntervalSinceReferenceDate: update.fetchedAt.timeIntervalSinceReferenceDate.rounded(.down))
             if touched { summary.changedSecurities.append(update.id) }
         }
     }

@@ -66,6 +66,8 @@ final class CSVWizard {
     // The user's choices; nil = not decided yet (the pipeline decides on the first run).
     private var dialect: CSVDialect?
     private var target: CSVImportTarget?
+    /// What the entry point expects the file to be; a remembered layout of that kind still applies.
+    private var targetHint: CSVImportTarget?
     private var mapping: CSVColumnMapping?
     private var mappingSignature: String?
     private var typeAliases: [String: CSVTransactionType] = [:]
@@ -78,6 +80,9 @@ final class CSVWizard {
     @ObservationIgnored private var launchStep: Step?
     /// Bumped whenever a new pipeline result is installed.
     private(set) var outputVersion = 0
+    /// The document revision `output` was computed against (duplicates, existing quotes and
+    /// securities are judged against that state of the portfolio).
+    @ObservationIgnored private var outputRevision: Int?
 
     init(store: PortfolioStore, data: Data, fileName: String, memory: MappingMemory) {
         self.store = store
@@ -90,9 +95,27 @@ final class CSVWizard {
 
     // MARK: Derived
 
-    var currentTarget: CSVImportTarget { output?.target ?? target ?? .transactions }
-    var currentDialect: CSVDialect { output?.dialect ?? dialect ?? CSVDialect() }
-    var isDialectOverridden: Bool { detected != nil && output?.dialect != detected }
+    // The pending choice wins over the last finished result: while a run is in flight the controls
+    // show (and the next change builds on) what the user just chose, not what the last run was given.
+    var currentTarget: CSVImportTarget { target ?? output?.target ?? targetHint ?? .transactions }
+    var currentDialect: CSVDialect { dialect ?? output?.dialect ?? CSVDialect() }
+    /// The column mapping as chosen (nil until the first result, or while a new target's automatic mapping is computed).
+    var currentMapping: CSVColumnMapping? { mapping ?? output?.mapping }
+    var isDialectOverridden: Bool { detected != nil && currentDialect != detected }
+
+    /// The automatic mapping is being recomputed (after "Reset to Automatic" or another kind of content).
+    var isMappingPending: Bool { mapping == nil && output != nil }
+
+    /// The user's (or a remembered) reading of a value of the type column, pending changes included.
+    func alias(for text: String) -> CSVTransactionType? {
+        typeAliases.first { $0.key.caseInsensitiveCompare(text) == .orderedSame }?.value
+    }
+
+    /// The field chosen for `column`.
+    func field(forColumn column: Int) -> CSVField? {
+        guard let columns = currentMapping?.columns, columns.indices.contains(column) else { return nil }
+        return columns[column]
+    }
     var missingFields: [CSVField] { output?.proposal.missingFields ?? [] }
     var unrecognizedTypeCount: Int { output?.typeValues.count { $0.resolved == nil } ?? 0 }
 
@@ -109,10 +132,23 @@ final class CSVWizard {
         if !missingFields.isEmpty {
             return "Choose a column for " + missingFields.map(\.displayName).formatted(.list(type: .and)) + "."
         }
-        if output.target == .quotes, securityID == nil { return "Choose the security these quotes belong to." }
-        if importCount == 0 { return output.rowCount == 0 ? "The file has no data rows." : "No rows are selected." }
+        if output.rowCount == 0 { return "The file has no data rows." }
+        if needsQuoteSecurity { return "Choose the security these quotes belong to." }
+        if importCount == 0 { return "No rows are selected." }
         return nil
     }
+
+    /// The step on which `blockingReason` is resolved (nil = right here in the review, or not yet known).
+    var blockingStep: Step? {
+        guard let output else { return nil }
+        if !missingFields.isEmpty { return .mapping }
+        if output.rowCount == 0 { return .file }
+        if needsQuoteSecurity { return .content }
+        return nil
+    }
+
+    /// A quotes file whose security has not been chosen yet (step 2).
+    var needsQuoteSecurity: Bool { output?.target == .quotes && (output?.rowCount ?? 0) > 0 && securityID == nil }
 
     private func updateVisibleRows() {
         guard let rows = output?.rows else {
@@ -131,8 +167,10 @@ final class CSVWizard {
         self.filter = filter
     }
 
+    /// - Parameter hint: what the entry point expects the file to contain. It pre-selects the content
+    ///   (the user can change it in step 2); a remembered layout is applied if it is of that kind.
     func start(target hint: CSVImportTarget? = nil) {
-        target = hint
+        targetHint = hint
         // Coming from a security (deep link or selection): quotes are most likely meant for it.
         if securityID == nil { securityID = store.route.securityID }
         // Sensible defaults for rows that name no account: the first active depot and its reference account.
@@ -185,7 +223,9 @@ final class CSVWizard {
     }
 
     func setField(_ field: CSVField?, column: Int) {
-        guard var value = output?.mapping, value.columns.indices.contains(column) else { return }
+        // Builds on the pending mapping, so that two quick changes both count. While the automatic
+        // mapping is being recomputed there is nothing to build on (the pickers are disabled then).
+        guard !isMappingPending, var value = currentMapping, value.columns.indices.contains(column) else { return }
         if let field {
             value.set(field, column: column)
         } else {
@@ -269,6 +309,7 @@ final class CSVWizard {
         var input = CSVPipelineInput(data: data, file: store.file)
         input.dialect = dialect
         input.target = target
+        input.targetHint = targetHint
         input.mapping = mapping
         input.mappingSignature = mappingSignature
         input.typeAliases = typeAliases
@@ -280,11 +321,13 @@ final class CSVWizard {
         if output == nil, !ignoresMemory { input.memory = memory.load() }
         isComputing = true
         let snapshot = input
+        let revision = store.revision
         Task {
             let result = await store.whileBusy {
                 await Background.run { CSVPipeline.run(snapshot) }
             }
             guard run == generation else { return }
+            outputRevision = revision
             install(result)
         }
     }
@@ -328,7 +371,14 @@ final class CSVWizard {
     // MARK: Import
 
     func performImport() async {
-        guard let output, blockingReason == nil, !isImporting else { return }
+        guard let output, blockingReason == nil, !isImporting, !isComputing else { return }
+        guard outputRevision == store.revision else {
+            // The portfolio changed while the wizard was open (a quote update, say): what the review
+            // shows — duplicates, replaced quotes, new securities — was judged against the old state.
+            refresh()
+            store.toast("Review updated", message: "The portfolio changed in the meantime. Check the rows and import again.", style: .warning)
+            return
+        }
         isImporting = true
         defer { isImporting = false }
         let proposal = output.proposal

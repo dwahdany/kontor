@@ -13,9 +13,11 @@ struct SecuritiesTab: View {
     @State private var filter = ""
     @State private var selection = Set<UUID>()
     @State private var sortOrder = [KeyPathComparator(\SecurityRow.absolutePerformance, order: .reverse)]
+    @State private var showsRemainder = false
 
     private var rows: [SecurityRow] { model.value?.rows ?? [] }
     private var currency: CurrencyCode { model.value?.currency ?? store.baseCurrency }
+    private var irrIsAnnualized: Bool { model.value?.irrIsAnnualized ?? true }
 
     var body: some View {
         let query = SecuritiesQuery(filter: filter, sortOrder: sortOrder)
@@ -62,8 +64,9 @@ struct SecuritiesTab: View {
     private var table: some View {
         Table(rows, selection: $selection, sortOrder: $sortOrder, columnCustomization: $columns) {
             Group {
+                // The name is the row's identity: it gets the slack, the figures stay compact.
                 TableColumn("Security", value: \.name) { (row: SecurityRow) in nameCell(row) }
-                    .width(min: 150, ideal: 176)
+                    .width(min: 170, ideal: 212)
                     .customizationID("name")
                     .disabledCustomizationBehavior(.visibility)
                 TableColumn("Value", value: \.marketValue) { (row: SecurityRow) in plainMoney(row.marketValue) }
@@ -74,7 +77,7 @@ struct SecuritiesTab: View {
                     .width(min: 64, ideal: 76)
                     .alignment(.trailing)
                     .customizationID("ttwror")
-                TableColumn("IRR", value: \.irrKey) { (row: SecurityRow) in percentCell(row.irr) }
+                TableColumn(irrIsAnnualized ? "IRR per Year" : "IRR", value: \.irrKey) { (row: SecurityRow) in percentCell(row.irr) }
                     .width(min: 62, ideal: 72)
                     .alignment(.trailing)
                     .customizationID("irr")
@@ -116,12 +119,16 @@ struct SecuritiesTab: View {
                 .disabled(ids.isEmpty || ids.allSatisfy(compare.contains))
             Button("Show Transactions") { ids.first.map(showTransactions) }.disabled(ids.count != 1)
             Divider()
-            Button("Copy") { Pasteboard.copy(SecuritiesModel.tsv(rows.filter { ids.contains($0.id) }, currency: currency)) }
+            Button("Copy") { Pasteboard.copy(SecuritiesModel.tsv(rows.filter { ids.contains($0.id) }, currency: currency, irrIsAnnualized: irrIsAnnualized)) }
+                .disabled(ids.isEmpty)
         } primaryAction: { ids in
             ids.first.map { store.navigate(to: .security($0)) }
         }
         .onCopyCommand {
-            [NSItemProvider(object: SecuritiesModel.tsv(rows.filter { selection.contains($0.id) }, currency: currency) as NSString)]
+            // Nothing selected: nothing to copy (not a lone header line).
+            let selected = rows.filter { selection.contains($0.id) }
+            guard !selected.isEmpty else { return [] }
+            return [NSItemProvider(object: SecuritiesModel.tsv(selected, currency: currency, irrIsAnnualized: irrIsAnnualized) as NSString)]
         }
     }
 
@@ -133,7 +140,7 @@ struct SecuritiesTab: View {
             if let m = model.value {
                 HStack(spacing: DS.Spacing.m) {
                     footerFigure("Securities", m.securitiesResult)
-                    footerFigure("Interest, account fees, cash", m.totalResult - m.securitiesResult)
+                    remainderFigure(m)
                     footerFigure("Total", m.totalResult).fontWeight(.medium)
                 }
                 .help("The securities' gains plus everything not tied to a security add up to the period's performance")
@@ -152,7 +159,9 @@ struct SecuritiesTab: View {
         let count = rows.count
         var parts = ["\(Fmt.integer(count)) \(count == 1 ? "security" : "securities")"]
         if let total = model.value?.totalCount, total != count { parts[0] += " of \(Fmt.integer(total))" }
-        if !selection.isEmpty { parts.append("\(Fmt.integer(selection.count)) selected") }
+        // Only rows that are listed count: a focused security may not be part of this period.
+        let selected = rows.count { selection.contains($0.id) }
+        if selected > 0 { parts.append("\(Fmt.integer(selected)) selected") }
         return parts.joined(separator: " · ")
     }
 
@@ -163,12 +172,53 @@ struct SecuritiesTab: View {
         }
     }
 
+    /// Everything that is not a security's result, with what it is made of behind the ⓘ.
+    private func remainderFigure(_ m: SecuritiesModel) -> some View {
+        HStack(spacing: DS.Spacing.xs) {
+            footerFigure("Not tied to a security", m.totalResult - m.securitiesResult)
+            if !m.remainder.isEmpty {
+                Button("What is not tied to a security", systemImage: "info.circle") { showsRemainder.toggle() }
+                    .labelStyle(.iconOnly)
+                    .buttonStyle(.borderless)
+                    .help("Show what this is made of")
+                    .popover(isPresented: $showsRemainder, arrowEdge: .top) { remainderBreakdown(m) }
+            }
+        }
+    }
+
+    private func remainderBreakdown(_ m: SecuritiesModel) -> some View {
+        VStack(alignment: .leading, spacing: DS.Spacing.s) {
+            Text("Not Tied to a Security").font(.headline)
+            Text("Earnings and costs of the period that belong to an account rather than a security. The Taxes column above lists only what was withheld on a security's sales and dividends.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Divider()
+            ForEach(m.remainder) { part in
+                KeyValueRow(part.label) { SignedMoney(minor: part.amount, currency: m.currency) }
+            }
+            Divider()
+            KeyValueRow("Total") { SignedMoney(minor: m.totalResult - m.securitiesResult, currency: m.currency) }
+                .fontWeight(.medium)
+        }
+        .numeric()
+        .padding(DS.Spacing.l)
+        .frame(width: 320)
+    }
+
     private func nameCell(_ row: SecurityRow) -> some View {
-        let tooltip: String = row.symbol.isEmpty ? row.name : row.name + " · " + row.symbol
+        var tooltip: String = row.symbol.isEmpty ? row.name : row.name + " · " + row.symbol
+        if let issue = row.priceIssue { tooltip += "\n" + issue.explanation }
         return HStack(spacing: DS.Spacing.xs) {
             Text(row.name).lineLimit(1).foregroundStyle(row.isHeld ? Color.primary : Color.secondary)
             if !row.isHeld {
                 Text("sold").font(.caption).foregroundStyle(.tertiary)
+            }
+            if let issue = row.priceIssue {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(DS.Colors.warning)
+                    .accessibilityLabel(issue.explanation)
             }
         }
         .help(tooltip)
@@ -197,16 +247,13 @@ struct SecuritiesTab: View {
     }
 
     private func showTransactions(_ id: UUID) {
-        // The Transactions screen reveals a transaction; the security's newest one is the anchor.
-        if let last = store.transactions(forSecurity: id).max(by: { $0.date < $1.date }) {
-            store.navigate(to: .transaction(last.id))
-        } else {
-            store.navigate(to: .security(id))
-        }
+        // The routing contract's "Show Transactions": the ledger, listing exactly this security's entries.
+        store.navigate(to: Route(.transactions, focus: .security(id)))
     }
 
     private func readLaunchState() {
         if let text = store.launchValue("filter") { filter = text }
+
         switch store.launchValue("sort") {
         case "name": sortOrder = [KeyPathComparator(\.name, order: .forward)]
         case "value": sortOrder = [KeyPathComparator(\.marketValue, order: .reverse)]

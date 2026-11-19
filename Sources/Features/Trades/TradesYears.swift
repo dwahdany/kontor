@@ -35,6 +35,11 @@ struct TaxYearsView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .loadingOverlay(model.isInitialLoad)
         .analysisTask($model, id: "trades.years", interval: store.interval(for: .allTime)) { analysis in TaxYearsModel(analysis) }
+        // A selected year can disappear (scope change, undo): drop it instead of keeping a phantom selection.
+        .onChange(of: model.value?.years.map(\.id)) { _, years in
+            let valid = selection.intersection(Set(years ?? []).union([0]))
+            if valid != selection { selection = valid }
+        }
     }
 
     private func content(_ model: TaxYearsModel) -> some View {
@@ -59,6 +64,14 @@ struct TaxYearsView: View {
                     .help("Copy the table for pasting into a spreadsheet")
                     Button("Export CSV…", systemImage: "square.and.arrow.up") { export(model) }
                         .help("Save the table as a CSV file")
+                }
+                if !model.unconvertedCurrencies.isEmpty {
+                    Label(
+                        "No exchange rate for \(model.unconvertedCurrencies.joined(separator: ", ")) → \(model.currency): amounts booked in \(model.unconvertedCurrencies.count == 1 ? "that currency" : "those currencies") are missing from this summary.",
+                        systemImage: "exclamationmark.triangle.fill")
+                        .font(.callout)
+                        .symbolRenderingMode(.multicolor)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 Card {
                     chart(model)
@@ -93,9 +106,10 @@ struct TaxYearsView: View {
         let currency = model.currency
         return Table(model.years + [model.total], selection: $selection) {
             TableColumn("Year") { row in
-                Text(row.label).numeric().fontWeight(row.isTotal ? .semibold : .regular)
+                Text(row.displayLabel).numeric().fontWeight(row.isTotal ? .semibold : .regular)
+                    .help(row.isPartial ? "The year is still running: figures for the year so far" : "")
             }
-            .width(min: 44, ideal: 56)
+            .width(min: 64, ideal: 72)
             TableColumn("Trades") { row in
                 Text(Fmt.integer(row.trades)).numeric().fontWeight(row.isTotal ? .semibold : .regular)
                     .foregroundStyle(row.trades == 0 ? .tertiary : .primary)

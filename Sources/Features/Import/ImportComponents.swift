@@ -60,18 +60,6 @@ enum ImportPanels {
     }
 }
 
-/// Hand-over between the Import screen's cards and the sheet: what the next chosen file is expected
-/// to be. `SheetRequest.importFile` carries only a URL, so the hint travels here.
-@MainActor
-enum ImportHints {
-    static var preferredTarget: CSVImportTarget?
-
-    static func takeTarget() -> CSVImportTarget? {
-        defer { preferredTarget = nil }
-        return preferredTarget
-    }
-}
-
 // MARK: - Small views
 
 enum ByteText {

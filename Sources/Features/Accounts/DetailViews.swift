@@ -94,30 +94,91 @@ struct DetailHeader: View {
     }
 }
 
-/// Lays a detail page out so that the table fills what is left of the window, and the whole page
-/// scrolls when the window is too short for a usable table.
-struct DetailPage<Top: View, TableContent: View>: View {
+/// Lays a detail page out so that the table and its footer always end at the bottom of the
+/// window. Header, figures and the table's control bar are always shown; the charts step aside
+/// when the window is too short to fit them above a usable table (they return as soon as there is
+/// room). Only a window too short even for the compact arrangement scrolls as a whole.
+struct DetailPage<Header: View, Charts: View, Bar: View, TableContent: View>: View {
     let minTableHeight: CGFloat
-    @ViewBuilder let top: Top
+    @ViewBuilder let header: Header
+    @ViewBuilder let charts: Charts
+    @ViewBuilder let bar: Bar
     @ViewBuilder let table: TableContent
+
+    /// Measured heights (with estimates until the first layout pass). The charts keep their last
+    /// measured height while hidden, so showing and hiding them cannot oscillate.
+    @State private var headerHeight: CGFloat = 190
+    @State private var chartsHeight: CGFloat = 250
+    @State private var barHeight: CGFloat = 26
+
+    /// The table's minimum once the charts are gone: about four rows plus header and footer.
+    private let compactTableHeight: CGFloat = 170
 
     var body: some View {
         GeometryReader { proxy in
+            let spacing = DS.Spacing.l
+            // Top and bottom padding, header, bar, and the gaps header–bar and bar–table.
+            let fixed = headerHeight + barHeight + 4 * spacing
+            let showsCharts = DetailLayout.showsCharts(
+                available: proxy.size.height, fixed: fixed, charts: chartsHeight + spacing, minTable: minTableHeight)
             ScrollView {
-                VStack(alignment: .leading, spacing: DS.Spacing.l) {
-                    top
+                VStack(alignment: .leading, spacing: spacing) {
+                    header
+                        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { headerHeight = $0 }
+                    if showsCharts {
+                        charts
+                            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { chartsHeight = $0 }
+                    }
+                    bar
+                        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { barHeight = $0 }
                     table
-                        .frame(minHeight: minTableHeight, maxHeight: .infinity)
+                        .frame(minHeight: showsCharts ? minTableHeight : compactTableHeight, maxHeight: .infinity)
                         .clipShape(RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous))
                         .overlay(RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous).strokeBorder(DS.Colors.hairline.opacity(0.6), lineWidth: 0.5))
                 }
                 .padding(.horizontal, DS.Spacing.xl)
-                .padding(.top, DS.Spacing.l)
-                .padding(.bottom, DS.Spacing.l)
+                .padding(.vertical, spacing)
                 .frame(minHeight: proxy.size.height)
             }
             .scrollBounceBehavior(.basedOnSize)
         }
+    }
+}
+
+/// "1Y | All": whether a ledger table lists the reporting period or everything.
+struct RangePicker: View {
+    @Binding var range: LedgerRange
+    let period: ReportingPeriod
+
+    @ViewBuilder var body: some View {
+        // "Max | All" would be the same list twice.
+        if period != .allTime { picker }
+    }
+
+    private var picker: some View {
+        Picker("Range", selection: $range) {
+            Text(period.shortTitle).tag(LedgerRange.period)
+            Text("All").tag(LedgerRange.all)
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .fixedSize()
+        .help("List the transactions of the reporting period (\(period.title)), or all of them")
+        .accessibilityLabel("Transactions shown")
+    }
+}
+
+/// An empty state in place of a table (never on top of one: an empty `Table` still draws its
+/// alternating row stripes, which would cut through the text).
+private struct TablePlaceholder<Actions: View>: View {
+    let title: String
+    let symbol: String
+    let message: String
+    @ViewBuilder let actions: Actions
+
+    var body: some View {
+        EmptyState(title, symbol: symbol, message: message) { actions }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
@@ -128,52 +189,76 @@ struct AccountDetailView: View {
     let accountID: UUID
 
     @State private var model = Loadable<AccountDetailModel>()
-    @State private var rows = Loadable<[StatementRow]>()
+    @State private var statement = Loadable<Statement>()
     @State private var selection = Set<StatementRow.ID>()
     @State private var sortOrder = [KeyPathComparator(\StatementRow.order, order: .reverse)]
     @State private var filter = ""
+    @State private var range = LedgerRange.period
     @State private var pinnedDay: Day?
     @SceneStorage("accounts.statement.columns") private var columns: TableColumnCustomization<StatementRow>
 
     private struct Query: Hashable, Sendable {
         var account: UUID
         var filter: String
+        /// nil = all bookings.
+        var interval: DayInterval?
         var sortOrder: [KeyPathComparator<StatementRow>]
     }
 
-    private var statement: [StatementRow] { rows.value ?? [] }
+    /// The part of the table's selection that is still listed — what every action works on.
+    private var selected: Set<UUID> {
+        guard let ids = statement.value?.ids, !selection.isEmpty else { return [] }
+        return TableSelection.effective(selection, visible: ids)
+    }
 
     var body: some View {
         let id = accountID
         let today = store.today
-        let query = Query(account: id, filter: filter, sortOrder: sortOrder)
+        let query = Query(account: id, filter: filter, interval: range == .period ? store.periodInterval : nil, sortOrder: sortOrder)
         let account = store.account(id)
+        let currency = account?.currency ?? store.baseCurrency
         DetailPage(minTableHeight: 240) {
-            DetailHeader(
-                entity: .account(id), symbol: "creditcard", name: account?.name ?? "",
-                badges: [account?.currency ?? ""] + (account?.isRetired == true ? ["Retired"] : []),
-                note: account?.note ?? "", kinds: AccountsActions.accountKinds,
-                extraMenu: [("Show All Transactions", "list.bullet.rectangle", { store.navigate(to: .transactions) })])
+            VStack(alignment: .leading, spacing: DS.Spacing.l) {
+                DetailHeader(
+                    entity: .account(id), symbol: "creditcard", name: account?.name ?? "",
+                    badges: [account?.currency ?? ""] + (account?.isRetired == true ? ["Retired"] : []),
+                    note: account?.note ?? "", kinds: AccountsActions.accountKinds)
+                if let detail = model.value {
+                    figures(detail)
+                } else {
+                    Color.clear.frame(height: 86)
+                }
+            }
+        } charts: {
             if let detail = model.value {
-                figures(detail)
                 charts(detail)
             } else {
-                Color.clear.frame(height: 320)
+                Color.clear.frame(height: 230)
             }
+        } bar: {
+            statementBar(currency: currency)
         } table: {
-            table(currency: account?.currency ?? store.baseCurrency)
+            table(currency: currency)
         }
         .loadingOverlay(model.isInitialLoad)
         .analysisTask($model, id: "accounts.account-detail", scope: .account(id), variant: today) { analysis in
             guard let detail = AccountDetailModel(analysis, account: id, today: today) else { throw MissingEntity() }
             return detail
         }
-        .ledgerTask($rows, id: "accounts.statement", variant: query) { ledger in
-            StatementRow.rows(ledger, account: query.account, filter: QuickFilter(query.filter)).sorted(using: query.sortOrder)
+        .ledgerTask($statement, id: "accounts.statement", variant: query) { ledger in
+            var statement = Statement(ledger, account: query.account, interval: query.interval, filter: QuickFilter(query.filter))
+            statement.rows.sort(using: query.sortOrder)
+            return statement
+        }
+        // Rows changed (filter, period, edit, undo): what is no longer listed is no longer selected.
+        .onChange(of: statement.value?.stamp) { _, _ in
+            let kept = selected
+            if kept != selection { selection = kept }
         }
         .toolbar { ToolbarItem { QuickFilterField(text: $filter, prompt: "Filter statement") } }
         .onAppear {
             filter = store.launchValue("filter") ?? filter
+            range = store.launchValue("range", as: LedgerRange.self) ?? range
             pinnedDay = AccountsScreen.launchHover(store.launchState, interval: store.periodInterval)
         }
     }
@@ -182,25 +267,21 @@ struct AccountDetailView: View {
 
     private func figures(_ detail: AccountDetailModel) -> some View {
         let reporting = detail.reportingCurrency
-        let foreign = detail.currency != reporting
-        let balanceNote: String = if !detail.isValued {
-            "no exchange rate to \(reporting)"
-        } else if foreign {
-            "≈ \(Fmt.money(detail.value)) today"
-        } else {
-            "as of \(Fmt.day(store.today, style: .medium))"
-        }
-        let flows = "in \(Fmt.compactMoney(minor: detail.moneyIn, currency: detail.currency)) · out \(Fmt.compactMoney(minor: detail.moneyOut, currency: detail.currency))"
+        let currency = detail.currency
+        let foreign = currency != reporting
+        let period = store.period.shortTitle
+        let flows = "in \(Fmt.compactMoney(minor: detail.moneyIn, currency: currency)) · out \(Fmt.compactMoney(minor: detail.moneyOut, currency: currency))"
+        // Every tile is in the account's own currency and shows what was booked on the account,
+        // so each figure can be found in the statement below.
         return HStack(spacing: DS.Spacing.m) {
-            FigureTile("Balance", value: Fmt.money(detail.balance), footnote: balanceNote)
-            FigureTile("Change · \(store.period.shortTitle)", value: Fmt.money(minor: detail.periodChange, currency: detail.currency, signed: true), footnote: flows)
-            FigureTile("Interest · \(store.period.shortTitle)", value: Fmt.money(minor: detail.interest, currency: reporting),
-                       footnote: detail.dividends != 0 ? "plus \(Fmt.money(minor: detail.dividends, currency: reporting)) dividends" : "net of interest charged")
-            FigureTile("Fees · \(store.period.shortTitle)", value: Fmt.money(minor: detail.fees, currency: reporting),
-                       footnote: detail.taxes < 0
-                           ? "\(Fmt.money(minor: -detail.taxes, currency: reporting)) taxes refunded"
-                           : "plus \(Fmt.money(minor: detail.taxes, currency: reporting)) taxes",
-                       topic: .grossVersusNet)
+            FigureTile("Balance", value: Fmt.money(detail.balance),
+                       footnote: foreign ? "≈ \(Fmt.money(detail.value)) today" : "as of \(Fmt.day(store.today, style: .medium))",
+                       warning: detail.isValued ? nil : "no exchange rate to \(reporting)")
+            FigureTile("Change · \(period)", value: Fmt.money(minor: detail.periodChange, currency: currency, signed: true), footnote: flows)
+            FigureTile("Net Interest · \(period)", value: Fmt.money(minor: detail.income.interestNet, currency: currency),
+                       footnote: detail.income.interestFootnote(currency: currency), topic: .grossVersusNet)
+            FigureTile("Fees · \(period)", value: Fmt.money(minor: detail.income.fees, currency: currency),
+                       footnote: detail.income.feesFootnote(currency: currency))
         }
         .opacity(model.isRefreshing ? 0.6 : 1)
     }
@@ -262,19 +343,72 @@ struct AccountDetailView: View {
 
     // MARK: Statement
 
+    /// Title, period switch, and the balances the listed bookings lead from and to.
+    private func statementBar(currency: CurrencyCode) -> some View {
+        HStack(spacing: DS.Spacing.m) {
+            Text("Statement").font(.headline)
+            RangePicker(range: $range, period: store.period)
+            Spacer(minLength: DS.Spacing.m)
+            if let statement = statement.value, let interval = statement.interval {
+                let opening = Fmt.money(minor: statement.opening, currency: currency)
+                let closing = Fmt.money(minor: statement.closing, currency: currency)
+                ViewThatFits(in: .horizontal) {
+                    balances("Opening balance \(Fmt.day(interval.start, style: .medium))", opening,
+                             "Closing balance \(Fmt.day(interval.end, style: .medium))", closing)
+                    balances("Opening", opening, "Closing", closing)
+                }
+                .accessibilityElement(children: .combine)
+            }
+        }
+        .frame(minHeight: 24)
+    }
+
+    private func balances(_ openingLabel: String, _ opening: String, _ closingLabel: String, _ closing: String) -> some View {
+        HStack(spacing: DS.Spacing.s) {
+            Text(openingLabel).foregroundStyle(.secondary)
+            Text(opening).fontWeight(.medium)
+            Image(systemName: "arrow.right").font(.caption).foregroundStyle(.tertiary).accessibilityHidden(true)
+            Text(closingLabel).foregroundStyle(.secondary)
+            Text(closing).fontWeight(.medium)
+        }
+        .font(.callout)
+        .numeric()
+        .lineLimit(1)
+        .fixedSize()
+    }
+
     @ViewBuilder
     private func table(currency: CurrencyCode) -> some View {
         // The table is created once its rows exist: filling an already laid-out table from the
         // first asynchronous result makes AppKit re-enter its table delegate.
-        if rows.value == nil {
-            Color.clear
+        if let statement = statement.value {
+            if statement.totalCount == 0 {
+                TablePlaceholder(title: "No Transactions Yet", symbol: "tray", message: "Record a first deposit to give this account a balance.") {
+                    Button("Deposit…") { AccountsActions.record(.deposit, account: accountID, in: store) }
+                }
+            } else if statement.rangeCount == 0 {
+                TablePlaceholder(
+                    title: "No Transactions in This Period", symbol: "calendar",
+                    message: "Nothing was booked on this account in the period (\(statement.interval.map { Fmt.interval($0) } ?? "")). It has \(Fmt.integer(statement.totalCount)) transaction\(statement.totalCount == 1 ? "" : "s") in total."
+                ) {
+                    Button("Show All") { range = .all }
+                }
+            } else if statement.rows.isEmpty {
+                TablePlaceholder(title: "No Matches", symbol: "line.3.horizontal.decrease", message: "No transaction \(range == .period ? "in this period" : "of this account") matches “\(filter)”.") {
+                    Button("Clear Filter") { filter = "" }
+                    if range == .period { Button("Search All") { range = .all } }
+                }
+            } else {
+                statementTable(statement, currency: currency)
+            }
         } else {
-            statementTable(currency: currency)
+            Color.clear
         }
     }
 
-    private func statementTable(currency: CurrencyCode) -> some View {
-        Table(statement, selection: $selection, sortOrder: $sortOrder, columnCustomization: $columns) {
+    private func statementTable(_ statement: Statement, currency: CurrencyCode) -> some View {
+        let selected = selected
+        return Table(statement.rows, selection: $selection, sortOrder: $sortOrder, columnCustomization: $columns) {
             TableColumn("Date", value: \.order) { row in
                 Text(Fmt.day(row.date)).numeric()
             }
@@ -309,38 +443,32 @@ struct AccountDetailView: View {
             .customizationID("balance")
         }
         .contextMenu(forSelectionType: StatementRow.ID.self) { ids in
-            transactionMenu(ids)
+            transactionMenu(TableSelection.effective(ids, visible: statement.ids), statement, currency: currency)
         } primaryAction: { ids in
-            if let first = ids.first { store.present(.editTransaction(first)) }
+            if let first = TableSelection.effective(ids, visible: statement.ids).first { store.present(.editTransaction(first)) }
         }
-        .onCopyCommand { [NSItemProvider(object: tsv(selection, currency: currency) as NSString)] }
-        .onDeleteCommand { store.deleteTransactions(selection) }
-        .overlay {
-            if rows.value != nil, statement.isEmpty {
-                if filter.isEmpty {
-                    EmptyState("No Transactions Yet", symbol: "tray", message: "Record a first deposit to give this account a balance.") {
-                        Button("Deposit…") { AccountsActions.record(.deposit, account: accountID, in: store) }
-                    }
-                } else {
-                    EmptyState("No Matches", symbol: "line.3.horizontal.decrease", message: "No transaction of this account matches “\(filter)”.") {
-                        Button("Clear Filter") { filter = "" }
-                    }
-                }
-            }
-        }
+        .onCopyCommand { [NSItemProvider(object: statement.tsv(only: self.selected, currency: currency) as NSString)] }
+        .onDeleteCommand { delete(self.selected) }
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            TableFooter(count: statement.count, noun: "transaction", selected: selection.count,
-                        filteredFrom: filter.isEmpty ? nil : store.transactions(forAccount: accountID).count) {
-                if selection.count > 1 {
-                    let sum = statement.reduce(Int64(0)) { selection.contains($1.id) ? $0 + $1.amount : $0 }
+            TableFooter(count: statement.rows.count, noun: "transaction", selected: selected.count,
+                        filteredFrom: statement.rows.count == statement.rangeCount ? nil : statement.rangeCount) {
+                if selected.count > 1 {
+                    let sum = statement.rows.reduce(Int64(0)) { selected.contains($1.id) ? $0 + $1.amount : $0 }
                     Text("Sum \(Fmt.money(minor: sum, currency: currency, signed: true))").numeric().foregroundStyle(.secondary)
                 }
             }
         }
     }
 
+    /// Deletes listed transactions only, and forgets them as selection.
+    private func delete(_ ids: Set<UUID>) {
+        guard !ids.isEmpty else { return }
+        store.deleteTransactions(ids)
+        selection.subtract(ids)
+    }
+
     @ViewBuilder
-    private func transactionMenu(_ ids: Set<UUID>) -> some View {
+    private func transactionMenu(_ ids: Set<UUID>, _ statement: Statement, currency: CurrencyCode) -> some View {
         Button("Edit…", systemImage: "pencil") { ids.first.map { store.present(.editTransaction($0)) } }
             .disabled(ids.count != 1)
         Button("Duplicate…", systemImage: "plus.square.on.square") {
@@ -350,20 +478,10 @@ struct AccountDetailView: View {
         Button("Show in Transactions", systemImage: "arrow.right.circle") { ids.first.map { store.navigate(to: .transaction($0)) } }
             .disabled(ids.count != 1)
         Divider()
-        Button("Copy", systemImage: "doc.on.doc") { Pasteboard.copy(tsv(ids, currency: store.account(accountID)?.currency ?? "")) }
+        Button(ids.isEmpty ? "Copy Statement" : "Copy", systemImage: "doc.on.doc") { Pasteboard.copy(statement.tsv(only: ids, currency: currency)) }
         Divider()
-        Button("Delete", systemImage: "trash", role: .destructive) { store.deleteTransactions(ids) }
-    }
-
-    private func tsv(_ ids: Set<UUID>, currency: CurrencyCode) -> String {
-        let chosen = ids.isEmpty ? statement : statement.filter { ids.contains($0.id) }
-        return TSV.string(
-            header: ["Date", "Type", "Details", "Note", "Amount", "Balance", "Currency"],
-            rows: chosen.map {
-                [$0.date.iso, $0.kindTitle, $0.counterpart, $0.note,
-                 TSV.number(Money(minor: $0.amount, currency: currency).decimalValue),
-                 TSV.number(Money(minor: $0.balance, currency: currency).decimalValue), currency]
-            })
+        Button("Delete", systemImage: "trash", role: .destructive) { delete(ids) }
+            .disabled(ids.isEmpty)
     }
 }
 
@@ -380,13 +498,14 @@ struct DepotDetailView: View {
     let depotID: UUID
 
     @State private var model = Loadable<DepotDetailModel>()
-    @State private var transactions = Loadable<[DepotTransactionRow]>()
+    @State private var transactions = Loadable<DepotLedger>()
     @State private var tab = Tab.positions
     @State private var positionSelection = Set<UUID>()
     @State private var positionSort = [KeyPathComparator(\DepotDetailModel.Position.value, order: .reverse)]
     @State private var transactionSelection = Set<UUID>()
     @State private var transactionSort = [KeyPathComparator(\DepotTransactionRow.order, order: .reverse)]
     @State private var filter = ""
+    @State private var range = LedgerRange.period
     @State private var pinnedDay: Day?
     /// Narrow windows show the positions without the price column and the weight bars.
     @State private var isCompact = false
@@ -396,6 +515,7 @@ struct DepotDetailView: View {
     private struct Query: Hashable, Sendable {
         var depot: UUID
         var filter: String
+        var interval: DayInterval?
         var sortOrder: [KeyPathComparator<DepotTransactionRow>]
     }
 
@@ -405,44 +525,63 @@ struct DepotDetailView: View {
         return (quick.isEmpty ? all : all.filter { quick.matches($0.name, $0.symbol) }).sorted(using: positionSort)
     }
 
+    /// The listed part of the transaction selection.
+    private var selectedTransactions: Set<UUID> {
+        guard let ids = transactions.value?.ids, !transactionSelection.isEmpty else { return [] }
+        return TableSelection.effective(transactionSelection, visible: ids)
+    }
+
     var body: some View {
         let id = depotID
         let today = store.today
-        let query = Query(depot: id, filter: filter, sortOrder: transactionSort)
+        let query = Query(depot: id, filter: filter, interval: range == .period ? store.periodInterval : nil, sortOrder: transactionSort)
         let depot = store.depot(id)
         let reference = store.account(depot?.referenceAccountID)
         DetailPage(minTableHeight: 240) {
-            DetailHeader(
-                entity: .depot(id), symbol: "briefcase", name: depot?.name ?? "",
-                badges: depot?.isRetired == true ? ["Retired"] : [],
-                note: [reference.map { "Settles on \($0.name)" } ?? "No reference account", depot?.note ?? ""].filter { !$0.isEmpty }.joined(separator: " · "),
-                kinds: AccountsActions.depotKinds,
-                extraMenu: [
-                    ("Analyze in Performance", "chart.line.uptrend.xyaxis", {
-                        store.scopeSelection = .depot(id)
-                        store.navigate(to: .performance)
-                    }),
-                ] + (reference.map { account in
-                    [("Show \(account.name)", "creditcard", { store.navigate(to: .account(account.id)) })]
-                } ?? []))
+            VStack(alignment: .leading, spacing: DS.Spacing.l) {
+                DetailHeader(
+                    entity: .depot(id), symbol: "briefcase", name: depot?.name ?? "",
+                    badges: depot?.isRetired == true ? ["Retired"] : [],
+                    note: [reference.map { "Settles on \($0.name)" } ?? "No reference account", depot?.note ?? ""].filter { !$0.isEmpty }.joined(separator: " · "),
+                    kinds: AccountsActions.depotKinds,
+                    extraMenu: [
+                        ("Analyze in Performance", "chart.line.uptrend.xyaxis", {
+                            store.scopeSelection = .depot(id)
+                            store.navigate(to: .performance)
+                        }),
+                    ] + (reference.map { account in
+                        [("Show \(account.name)", "creditcard", { store.navigate(to: .account(account.id)) })]
+                    } ?? []))
+                if let detail = model.value {
+                    figures(detail)
+                } else {
+                    Color.clear.frame(height: 86)
+                }
+            }
+        } charts: {
             if let detail = model.value {
-                figures(detail)
                 chart(detail)
             } else {
-                Color.clear.frame(height: 320)
+                Color.clear.frame(height: 240)
             }
-            HStack {
+        } bar: {
+            HStack(spacing: DS.Spacing.m) {
                 Picker("Table", selection: $tab) {
                     ForEach(Tab.allCases) { Text($0.title).tag($0) }
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
                 .fixedSize()
+                if tab == .transactions { RangePicker(range: $range, period: store.period) }
                 Spacer()
+                if tab == .positions {
+                    Text("as of \(Fmt.day(today, style: .medium))").font(.callout).foregroundStyle(.secondary).numeric()
+                }
             }
+            .frame(minHeight: 24)
         } table: {
             switch tab {
-            case .positions: positionsTable
+            case .positions: positionsTable(today: today)
             case .transactions: transactionsTable
             }
         }
@@ -452,13 +591,25 @@ struct DepotDetailView: View {
             return detail
         }
         .ledgerTask($transactions, id: "accounts.depot-transactions", variant: query) { ledger in
-            DepotTransactionRow.rows(ledger, depot: query.depot, filter: QuickFilter(query.filter)).sorted(using: query.sortOrder)
+            var result = DepotLedger(ledger, depot: query.depot, interval: query.interval, filter: QuickFilter(query.filter))
+            result.rows.sort(using: query.sortOrder)
+            return result
+        }
+        // Rows changed: what is no longer listed is no longer selected.
+        .onChange(of: transactions.value?.stamp) { _, _ in
+            let kept = selectedTransactions
+            if kept != transactionSelection { transactionSelection = kept }
+        }
+        .onChange(of: positions.map(\.id)) { _, ids in
+            let kept = TableSelection.effective(positionSelection, visible: Set(ids))
+            if kept != positionSelection { positionSelection = kept }
         }
         .toolbar { ToolbarItem { QuickFilterField(text: $filter, prompt: tab == .positions ? "Filter positions" : "Filter transactions") } }
         .onGeometryChange(for: Bool.self) { $0.size.width < 880 } action: { isCompact = $0 }
         .onAppear {
             tab = store.launchValue("tab", as: Tab.self) ?? tab
             filter = store.launchValue("filter") ?? filter
+            range = store.launchValue("range", as: LedgerRange.self) ?? range
             pinnedDay = AccountsScreen.launchHover(store.launchState, interval: store.periodInterval)
         }
     }
@@ -468,8 +619,10 @@ struct DepotDetailView: View {
     private func figures(_ detail: DepotDetailModel) -> some View {
         let period = store.period.shortTitle
         return HStack(spacing: DS.Spacing.m) {
-            FigureTile("Market Value", value: Fmt.money(detail.marketValue),
-                       footnote: "\(Fmt.integer(detail.positions.count)) position\(detail.positions.count == 1 ? "" : "s") · cost \(Fmt.compactMoney(detail.costBasis))")
+            // Market value and positions are always today's; the other three follow the period.
+            FigureTile("Market Value · Today", value: Fmt.money(detail.marketValue),
+                       footnote: "\(Fmt.integer(detail.positions.count)) position\(detail.positions.count == 1 ? "" : "s") · cost \(Fmt.compactMoney(detail.costBasis))",
+                       warning: detail.valuationWarning)
             FigureTile("Gain · \(period)", value: Fmt.money(detail.absolutePerformance, signed: true),
                        footnote: "incl. \(Fmt.compactMoney(detail.dividends)) dividends", topic: .absolutePerformance,
                        trend: Trend(minor: detail.absolutePerformance.minor))
@@ -504,9 +657,29 @@ struct DepotDetailView: View {
 
     // MARK: Positions
 
-    private var positionsTable: some View {
-        let currency = model.value?.currency ?? store.baseCurrency
+    @ViewBuilder
+    private func positionsTable(today: Day) -> some View {
         let rows = positions
+        if model.value == nil {
+            Color.clear
+        } else if rows.isEmpty, filter.isEmpty {
+            TablePlaceholder(title: "No Positions", symbol: "briefcase", message: "This depot holds no securities today. Record a purchase, or a delivery for holdings you already own.") {
+                Button("Buy…") { AccountsActions.record(.buy, depot: depotID, in: store) }
+                Button("Deliver In…") { AccountsActions.record(.deliveryIn, depot: depotID, in: store) }
+            }
+        } else if rows.isEmpty {
+            TablePlaceholder(title: "No Matches", symbol: "line.3.horizontal.decrease", message: "No position matches “\(filter)”.") {
+                Button("Clear Filter") { filter = "" }
+            }
+        } else {
+            loadedPositionsTable(rows, today: today)
+        }
+    }
+
+    private func loadedPositionsTable(_ rows: [DepotDetailModel.Position], today: Day) -> some View {
+        let currency = model.value?.currency ?? store.baseCurrency
+        let visible = Set(rows.map(\.id))
+        let selected = TableSelection.effective(positionSelection, visible: visible)
         return Table(rows, selection: $positionSelection, sortOrder: $positionSort, columnCustomization: $positionColumns) {
             TableColumn("Security", value: \.name) { row in
                 HStack(spacing: DS.Spacing.s) {
@@ -524,26 +697,38 @@ struct DepotDetailView: View {
             .customizationID("shares")
             if !isCompact {
                 TableColumn("Price", value: \.sortablePrice) { row in
-                    Text(row.price.map { Fmt.price($0, currency: row.priceCurrency) } ?? Fmt.missing).numeric()
-                        .foregroundStyle(row.isValued ? .primary : .secondary)
+                    HStack(spacing: DS.Spacing.xs) {
+                        if row.staleDays(on: today) != nil, let note = row.priceWarning(on: today) {
+                            Image(systemName: "clock").font(.caption).foregroundStyle(.secondary).help(note).accessibilityLabel(note)
+                        }
+                        Text(row.price.map { Fmt.price($0, currency: row.priceCurrency) } ?? Fmt.missing).numeric()
+                            .foregroundStyle(row.pricing == .quoted ? .primary : .secondary)
+                    }
                 }
-                .width(min: 76, ideal: 80)
+                .width(min: 76, ideal: 84)
                 .alignment(.trailing)
                 .customizationID("price")
             }
             TableColumn("Value", value: \.value) { row in
-                Text(Fmt.money(minor: row.value, currency: currency)).numeric()
+                HStack(spacing: DS.Spacing.xs) {
+                    // A value that is not based on a market price is marked where it is shown.
+                    if row.pricing != .quoted, let note = row.priceWarning(on: today) {
+                        Image(systemName: "exclamationmark.triangle").font(.caption).foregroundStyle(DS.Colors.warning).help(note).accessibilityLabel(note)
+                    }
+                    Text(Fmt.money(minor: row.value, currency: currency)).numeric()
+                }
             }
-            .width(min: 92, ideal: 96)
+            .width(min: 96, ideal: 104)
             .alignment(.trailing)
             .customizationID("value")
             TableColumn("Weight", value: \.weight) { row in
                 HStack(spacing: DS.Spacing.s) {
                     if !isCompact { WeightBar(fraction: row.weight) }
-                    Text(Fmt.percent(row.weight, decimals: 1)).numeric().frame(width: 48, alignment: .trailing)
+                    // Never truncated: "100,0 %" (a depot with a single position) is the widest value.
+                    Text(Fmt.percent(row.weight, decimals: 1)).numeric().lineLimit(1).fixedSize()
                 }
             }
-            .width(min: 56, ideal: isCompact ? 60 : 88)
+            .width(min: 60, ideal: isCompact ? 64 : 96)
             .alignment(.trailing)
             .customizationID("weight")
             TableColumn("Gain", value: \.gain) { row in
@@ -559,7 +744,8 @@ struct DepotDetailView: View {
             .alignment(.trailing)
             .customizationID("gain-percent")
         }
-        .contextMenu(forSelectionType: UUID.self) { ids in
+        .contextMenu(forSelectionType: UUID.self) { raw in
+            let ids = TableSelection.effective(raw, visible: visible)
             Button("Show Security", systemImage: "arrow.right.circle") { ids.first.map { store.navigate(to: .security($0)) } }
                 .disabled(ids.count != 1)
             Divider()
@@ -569,30 +755,16 @@ struct DepotDetailView: View {
             Button("Transfer to Another Depot…", systemImage: Transaction.Kind.securityTransfer.symbol) { record(.securityTransfer, ids.first) }
                 .disabled(ids.count != 1)
             Divider()
-            Button("Copy", systemImage: "doc.on.doc") { Pasteboard.copy(positionsTSV(ids, currency: currency)) }
-        } primaryAction: { ids in
-            if let first = ids.first { store.navigate(to: .security(first)) }
+            Button("Copy", systemImage: "doc.on.doc") { Pasteboard.copy(positionsTSV(rows, only: ids, currency: currency)) }
+        } primaryAction: { raw in
+            if let first = TableSelection.effective(raw, visible: visible).first { store.navigate(to: .security(first)) }
         }
-        .onCopyCommand { [NSItemProvider(object: positionsTSV(positionSelection, currency: currency) as NSString)] }
-        .overlay {
-            if model.value != nil, rows.isEmpty {
-                if filter.isEmpty {
-                    EmptyState("No Positions", symbol: "briefcase", message: "This depot holds no securities today. Record a purchase, or a delivery for holdings you already own.") {
-                        Button("Buy…") { AccountsActions.record(.buy, depot: depotID, in: store) }
-                        Button("Deliver In…") { AccountsActions.record(.deliveryIn, depot: depotID, in: store) }
-                    }
-                } else {
-                    EmptyState("No Matches", symbol: "line.3.horizontal.decrease", message: "No position matches “\(filter)”.") {
-                        Button("Clear Filter") { filter = "" }
-                    }
-                }
-            }
-        }
+        .onCopyCommand { [NSItemProvider(object: positionsTSV(rows, only: selected, currency: currency) as NSString)] }
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            TableFooter(count: rows.count, noun: "position", selected: positionSelection.count,
+            TableFooter(count: rows.count, noun: "position", selected: selected.count,
                         filteredFrom: filter.isEmpty ? nil : model.value?.positions.count) {
-                let chosen = positionSelection.isEmpty ? rows : rows.filter { positionSelection.contains($0.id) }
-                Text("\(positionSelection.isEmpty ? "Total" : "Selected") \(Fmt.money(minor: chosen.reduce(0) { $0 + $1.value }, currency: currency))")
+                let chosen = selected.isEmpty ? rows : rows.filter { selected.contains($0.id) }
+                Text("\(selected.isEmpty ? "Total" : "Selected") \(Fmt.money(minor: chosen.reduce(0) { $0 + $1.value }, currency: currency))")
                     .numeric().foregroundStyle(.secondary)
             }
         }
@@ -604,8 +776,8 @@ struct DepotDetailView: View {
         store.present(.newTransaction(TransactionPrefill(kind: kind, date: store.today, securityID: security, accountID: account, depotID: depotID)))
     }
 
-    private func positionsTSV(_ ids: Set<UUID>, currency: CurrencyCode) -> String {
-        let chosen = ids.isEmpty ? positions : positions.filter { ids.contains($0.id) }
+    private func positionsTSV(_ rows: [DepotDetailModel.Position], only ids: Set<UUID>, currency: CurrencyCode) -> String {
+        let chosen = ids.isEmpty ? rows : rows.filter { ids.contains($0.id) }
         return TSV.string(
             header: ["Security", "Symbol", "Shares", "Value", "Cost", "Gain", "Currency"],
             rows: chosen.map {
@@ -619,25 +791,49 @@ struct DepotDetailView: View {
 
     @ViewBuilder
     private var transactionsTable: some View {
-        if transactions.value == nil {
-            Color.clear
+        if let ledger = transactions.value {
+            if ledger.totalCount == 0 {
+                TablePlaceholder(title: "No Transactions Yet", symbol: "tray", message: "Purchases, sales, deliveries and transfers of this depot appear here.") {
+                    Button("Buy…") { AccountsActions.record(.buy, depot: depotID, in: store) }
+                }
+            } else if ledger.rangeCount == 0 {
+                TablePlaceholder(
+                    title: "No Transactions in This Period", symbol: "calendar",
+                    message: "Nothing was booked in this depot in the period (\(ledger.interval.map { Fmt.interval($0) } ?? "")). It has \(Fmt.integer(ledger.totalCount)) transaction\(ledger.totalCount == 1 ? "" : "s") in total."
+                ) {
+                    Button("Show All") { range = .all }
+                }
+            } else if ledger.rows.isEmpty {
+                TablePlaceholder(title: "No Matches", symbol: "line.3.horizontal.decrease", message: "No transaction \(range == .period ? "in this period" : "of this depot") matches “\(filter)”.") {
+                    Button("Clear Filter") { filter = "" }
+                    if range == .period { Button("Search All") { range = .all } }
+                }
+            } else {
+                loadedTransactionsTable(ledger)
+            }
         } else {
-            loadedTransactionsTable
+            Color.clear
         }
     }
 
-    private var loadedTransactionsTable: some View {
-        let rows = transactions.value ?? []
-        return Table(rows, selection: $transactionSelection, sortOrder: $transactionSort, columnCustomization: $transactionColumns) {
+    private func loadedTransactionsTable(_ ledger: DepotLedger) -> some View {
+        let selected = selectedTransactions
+        return Table(ledger.rows, selection: $transactionSelection, sortOrder: $transactionSort, columnCustomization: $transactionColumns) {
             TableColumn("Date", value: \.order) { row in
                 Text(Fmt.day(row.date)).numeric()
             }
             .width(min: 84, ideal: 90, max: 120)
             .customizationID("date")
             TableColumn("Type", value: \.kindTitle) { row in
-                Label(row.kindTitle, systemImage: row.kind.symbol).lineLimit(1)
+                HStack(spacing: DS.Spacing.s) {
+                    Label(row.kindTitle, systemImage: row.kind.symbol).lineLimit(1)
+                    if row.isAttributed {
+                        Text("attributed").font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                            .help(DepotTransactionRow.attributedHelp)
+                    }
+                }
             }
-            .width(min: 110, ideal: 130)
+            .width(min: 110, ideal: 150)
             .customizationID("type")
             TableColumn("Security", value: \.security) { row in
                 Text(row.security).lineLimit(1)
@@ -663,7 +859,8 @@ struct DepotDetailView: View {
             .width(min: 60, ideal: 90)
             .customizationID("note")
         }
-        .contextMenu(forSelectionType: UUID.self) { ids in
+        .contextMenu(forSelectionType: UUID.self) { raw in
+            let ids = TableSelection.effective(raw, visible: ledger.ids)
             Button("Edit…", systemImage: "pencil") { ids.first.map { store.present(.editTransaction($0)) } }
                 .disabled(ids.count != 1)
             Button("Duplicate…", systemImage: "plus.square.on.square") {
@@ -673,41 +870,32 @@ struct DepotDetailView: View {
             Button("Show in Transactions", systemImage: "arrow.right.circle") { ids.first.map { store.navigate(to: .transaction($0)) } }
                 .disabled(ids.count != 1)
             Divider()
-            Button("Copy", systemImage: "doc.on.doc") { Pasteboard.copy(transactionsTSV(ids)) }
+            Button("Copy", systemImage: "doc.on.doc") { Pasteboard.copy(ledger.tsv(only: ids)) }
             Divider()
-            Button("Delete", systemImage: "trash", role: .destructive) { store.deleteTransactions(ids) }
-        } primaryAction: { ids in
-            if let first = ids.first { store.present(.editTransaction(first)) }
+            Button("Delete", systemImage: "trash", role: .destructive) { delete(ids) }
+                .disabled(ids.isEmpty)
+        } primaryAction: { raw in
+            if let first = TableSelection.effective(raw, visible: ledger.ids).first { store.present(.editTransaction(first)) }
         }
-        .onCopyCommand { [NSItemProvider(object: transactionsTSV(transactionSelection) as NSString)] }
-        .onDeleteCommand { store.deleteTransactions(transactionSelection) }
-        .overlay {
-            if transactions.value != nil, rows.isEmpty {
-                if filter.isEmpty {
-                    EmptyState("No Transactions Yet", symbol: "tray", message: "Purchases, sales, deliveries and transfers of this depot appear here.") {
-                        Button("Buy…") { AccountsActions.record(.buy, depot: depotID, in: store) }
-                    }
-                } else {
-                    EmptyState("No Matches", symbol: "line.3.horizontal.decrease", message: "No transaction of this depot matches “\(filter)”.") {
-                        Button("Clear Filter") { filter = "" }
-                    }
+        .onCopyCommand { [NSItemProvider(object: ledger.tsv(only: selectedTransactions) as NSString)] }
+        .onDeleteCommand { delete(selectedTransactions) }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            TableFooter(count: ledger.rows.count, noun: "transaction", selected: selected.count,
+                        filteredFrom: ledger.rows.count == ledger.rangeCount ? nil : ledger.rangeCount) {
+                if ledger.attributedCount > 0 {
+                    Label("\(Fmt.integer(ledger.attributedCount)) attributed dividend\(ledger.attributedCount == 1 ? "" : "s")", systemImage: "info.circle")
+                        .foregroundStyle(.secondary)
+                        .help(DepotTransactionRow.attributedHelp)
                 }
             }
         }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            TableFooter(count: rows.count, noun: "transaction", selected: transactionSelection.count,
-                        filteredFrom: filter.isEmpty ? nil : store.transactions(forDepot: depotID).count)
-        }
     }
 
-    private func transactionsTSV(_ ids: Set<UUID>) -> String {
-        let all = transactions.value ?? []
-        let chosen = ids.isEmpty ? all : all.filter { ids.contains($0.id) }
-        return TSV.string(
-            header: ["Date", "Type", "Security", "Shares", "Amount", "Currency", "Note"],
-            rows: chosen.map {
-                [$0.date.iso, $0.kindTitle, $0.security, TSV.number($0.shares.decimalValue), TSV.number($0.amount.decimalValue), $0.amount.currency, $0.note]
-            })
+    /// Deletes listed transactions only, and forgets them as selection.
+    private func delete(_ ids: Set<UUID>) {
+        guard !ids.isEmpty else { return }
+        store.deleteTransactions(ids)
+        transactionSelection.subtract(ids)
     }
 }
 

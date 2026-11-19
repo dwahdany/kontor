@@ -153,6 +153,13 @@ public enum CSVImporter {
     /// Returns a copy of `file` with the selected rows of `proposal` added: transactions are appended
     /// (together with the new securities, accounts and depots they reference), quotes are merged into
     /// `proposal.quoteSecurityID`, securities are appended. Pure function.
+    /// The currency a money cell names itself — a symbol (`$`, `€`, `£`, `¥`) or a three-letter
+    /// code next to the number — or nil. Rows without a currency column are booked in it. A dollar
+    /// sign means `context` if that is a dollar currency, US dollars otherwise.
+    public static func currencyWritten(in cell: String, context: CurrencyCode) -> CurrencyCode? {
+        ProposalBuilder.currencyWritten(in: cell, context: context)
+    }
+
     public static func apply(_ proposal: ImportProposal, to file: PortfolioFile, selection: ImportSelection = .recommended) -> PortfolioFile {
         var result = file
         let rows = proposal.rows.filter { row in
@@ -372,6 +379,36 @@ private struct ProposalBuilder {
         return signed
     }
 
+    /// Currencies that write their amounts with a dollar sign.
+    static let dollarCurrencies: Set<String> = ["USD", "CAD", "AUD", "NZD", "SGD", "HKD", "MXN"]
+
+    /// The currency a money cell names itself: a symbol (`$`, `€`, `£`, `¥`) or a three-letter
+    /// code next to the number (`12.50 EUR`, `USD 5`). A dollar sign means the context's currency
+    /// if that is a dollar currency, US dollars otherwise. nil if the cell names none.
+    static func currencyWritten(in cell: String, context: String) -> String? {
+        var letters = [Unicode.Scalar]()
+        var code: String?
+        func flush() {
+            if letters.count == 3, code == nil {
+                let text = String(String.UnicodeScalarView(letters)).uppercased()
+                if Locale.commonISOCurrencyCodes.contains(text) { code = text }
+            }
+            letters.removeAll(keepingCapacity: true)
+        }
+        for scalar in cell.unicodeScalars {
+            switch scalar {
+            case "€": return "EUR"
+            case "£": return "GBP"
+            case "¥": return "JPY"
+            case "$": return dollarCurrencies.contains(context) ? context : "USD"
+            default:
+                if CSVValueParser.isLetter(scalar) { letters.append(scalar) } else { flush() }
+            }
+        }
+        flush()
+        return code
+    }
+
     func currencyCode(_ text: String) -> String? {
         let trimmed = text.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return nil }
@@ -563,7 +600,11 @@ private struct ProposalBuilder {
         let grossCurrency = currencyCode(cell(cells, .grossCurrency))
         let knownAccount = accountByName[ProposalBuilder.key(swapSides ? counterAccountName : accountName)]
             ?? (accountName.isEmpty ? options.defaultAccountID ?? (file.accounts.count == 1 ? file.accounts[0].id : nil) : nil)
-        let currency = explicitCurrency ?? knownAccount.flatMap { accountCurrency[$0] } ?? options.defaultCurrency ?? file.settings.baseCurrency
+        let fallbackCurrency = knownAccount.flatMap { accountCurrency[$0] } ?? options.defaultCurrency ?? file.settings.baseCurrency
+        // Without a currency column, a symbol or code written into the amount itself ("$181.18",
+        // "12,50 EUR") says which currency the row is in. Ignoring it would book dollars as euros.
+        let writtenCurrency = explicitCurrency == nil ? ProposalBuilder.currencyWritten(in: cell(cells, .amount), context: fallbackCurrency) : nil
+        let currency = explicitCurrency ?? writtenCurrency ?? fallbackCurrency
 
         // Security.
         var securityID: UUID?
@@ -653,9 +694,16 @@ private struct ProposalBuilder {
             let primaryName = swapSides ? counterAccountName : accountName
             // Without an account of its own, a securities account's reference account settles the trade.
             var fallback = options.defaultAccountID
-            if fallback == nil, primaryName.isEmpty, kind.requiresDepot {
-                let depot = depotByName[ProposalBuilder.key(depotName)] ?? options.defaultDepotID ?? (file.depots.count == 1 ? file.depots[0].id : nil)
-                fallback = depot.flatMap { depotReference[$0] }
+            if primaryName.isEmpty, kind.requiresDepot {
+                // A depot the row names decides first (its trades settle against its reference
+                // account); the default account only covers rows that name neither.
+                let named = depotByName[ProposalBuilder.key(swapSides ? counterDepotName : depotName)]
+                if let reference = named.flatMap({ depotReference[$0] }) {
+                    fallback = reference
+                } else if fallback == nil {
+                    let depot = named ?? options.defaultDepotID ?? (file.depots.count == 1 ? file.depots[0].id : nil)
+                    fallback = depot.flatMap { depotReference[$0] }
+                }
             }
             switch account(named: primaryName, fallback: fallback, currency: currency, purpose: "cash account") {
             case .found(let id): transaction.accountID = id
@@ -703,6 +751,15 @@ private struct ProposalBuilder {
             switch depot(named: swapSides ? counterDepotName : depotName, fallback: options.defaultDepotID, referenceAccount: transaction.accountID, purpose: "securities account") {
             case .found(let id): transaction.depotID = id
             case .missing(let message): return fail(message)
+            }
+        }
+        if !movesShares, securityID != nil, [.dividend, .fee, .feeRefund, .tax, .taxRefund].contains(kind),
+           !ProposalBuilder.key(depotName).isEmpty {
+            // A dividend, fee or tax on a security may say which depot it belongs to. Without it the
+            // engine counts the booking for every depot that holds the security, so an exported
+            // ledger would come back with different per-depot figures.
+            if case .found(let id) = depot(named: depotName, fallback: nil, referenceAccount: transaction.accountID, purpose: "securities account") {
+                transaction.depotID = id
             }
         }
         if kind == .securityTransfer {

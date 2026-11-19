@@ -15,6 +15,9 @@ struct LedgerFilterState: Equatable {
     var to: Day?
     var issuesOnly = false
 
+    /// Only transfers are listed.
+    var showsOnlyTransfers: Bool { groups == [.transfers] }
+
     /// The days to show, or nil for all of them.
     func interval(period: DayInterval) -> DayInterval? {
         switch dates {

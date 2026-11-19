@@ -9,10 +9,10 @@ import KontorSampleData
 //
 //     KONTOR_FEATURES=Transactions swift test --scratch-path .build-transactions --filter FeatureTransactionsTests
 
-private typealias Txn = KontorModel.Transaction
+typealias Txn = KontorModel.Transaction
 
 /// A small two-currency portfolio with known quotes and exchange rates.
-private enum Fixture {
+enum Fixture {
     static let today = Day(year: 2026, month: 6, day: 30)
     static let giro = Account(name: "Giro", currency: "EUR")
     static let savings = Account(name: "Savings", currency: "EUR")
@@ -133,15 +133,21 @@ private enum Fixture {
         #expect(draft.price == Price(51).raw)
         #expect(draft.shares == Shares(10).raw)
         #expect(!draft.priceIsQuote)
-        // Typing the price now keeps the total (typed after shares) and recalculates the shares.
+        // Typing the price now keeps the shares — a typed share count is never recalculated — and
+        // the amount follows.
         draft.edit(.price, Price(25.5).raw)
-        #expect(draft.calculated == .shares)
-        #expect(draft.shares == Shares(20).raw)
-        #expect(draft.total == 51_000)
+        #expect(draft.calculated == .amount)
+        #expect(draft.shares == Shares(10).raw)
+        #expect(draft.total == 25_500)
         // Typing shares again recalculates the amount from the price typed last.
         draft.edit(.shares, Shares(4).raw)
         #expect(draft.calculated == .amount)
         #expect(draft.total == 10_200)
+        // Emptying the share field hands it back to the calculation: amount ÷ price.
+        draft.edit(.shares, 0)
+        draft.edit(.total, 51_000)
+        #expect(draft.calculated == .shares)
+        #expect(draft.shares == Shares(20).raw)
     }
 
     @Test func amountFirstCalculatesTheShares() {
@@ -255,7 +261,8 @@ private enum Fixture {
         var draft = Fixture.newDraft(.buy, security: Fixture.quill, ledger: Ledger(file))
         #expect(draft.rateMissing)
         draft.edit(.shares, Shares(5).raw)
-        #expect(draft.issues(context: PositionContext(), today: Fixture.today).contains { $0.severity == .warning && $0.message.contains("exchange rate") })
+        // Without a rate the value in the account's currency is unknown: that blocks saving.
+        #expect(draft.issues(context: PositionContext(), today: Fixture.today).contains { $0.severity == .error && $0.message.contains("exchange rate") })
         draft.edit(.total, 80_000)
         #expect(abs(draft.rate - 0.8) < 1e-12)
         #expect(!draft.issues(context: PositionContext(), today: Fixture.today).contains { $0.message.contains("exchange rate") })
@@ -583,5 +590,38 @@ private enum Fixture {
         let lines = text.split(separator: "\n")
         #expect(lines.count == 6)
         #expect(lines[0].split(separator: "\t").count == LedgerExport.header.count)
+    }
+}
+
+/// "Duplicate" and "Repeat Last Transaction" go through `TransactionPrefill(copying:)`: what the
+/// original booking fixed must come along instead of being derived again from today's rates.
+@Suite struct PrefillCopyTests {
+    @Test func duplicateKeepsTheForeignValueAndRate() {
+        let day = Day(year: 2026, month: 2, day: 3)
+        // 10 Quill at 210 USD, booked at a rate of 0.85 — not the stored 0.9 of that day.
+        let original = Txn(
+            kind: .buy, date: day, minuteOfDay: 615, accountID: Fixture.giro.id, depotID: Fixture.depot.id, securityID: Fixture.quill.id,
+            shares: Shares(10), amount: Money(minor: 178_500, currency: "EUR"), securityGross: Money(minor: 210_000, currency: "USD"))
+        let ledger = Ledger(Fixture.file([original]))
+        let draft = TransactionDraft(prefill: TransactionPrefill(copying: original), ledger: ledger, today: Fixture.today)
+        var copy = draft.makeTransaction(id: original.id)
+        #expect(copy.securityGross == original.securityGross)
+        #expect(copy.amount == original.amount && copy.minuteOfDay == 615)
+        copy.note = original.note
+        #expect(copy == original)
+
+        // Dated today, the time of day and the ex-date stay behind; the values do not.
+        let today = TransactionDraft(prefill: TransactionPrefill(copying: original, date: Fixture.today), ledger: ledger, today: Fixture.today).makeTransaction()
+        #expect(today.date == Fixture.today && today.minuteOfDay == nil)
+        #expect(today.securityGross == original.securityGross && today.amount == original.amount)
+    }
+
+    @Test func duplicateKeepsTheArrivedAmountOfACrossCurrencyTransfer() {
+        let original = Txn(
+            kind: .cashTransfer, date: Day(year: 2026, month: 3, day: 2), accountID: Fixture.giro.id, counterAccountID: Fixture.dollars.id,
+            amount: Money(minor: 100_000, currency: "EUR"), counterAmount: Money(minor: 104_321, currency: "USD"))
+        let ledger = Ledger(Fixture.file([original]))
+        let copy = TransactionDraft(prefill: TransactionPrefill(copying: original, date: Fixture.today), ledger: ledger, today: Fixture.today).makeTransaction()
+        #expect(copy.counterAmount == original.counterAmount && copy.amount == original.amount)
     }
 }

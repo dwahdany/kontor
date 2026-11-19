@@ -13,14 +13,18 @@ struct ReturnsTab: View {
     var body: some View {
         VStack(alignment: .leading, spacing: DS.Spacing.l) {
             if isWide {
+                // Two balanced columns: the heatmap grows with the years, the bar chart beside it
+                // takes whatever height the left column has.
                 HStack(alignment: .top, spacing: DS.Spacing.l) {
-                    heatmap
                     VStack(spacing: DS.Spacing.l) {
-                        years
+                        heatmap
                         extremes
                     }
-                    .frame(width: 430)
+                    years
+                        .frame(width: 430)
+                        .frame(maxHeight: .infinity)
                 }
+                .fixedSize(horizontal: false, vertical: true)
             } else {
                 heatmap
                 years
@@ -37,14 +41,15 @@ struct ReturnsTab: View {
     private var heatmap: some View {
         Card("Monthly Returns", symbol: "tablecells") {
             VStack(alignment: .leading, spacing: DS.Spacing.s) {
-                if let map = model.value?.heatmap {
-                    HeatmapGrid(map)
+                if let rows = model.value?.heatmapRows {
+                    HeatmapGrid(rows: rows, columns: ChartLabels.shortMonths, format: Self.heatmapFormat, totalTitle: "Year",
+                                title: "Monthly returns")
                         .selection { rowID, column in
                             guard let year = Int(rowID), (0..<12).contains(column) else { return }
                             pickedMonth = (year, column + 1)
                         }
                         .loading(model.isRefreshing)
-                        .emptyMessage("No complete month in this period")
+                        .emptyMessage("No returns in this period")
                 } else {
                     Color.clear.frame(height: 160)
                 }
@@ -66,23 +71,50 @@ struct ReturnsTab: View {
                         .font(.caption)
                         .foregroundStyle(.tertiary)
                 }
+                partialNotes
             }
         } accessory: {
             HelpButton(.ttwror)
         }
     }
 
+    /// Like `HeatmapGrid(_: ReturnHeatmap)`: one decimal in the cells, the exact signed value in tooltips.
+    private static let heatmapFormat: ChartValueFormat = {
+        var format = ChartValueFormat.percent(decimals: 2, signed: true)
+        format.compact = { Fmt.percent($0, decimals: abs($0) >= 0.0995 ? 0 : 1) }
+        return format
+    }()
+
+    /// Signed percents; axis labels with as many decimals as the ticks need.
+    private static let yearFormat: ChartValueFormat = {
+        var format = ChartValueFormat.percent(signed: true)
+        format.axisLabels = { PercentAxis.labels(for: $0) }
+        return format
+    }()
+
+    /// Which years and months the period cuts off — they are shown, but they are not full units.
+    @ViewBuilder private var partialNotes: some View {
+        if let m = model.value {
+            ForEach([m.partialYearsNote, m.partialMonthsNote].compactMap { $0 }, id: \.self) { note in
+                Text(note)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
     private var years: some View {
         Card("Calendar Years", symbol: "chart.bar") {
             BarSeriesChart(categories: model.value?.years ?? [], values: model.value?.yearlyReturns ?? [], name: "Return",
-                           format: .percent(signed: true), title: "Return per calendar year")
+                           format: Self.yearFormat, title: "Return per calendar year")
                 .valueLabels()
                 .selection(nil) { id in
                     if let year = id.flatMap({ Int($0) }) { store.period = .year(year) }
                 }
                 .loading(model.isLoading)
                 .emptyMessage("No returns in this period")
-                .frame(height: 210)
+                .frame(minHeight: 210, maxHeight: .infinity)
         }
     }
 
@@ -112,7 +144,7 @@ struct ReturnsTab: View {
                     Divider()
                     HStack(spacing: DS.Spacing.l) {
                         if m.monthCount > 0 {
-                            share("Months with a gain", "\(Fmt.integer(m.positiveMonths)) of \(Fmt.integer(m.monthCount))",
+                            share("Complete months with a gain", "\(Fmt.integer(m.positiveMonths)) of \(Fmt.integer(m.monthCount))",
                                   Fmt.percent(Double(m.positiveMonths) / Double(m.monthCount), decimals: 0))
                         }
                         if let positive = m.positiveYearWindows {

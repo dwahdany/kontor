@@ -8,13 +8,10 @@ import KontorSampleData
 /// The app: a document scene for `.kontor` portfolios, the welcome window and Settings.
 struct KontorApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @AppStorage(AppPreferences.Key.appearance) private var appearance = AppearanceMode.system.rawValue
 
     var body: some Scene {
         Window("Welcome to Kontor", id: WelcomeScene.id) {
             WelcomeScene()
-                .onAppear { applyAppearance(appearance) }
-                .onChange(of: appearance) { _, new in applyAppearance(new) }
         }
         .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentSize)
@@ -35,14 +32,6 @@ struct KontorApp: App {
 
         Settings {
             SettingsView()
-        }
-    }
-
-    private func applyAppearance(_ raw: String) {
-        switch AppearanceMode(rawValue: raw) ?? .system {
-        case .system: NSApp.appearance = nil
-        case .light: NSApp.appearance = NSAppearance(named: .aqua)
-        case .dark: NSApp.appearance = NSAppearance(named: .darkAqua)
         }
     }
 }
@@ -113,10 +102,25 @@ struct WelcomeScene: View {
     }
 }
 
-/// One portfolio window: binds the document's store to the window (undo manager, change tracking,
-/// state restoration) and shows `MainWindowView`.
+/// One portfolio window. The actual content is keyed by the document *instance*: Revert To Saved,
+/// restoring a version and an external change of the file all make SwiftUI hand this view a new
+/// `KontorDocument` (and with it a new store) while the view's identity stays the same. Without
+/// the key, `onAppear` would not run again and the new store would have no undo manager, no change
+/// tracking and no services: every later edit would silently never be saved.
 struct DocumentWindow: View {
     @ObservedObject var document: KontorDocument
+
+    var body: some View {
+        DocumentContent(store: document.store, repairs: document.repairs)
+            .id(ObjectIdentifier(document))
+    }
+}
+
+/// Binds one store to its window (undo manager, change tracking, services, state restoration) and
+/// shows `MainWindowView`. Recreated whenever the document instance changes.
+private struct DocumentContent: View {
+    let store: PortfolioStore
+    let repairs: DocumentIO.Repairs
     @Environment(\.undoManager) private var undoManager
     @Environment(\.dismissWindow) private var dismissWindow
     @SceneStorage("route") private var storedRoute = AppScreen.dashboard.rawValue
@@ -126,7 +130,6 @@ struct DocumentWindow: View {
     @State private var window: NSWindow?
 
     var body: some View {
-        let store = document.store
         MainWindowView(store: store, registry: ShellContext.shared.registry)
             .frame(minWidth: 900, minHeight: 520)
             .background {
@@ -138,7 +141,11 @@ struct DocumentWindow: View {
                 trackChanges(of: store, in: window)
                 ShellContext.shared.windowAppeared(store)
                 dismissWindow(id: WelcomeScene.id)
+                if !repairs.isEmpty {
+                    store.show(Toast("This file was repaired while opening", message: repairs.summary.prefix(1).uppercased() + repairs.summary.dropFirst() + ".", style: .warning, duration: 12))
+                }
                 ShellContext.shared.autoUpdateQuotesIfEnabled(store)
+                DocumentSelfTest.documentWindowAppeared(store)
             }
             .onDisappear { ShellContext.shared.windowDisappeared(store) }
             .onChange(of: undoManager, initial: true) { _, manager in store.undoManager = manager }
@@ -154,10 +161,14 @@ struct DocumentWindow: View {
             }
     }
 
-    /// Changes that bypass undo (e.g. quote updates) must still mark the document as edited.
+    /// Changes that bypass undo (automatic quote updates) must still mark the document as edited.
     private func trackChanges(of store: PortfolioStore, in window: NSWindow?) {
         store.onNonUndoableChange = { [weak window] in
             (window?.windowController?.document as? NSDocument)?.updateChangeCount(.changeDone)
+        }
+        store.services.closeDocument = { [weak window] in
+            guard let document = window?.windowController?.document as? NSDocument, !document.isDocumentEdited else { return }
+            document.close()
         }
     }
 
@@ -173,7 +184,7 @@ struct DocumentWindow: View {
         while !Task.isCancelled {
             try? await Task.sleep(for: .seconds(30 * 60))
             guard !Task.isCancelled else { return }
-            if ShellContext.shared.isPeriodicUpdateEnabled, !store.isUpdatingQuotes, store.hasAutomaticQuoteFeeds {
+            if ShellContext.shared.isPeriodicUpdateEnabled, !store.isUpdatingQuotes, (store.hasAutomaticQuoteFeeds || store.needsExchangeRates) {
                 store.updateQuotes(interactive: false)
             }
         }

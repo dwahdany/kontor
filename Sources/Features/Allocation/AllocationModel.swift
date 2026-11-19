@@ -23,7 +23,8 @@ struct AllocationRow: Identifiable, Sendable, Hashable {
     var color: Color?
     /// Minor units of the reporting currency.
     var value: Int64
-    /// Share of the total value (0…1).
+    /// Share of the classified value (0…1) — the base the targets refer to. nil for the
+    /// unassigned bucket, which is outside that base.
     var share: Double?
     var targetShare: Double?
     /// actual − target (positive = overweight).
@@ -53,6 +54,23 @@ struct AllocationRow: Identifiable, Sendable, Hashable {
     var flattened: [AllocationRow] { [self] + children.flatMap(\.flattened) }
 }
 
+/// What an `AllocationModel` depends on besides the document, the scope and the period.
+struct AllocationKey: Hashable, Sendable {
+    var taxonomy: UUID
+    /// Set when the window's scope is a classification of this very taxonomy.
+    var scopeRoot: UUID?
+}
+
+extension PortfolioStore {
+    /// The cache key of the allocation of `taxonomy` in this window.
+    func allocationKey(for taxonomy: Taxonomy) -> AllocationKey {
+        if case .classification(let scoped, let id) = scopeSelection, scoped == taxonomy.id, taxonomy.contains(id) {
+            return AllocationKey(taxonomy: taxonomy.id, scopeRoot: id)
+        }
+        return AllocationKey(taxonomy: taxonomy.id, scopeRoot: nil)
+    }
+}
+
 struct AllocationModel: Sendable {
     /// A line of the "Target vs. Actual" view.
     struct Bar: Identifiable, Sendable {
@@ -79,6 +97,9 @@ struct AllocationModel: Sendable {
     var unassignedValue: Int64
     var unassignedShare: Double?
     var unassignedCount: Int
+    /// Name of the classification of this taxonomy the scope is narrowed to; targets are then
+    /// relative to it (see `rebased`).
+    var scopeRootName: String?
     var classificationCount: Int
     var hasTargets: Bool
     /// Names of vehicles assigned with more than 100 % in total (the engine scales them down).
@@ -95,10 +116,39 @@ struct AllocationModel: Sendable {
 
     var hasValue: Bool { totalValue > 0 }
 
-    init(_ analysis: Analysis, taxonomy: Taxonomy) {
-        // Targets refer to the whole value in scope: unassigned holdings count as deviation, and
-        // "actual − target = Δ" holds on every line.
-        let allocation = analysis.ledger.allocation(for: taxonomy, snapshot: analysis.snapshot, includeUnassignedInTargets: true)
+    /// The taxonomy with targets relative to one of its classifications: that classification and
+    /// its ancestors count as 100 %, everything outside it has no target. Used when the scope *is*
+    /// that classification — the whole-portfolio targets ("Equity 60 %") say nothing about a
+    /// scope that consists of Equity only, but the targets below it ("75 % developed") still do.
+    static func rebased(_ taxonomy: Taxonomy, onto id: UUID) -> Taxonomy? {
+        guard let path = taxonomy.path(to: id) else { return nil }
+        func clear(_ node: inout Classification) {
+            node.targetWeight = nil
+            for i in node.children.indices { clear(&node.children[i]) }
+        }
+        func visit(_ nodes: inout [Classification]) {
+            for i in nodes.indices {
+                guard path.contains(nodes[i].id) else {
+                    clear(&nodes[i])
+                    continue
+                }
+                nodes[i].targetWeight = 10_000
+                if nodes[i].id != id { visit(&nodes[i].children) }
+            }
+        }
+        var copy = taxonomy
+        visit(&copy.root)
+        return copy
+    }
+
+    init(_ analysis: Analysis, taxonomy: Taxonomy, scopeRoot: UUID? = nil) {
+        // One base on every tab: targets — and therefore shares and deviations — refer to the
+        // classified value, exactly as the rebalancing proposal does (it can only move what is
+        // classified). "actual − target = Δ" holds on every line; what is unassigned is listed
+        // separately, outside that base.
+        let rebased = scopeRoot.flatMap { Self.rebased(taxonomy, onto: $0) }
+        let allocation = rebased.map { analysis.ledger.allocation(for: $0, snapshot: analysis.snapshot) } ?? analysis.allocation(for: taxonomy)
+        scopeRootName = rebased == nil ? nil : scopeRoot.flatMap { taxonomy.classification($0)?.name }
         taxonomyID = taxonomy.id
         currency = allocation.currency
         day = allocation.day
@@ -121,21 +171,21 @@ struct AllocationModel: Sendable {
             }
             .max { abs($0.deltaShare) < abs($1.deltaShare) }
 
-        let total = allocation.totalValue
-        func share(_ value: Int64) -> Double? { total > 0 ? Double(value) / Double(total) : nil }
+        let base = allocation.classifiedValue
+        func share(_ value: Int64) -> Double? { base > 0 ? Double(value) / Double(base) : nil }
 
         func itemRow(_ item: AllocationItem, classification: UUID?, depth: Int) -> AllocationRow {
             AllocationRow(
                 id: AllocationRow.id(classification: classification, vehicle: item.vehicle),
                 kind: .item(classification: classification, vehicle: item.vehicle), name: item.name, depth: depth,
-                color: nil, value: item.value, share: share(item.value), targetShare: nil, deltaShare: nil,
+                color: nil, value: item.value, share: classification == nil ? nil : share(item.value), targetShare: nil, deltaShare: nil,
                 deltaValue: nil, weight: item.weight, shares: item.shares, children: [])
         }
         func row(_ node: AllocationNode, index: Int) -> AllocationRow {
             AllocationRow(
                 id: AllocationRow.id(classification: node.id), kind: .classification(node.id), name: node.name,
                 depth: node.depth, color: ChartColors.classification(node.color, fallbackIndex: index),
-                value: node.value, share: node.share, targetShare: node.targetShare, deltaShare: node.deltaShare,
+                value: node.value, share: share(node.value), targetShare: node.targetShare, deltaShare: node.deltaShare,
                 deltaValue: node.deltaValue, weight: nil, shares: nil,
                 children: node.children.enumerated().map { row($1, index: $0) }
                     + node.items.map { itemRow($0, classification: node.id, depth: node.depth + 1) })
@@ -144,7 +194,7 @@ struct AllocationModel: Sendable {
         if !allocation.unassigned.isEmpty {
             rows.append(AllocationRow(
                 id: AllocationRow.unassignedID, kind: .unassigned, name: "Unassigned", depth: 0, color: ChartColors.other,
-                value: allocation.unassignedValue, share: allocation.unassignedShare, targetShare: nil, deltaShare: nil,
+                value: allocation.unassignedValue, share: nil, targetShare: nil, deltaShare: nil,
                 deltaValue: nil, weight: nil, shares: nil,
                 children: allocation.unassigned.map { itemRow($0, classification: nil, depth: 1) }))
         }
@@ -159,7 +209,7 @@ struct AllocationModel: Sendable {
             let own = color ?? ChartColors.classification(node.color, fallbackIndex: index)
             if node.targetShare != nil || node.depth == 0 {
                 bars.append(Bar(
-                    id: node.id.uuidString, name: node.name, depth: node.depth, color: own, actual: node.share,
+                    id: node.id.uuidString, name: node.name, depth: node.depth, color: own, actual: share(node.value),
                     target: node.targetShare, deltaValue: node.deltaValue))
             }
             for (i, child) in node.children.enumerated() where child.targetShare != nil { collect(child, index: i, color: own) }

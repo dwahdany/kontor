@@ -25,12 +25,12 @@ struct EarningsInspector: View {
         var isEmpty: Bool { count == 0 }
 
         init(_ analysis: Analysis, securityID: UUID?) {
-            let report = analysis.earnings
-            let history = securityID.map { report.dividendHistory(for: $0) } ?? []
+            // For a cash account: the dividends booked on it (see `EarningsData`).
+            let report = EarningsData.make(analysis, detailed: false)
+            let history = securityID.map { id in report.payments.filter { $0.securityID == id } } ?? []
             name = securityID.flatMap { analysis.ledger.security($0)?.name } ?? ""
             currency = analysis.currency
             total = history.reduce(0) { $0 + $1.gross }
-            count = history.count
             var byYear: [Int: Int64] = [:]
             for payment in history { byYear[payment.day.year, default: 0] += payment.gross }
             let span = report.years.map(\.year).filter { year in
@@ -39,7 +39,13 @@ struct EarningsInspector: View {
             }
             years = span.map { BarCategory.year($0) }
             perYear = span.map { byYear[$0] ?? 0 }
-            let payments = history.map { Payment(id: $0.transactionID, day: $0.day, gross: $0.gross, perShare: $0.perShare) }
+            // Bookings of one day (the security sits in several depots) are one payment, as in the
+            // Securities view; a click reveals its first booking.
+            let withoutShares = history.isEmpty ? [] : DividendGroup.bookingsWithoutShares(in: analysis.ledger)
+            let payments = DividendGroup.groups(history, withoutShares: withoutShares).map {
+                Payment(id: $0.transactionIDs[0], day: $0.day, gross: $0.gross, perShare: $0.perShare)
+            }
+            count = payments.count
             recent = Array(payments.suffix(8).reversed())
             last = payments.last
         }

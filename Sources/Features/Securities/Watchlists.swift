@@ -10,7 +10,8 @@ struct WatchlistNameEdit: Identifiable, Equatable {
 }
 
 /// The filter chips above the list: status filters, one chip per watchlist (a drop target for
-/// securities) and "+" for a new watchlist.
+/// securities) and "+" for a new watchlist. The chips wrap onto further lines, so every filter and
+/// the "+" stay visible at any list width.
 struct FilterChips: View {
     @Environment(PortfolioStore.self) private var store
     @Binding var filter: SecurityFilter
@@ -19,38 +20,38 @@ struct FilterChips: View {
     let selection: Set<UUID>
 
     var body: some View {
-        ScrollView(.horizontal) {
-            HStack(spacing: DS.Spacing.xs) {
-                chip("All", count: counts.all, .all)
-                chip("Held", count: counts.held, .held)
-                chip("Not Held", count: counts.notHeld, .notHeld)
-                ForEach(store.file.watchlists) { list in
-                    WatchlistChip(list: list, count: counts.watchlists[list.id] ?? 0, filter: $filter, edit: $edit)
-                }
-                if counts.missingQuotes > 0 || filter == .missingQuotes {
-                    chip("Missing Quotes", count: counts.missingQuotes, .missingQuotes, symbol: "exclamationmark.triangle")
-                        .help("Securities without quotes, or whose latest quote is more than \(SecurityListModel.staleAfterDays) days old")
-                }
-                if counts.retired > 0 || filter == .retired {
-                    chip("Retired", count: counts.retired, .retired)
-                }
-                Button {
-                    edit = WatchlistNameEdit(id: nil, name: "")
-                } label: {
-                    Label("New Watchlist", systemImage: "plus")
-                        .labelStyle(.iconOnly)
-                        .font(.caption.weight(.semibold))
-                        .frame(width: 22, height: 22)
-                        .background(.quaternary.opacity(0.6), in: Circle())
-                        .contentShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .help("New watchlist")
+        ChipFlow(spacing: DS.Spacing.xs) {
+            chip("All", count: counts.all, .all)
+            chip("Held", count: counts.held, .held)
+                .help("Securities you hold today")
+            chip("Not Held", count: counts.notHeld, .notHeld)
+                .help("Securities you do not hold today — watched, sold or benchmarks")
+            ForEach(store.file.watchlists) { list in
+                WatchlistChip(list: list, count: counts.watchlists[list.id] ?? 0, filter: $filter, edit: $edit)
             }
-            .padding(.horizontal, DS.Spacing.m)
-            .padding(.bottom, DS.Spacing.s)
+            if counts.missingQuotes > 0 || filter == .missingQuotes {
+                chip("Missing Quotes", count: counts.missingQuotes, .missingQuotes, symbol: "exclamationmark.triangle")
+                    .help("Securities without quotes, or whose latest quote is more than \(SecurityListModel.staleAfterDays) days old")
+            }
+            if counts.retired > 0 || filter == .retired {
+                chip("Retired", count: counts.retired, .retired)
+            }
+            Button {
+                edit = WatchlistNameEdit(id: nil, name: "")
+            } label: {
+                Label("New Watchlist", systemImage: "plus")
+                    .labelStyle(.iconOnly)
+                    .font(.caption.weight(.semibold))
+                    .frame(width: 22, height: 22)
+                    .background(.quaternary.opacity(0.6), in: Circle())
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .help("New watchlist")
         }
-        .scrollIndicators(.never)
+        .padding(.horizontal, DS.Spacing.m)
+        .padding(.bottom, DS.Spacing.s)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func chip(_ title: String, count: Int, _ value: SecurityFilter, symbol: String? = nil) -> some View {
@@ -61,6 +62,43 @@ struct FilterChips: View {
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(filter == value ? .isSelected : [])
+    }
+}
+
+/// Lays chips out left to right and wraps them onto further lines. A chip wider than a whole line
+/// is given the line's width (its title truncates).
+struct ChipFlow: Layout {
+    var spacing: CGFloat
+
+    private func frames(width: CGFloat, subviews: Subviews) -> [CGRect] {
+        var frames = [CGRect]()
+        var x: CGFloat = 0, y: CGFloat = 0, lineHeight: CGFloat = 0
+        for subview in subviews {
+            var size = subview.sizeThatFits(.unspecified)
+            size.width = min(size.width, width)
+            if x > 0, x + size.width > width {
+                x = 0
+                y += lineHeight + spacing
+                lineHeight = 0
+            }
+            frames.append(CGRect(origin: CGPoint(x: x, y: y), size: size))
+            x += size.width + spacing
+            lineHeight = max(lineHeight, size.height)
+        }
+        return frames
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let frames = frames(width: proposal.width ?? .infinity, subviews: subviews)
+        let width = frames.map(\.maxX).max() ?? 0
+        return CGSize(width: proposal.width.map { min($0, width) } ?? width, height: frames.map(\.maxY).max() ?? 0)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        for (subview, frame) in zip(subviews, frames(width: bounds.width, subviews: subviews)) {
+            subview.place(at: CGPoint(x: bounds.minX + frame.minX, y: bounds.minY + frame.minY),
+                          proposal: ProposedViewSize(frame.size))
+        }
     }
 }
 
@@ -82,7 +120,6 @@ struct ChipLabel: View {
         }
         .font(.callout)
         .lineLimit(1)
-        .fixedSize()
         .padding(.horizontal, DS.Spacing.s + 2)
         .frame(height: 22)
         .foregroundStyle(isSelected ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.primary))
@@ -164,7 +201,9 @@ struct WatchlistNameBar: View {
 
 /// The context menu of one or more securities (list rows and the detail's "more" menu).
 struct SecurityContextMenu: View {
-    @Environment(PortfolioStore.self) private var store
+    /// Passed in, never read from the environment: selection context menus are built lazily by
+    /// AppKit, where a missing environment object would trap.
+    let store: PortfolioStore
     let ids: Set<UUID>
     var filter = SecurityFilter.all
     /// Start naming a new watchlist that will contain `ids`.
@@ -242,7 +281,7 @@ struct MultiSelectionView: View {
                 .font(.system(size: 36, weight: .light))
                 .foregroundStyle(.tertiary)
             Text("\(Fmt.integer(securities.count)) Securities Selected").font(.title3.weight(.semibold))
-            Text(securities.prefix(6).map(\.name).joined(separator: ", ") + (securities.count > 6 ? " and \(securities.count - 6) more" : ""))
+            Text(securities.prefix(6).map(\.displayName).joined(separator: ", ") + (securities.count > 6 ? " and \(securities.count - 6) more" : ""))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 420)

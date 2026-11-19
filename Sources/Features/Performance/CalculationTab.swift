@@ -220,6 +220,11 @@ private struct LineDetailCard: View {
         .opacity(detail.isRefreshing ? 0.7 : 1)
         .analysisTask($detail, id: "performance.calculation.detail", variant: query) { LineDetail($0, query: query) }
         .onChange(of: line) { _, _ in selection = [] }
+        // Rows disappear (delete, undo, another period or scope): a selection never outlives them.
+        .onChange(of: current?.transactions.map(\.id)) { _, ids in
+            let valid = LineSelection.valid(selection, rows: ids ?? [])
+            if valid != selection { selection = valid }
+        }
     }
 
     @ViewBuilder private func content(_ detail: LineDetail) -> some View {
@@ -242,6 +247,10 @@ private struct LineDetailCard: View {
                 if !detail.transactions.isEmpty {
                     VStack(alignment: .leading, spacing: DS.Spacing.s) {
                         transactionTable(detail)
+                        if detail.unconvertedCount > 0 {
+                            Text("\(Plural.count(detail.unconvertedCount, "amount has", "amounts have")) no exchange rate into \(detail.currency) and \(detail.unconvertedCount == 1 ? "is" : "are") not part of the line.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
                         if detail.isWeighted {
                             Text("Amounts are shown in full; this scope counts each by its classification weight.")
                                 .font(.caption).foregroundStyle(.tertiary)
@@ -291,8 +300,8 @@ private struct LineDetailCard: View {
                     .font(.subheadline.weight(.medium)).foregroundStyle(.secondary)
                 Text(Fmt.integer(rows.count)).font(.subheadline).numeric().foregroundStyle(.tertiary)
                 Spacer()
-                if !selection.isEmpty {
-                    Button("Show in Transactions") { showFirstSelected() }.buttonStyle(.link).font(.callout)
+                if let id = LineSelection.single(selection, rows: rows.map(\.id)) {
+                    Button("Show in Transactions") { store.navigate(to: .transaction(id)) }.buttonStyle(.link).font(.callout)
                 }
             }
             Table(rows, selection: $selection, sortOrder: $sortOrder) {
@@ -304,7 +313,8 @@ private struct LineDetailCard: View {
                     .width(min: 120, ideal: 210)
                 TableColumn("Note", value: \.note) { Text($0.note).lineLimit(1).foregroundStyle(.secondary) }
                     .width(min: 60, ideal: 130)
-                TableColumn(line == .realizedGains ? "Proceeds" : "Amount", value: \.amountMinor) { row in
+                // Sorted by the value in the reporting currency: rows may be in different currencies.
+                TableColumn(line == .realizedGains ? "Proceeds" : "Amount", value: \.sortValue) { row in
                     Group {
                         if line == .realizedGains || StatementLine.flowLines.contains(line) {
                             Text(Fmt.money(row.amount, signed: line != .realizedGains)).numeric()
@@ -320,25 +330,25 @@ private struct LineDetailCard: View {
             .contextMenu(forSelectionType: UUID.self) { ids in
                 Button("Show in Transactions") { ids.first.map { store.navigate(to: .transaction($0)) } }.disabled(ids.count != 1)
                 Button("Edit…") { ids.first.map { store.present(.editTransaction($0)) } }.disabled(ids.count != 1)
-                Button("Copy") { Pasteboard.copy(tsv(rows.filter { ids.contains($0.id) })) }
+                Button("Copy") { Pasteboard.copy(tsv(rows.filter { ids.contains($0.id) })) }.disabled(ids.isEmpty)
                 Divider()
-                Button("Delete", role: .destructive) { store.deleteTransactions(ids) }
+                Button("Delete", role: .destructive) { store.deleteTransactions(ids) }.disabled(ids.isEmpty)
             } primaryAction: { ids in
                 ids.first.map { store.navigate(to: .transaction($0)) }
             }
-            .onCopyCommand { [NSItemProvider(object: tsv(rows.filter { selection.contains($0.id) }) as NSString)] }
-            .onDeleteCommand { store.deleteTransactions(selection) }
+            .onCopyCommand {
+                // Nothing selected: nothing to copy (not a lone header line).
+                let selected = rows.filter { selection.contains($0.id) }
+                return selected.isEmpty ? [] : [NSItemProvider(object: tsv(selected) as NSString)]
+            }
+            .onDeleteCommand { store.deleteTransactions(LineSelection.valid(selection, rows: rows.map(\.id))) }
             .onChange(of: selection) { _, ids in
-                if ids.count == 1, let id = ids.first { store.setFocus(.transaction(id)) }
+                if let id = LineSelection.single(ids, rows: rows.map(\.id)) { store.setFocus(.transaction(id)) }
             }
             .frame(height: min(CGFloat(rows.count) * 24 + 46, 310))
             .clipShape(RoundedRectangle(cornerRadius: DS.Radius.control, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: DS.Radius.control, style: .continuous).strokeBorder(DS.Colors.hairline.opacity(0.6), lineWidth: 0.5))
         }
-    }
-
-    private func showFirstSelected() {
-        if let id = selection.first { store.navigate(to: .transaction(id)) }
     }
 
     private func tsv(_ rows: [ContributionRow]) -> String {

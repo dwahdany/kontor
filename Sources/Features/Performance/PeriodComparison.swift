@@ -1,7 +1,8 @@
 import SwiftUI
 import KontorUI
 
-/// The standard periods side by side — TTWROR and IRR each, for the window's scope. Every row
+/// The standard periods side by side — TTWROR and IRR each, for the window's scope. The IRR is
+/// per year only for periods longer than a year (see `ReturnHorizon`). Every row
 /// computes on its own when it appears (the analysis layer caches it per document revision);
 /// clicking a row makes it the reporting period.
 struct PeriodComparisonCard: View {
@@ -20,7 +21,7 @@ struct PeriodComparisonCard: View {
                     HStack(spacing: DS.Spacing.s) {
                         Text("Period").frame(maxWidth: .infinity, alignment: .leading)
                         ColumnCaption("TTWROR", topic: .ttwror).frame(width: 84, alignment: .trailing)
-                        ColumnCaption("IRR p.a.", topic: .irr).frame(width: 84, alignment: .trailing)
+                        ColumnCaption("IRR", topic: .irr).frame(width: 84, alignment: .trailing)
                     }
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -49,7 +50,7 @@ struct PeriodComparisonCard: View {
     }
 
     private var footnote: some View {
-        Text("TTWROR is the total return of the period; IRR is your money-weighted return per year. Click a period to use it.")
+        Text("TTWROR is the total return of the period; IRR is your money-weighted return — per year for periods longer than a year. Click a period to use it.")
             .font(.caption)
             .foregroundStyle(.tertiary)
             .fixedSize(horizontal: false, vertical: true)
@@ -81,10 +82,16 @@ private struct PeriodRow: View {
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }
         .opacity(figures.isRefreshing ? 0.6 : 1)
-        .help("\(period.title): \(Fmt.interval(store.interval(for: period)))")
-        .accessibilityLabel("\(period.title), TTWROR \(Fmt.percent(figures.value?.ttwror, signed: true)), IRR \(Fmt.percent(figures.value?.irr, signed: true))")
+        .help("\(period.title): \(Fmt.interval(store.interval(for: period))) — IRR \(irrCaption)")
+        .accessibilityLabel("\(period.title), TTWROR \(Fmt.percent(figures.value?.ttwror, signed: true)), IRR \(irrCaption) \(Fmt.percent(figures.value?.moneyWeightedReturn, signed: true))")
         .accessibilityAddTraits(isCurrent ? .isSelected : [])
         .analysisTask($figures, id: "performance.period", interval: store.interval(for: period)) { PeriodFigures($0) }
+    }
+
+    private var irrCaption: String {
+        // The figures know how many days they really cover (a young portfolio has less history
+        // than the period is long); until they arrive, the period's own length decides.
+        (figures.value?.isAnnualized ?? ReturnHorizon.isAnnualized(days: store.interval(for: period).dayCount)) ? "per year" : "not annualized"
     }
 
     private var background: some ShapeStyle {
@@ -108,7 +115,7 @@ private struct PeriodRow: View {
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 SignedPercent(value: figures.value?.ttwror).frame(width: 84, alignment: .trailing)
-                SignedPercent(value: figures.value?.irr).frame(width: 84, alignment: .trailing)
+                SignedPercent(value: figures.value?.moneyWeightedReturn).frame(width: 84, alignment: .trailing)
             }
             .font(.callout)
         case .row:
@@ -120,7 +127,7 @@ private struct PeriodRow: View {
                     .font(.callout.weight(.medium))
                 HStack(spacing: DS.Spacing.xs) {
                     Text("IRR").foregroundStyle(.tertiary)
-                    SignedPercent(value: figures.value?.irr)
+                    SignedPercent(value: figures.value?.moneyWeightedReturn)
                 }
                 .font(.caption)
             }

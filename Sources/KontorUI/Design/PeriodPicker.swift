@@ -4,16 +4,37 @@ import KontorEngine
 
 /// The toolbar control for the global reporting period (`store.period`). The shell already places
 /// one in the window toolbar; use it elsewhere only for screen-local overrides via the binding initialiser.
+///
+/// Toolbar items are hosted outside the screen's view tree: pass the store there
+/// (`PeriodPicker(store: store)`). Without a store the picker renders nothing instead of trapping.
 public struct PeriodPicker: View {
-    @Environment(PortfolioStore.self) private var store
+    @Environment(PortfolioStore.self) private var environmentStore: PortfolioStore?
+    private let explicitStore: PortfolioStore?
     private let external: Binding<ReportingPeriod>?
-    @State private var isCustomPresented = false
 
     /// Bound to the store's global period.
-    public init() { external = nil }
+    public init(store: PortfolioStore? = nil) {
+        explicitStore = store
+        external = nil
+    }
 
     /// Bound to a local period (e.g. a per-widget override).
-    public init(selection: Binding<ReportingPeriod>) { external = selection }
+    public init(selection: Binding<ReportingPeriod>, store: PortfolioStore? = nil) {
+        explicitStore = store
+        external = selection
+    }
+
+    public var body: some View {
+        if let store = explicitStore ?? environmentStore {
+            PeriodPickerMenu(store: store, external: external)
+        }
+    }
+}
+
+private struct PeriodPickerMenu: View {
+    let store: PortfolioStore
+    let external: Binding<ReportingPeriod>?
+    @State private var isCustomPresented = false
 
     private var selection: ReportingPeriod {
         get { external?.wrappedValue ?? store.period }
@@ -22,7 +43,7 @@ public struct PeriodPicker: View {
         }
     }
 
-    public var body: some View {
+    var body: some View {
         Menu {
             Section("Recent") {
                 ForEach(ReportingPeriod.presets.filter { $0 != .ytd && $0 != .allTime }, id: \.self) { period in

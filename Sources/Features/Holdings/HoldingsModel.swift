@@ -75,10 +75,19 @@ struct HoldingRow: Identifiable, Sendable {
     var priceDay: Day?
     var isStale = false
     var isValued = true
-    /// Change of the latest quote against the one before it (fraction).
+    /// Why the line has no value (`isValued == false`).
+    var valuationIssue: ValuationIssue?
+    /// Change of the market value in the reporting currency since `dayChangeSince`, with unchanged
+    /// shares: price move and exchange-rate move together (fraction of the earlier value).
     var dayChange: Double?
-    /// That change applied to the market value, reporting currency.
+    /// The same as an amount in the reporting currency. Lines without a move of their own (cash in
+    /// the reporting currency) carry 0 and no `dayChange`.
     var dayChangeAmount: Int64?
+    /// The day the change is measured from: the previous quote's day (securities) or the day
+    /// before the statement day (foreign cash).
+    var dayChangeSince: Day?
+    /// Securities: the quote's own change in the security's currency (fraction).
+    var quoteChange: Double?
     /// Market value in `currency` (minor units).
     var localValue: Int64?
     /// Market value in the reporting currency (minor units).
@@ -92,7 +101,12 @@ struct HoldingRow: Identifiable, Sendable {
     var gainFraction: Double?
     var ttwror: Double?
     var irr: Double?
+    /// Dividends of the reporting period (gross).
     var dividends: Int64?
+    /// Dividends of the twelve months ending on the statement day (gross) — the numerator of
+    /// `yieldOnCost`; independent of the reporting period.
+    var trailingDividends: Int64?
+    /// `trailingDividends` ÷ cost basis: an annual yield, whatever period the window shows.
     var yieldOnCost: Double?
     /// Gains realized in the period (after fees, before taxes).
     var realized: Int64?
@@ -105,6 +119,12 @@ struct HoldingRow: Identifiable, Sendable {
     var count = 0
     /// The id of the subtotal line this row sits under (grouped tables).
     var groupID: String?
+
+    enum ValuationIssue: Sendable, Equatable {
+        case noPrice
+        /// No exchange rate from the line's currency into the reporting currency.
+        case noExchangeRate
+    }
 
     var isEntity: Bool { kind == .position || kind == .cash || kind == .closed }
     var isSummary: Bool { kind == .group || kind == .total }
@@ -138,6 +158,70 @@ struct HoldingsQuery: Hashable, Sendable {
     var grouping: HoldingsGrouping
     /// The taxonomy value for `.taxonomy` grouping (so edits of assignments invalidate the model).
     var taxonomy: Taxonomy?
+    /// The statement day; nil = the end of the analysis interval. It lies after the interval when
+    /// a fixed period ended before it (see `HoldingsStatementPeriod`).
+    var day: Day?
+    /// False when the period has no figures for this statement day: the interval is then only a
+    /// carrier for the statement and nothing period-related is derived from it.
+    var hasPeriodFigures = true
+}
+
+// MARK: - Arithmetic
+
+/// Pure helpers of the statement, kept apart from the engine plumbing so they can be tested alone.
+enum HoldingsMath {
+    /// Splits `total` in proportion to `weights` so that the parts add up to `total` exactly
+    /// (largest remainder; ties go to the earlier part). Negative weights count as zero; without
+    /// any positive weight the first part takes everything.
+    static func apportion(_ total: Int64, _ weights: [Int64]) -> [Int64] {
+        guard !weights.isEmpty else { return [] }
+        let clean = weights.map { UInt64(max($0, 0)) }
+        let sum = clean.reduce(0, +)
+        var parts = [Int64](repeating: 0, count: weights.count)
+        guard sum > 0 else {
+            parts[0] = total
+            return parts
+        }
+        let magnitude = total.magnitude
+        var floors = [UInt64](repeating: 0, count: clean.count)
+        var remainders = [UInt64](repeating: 0, count: clean.count)
+        var assigned: UInt64 = 0
+        for (index, weight) in clean.enumerated() {
+            let (quotient, remainder) = sum.dividingFullWidth(magnitude.multipliedFullWidth(by: weight))
+            floors[index] = quotient
+            remainders[index] = remainder
+            assigned += quotient
+        }
+        var left = Int(magnitude - assigned)
+        if left > 0 {
+            let order = clean.indices.sorted { remainders[$0] != remainders[$1] ? remainders[$0] > remainders[$1] : $0 < $1 }
+            for index in order where left > 0 {
+                floors[index] += 1
+                left -= 1
+            }
+        }
+        for index in parts.indices {
+            parts[index] = total < 0 ? -Int64(floors[index]) : Int64(floors[index])
+        }
+        return parts
+    }
+
+    /// The change of a market value since an earlier valuation with unchanged shares, in the
+    /// reporting currency: `value` is today's value, the earlier one is derived from the ratio of
+    /// price × exchange rate then and now. Nil when the inputs do not allow a ratio.
+    static func change(value: Int64, price: Double = 1, rate: Double, previousPrice: Double = 1, previousRate: Double) -> (amount: Int64, fraction: Double?)? {
+        let now = price * rate, before = previousPrice * previousRate
+        guard now.isFinite, before.isFinite, now > 0, before >= 0 else { return nil }
+        let earlier = FixedMath.saturatingInt64(Double(value) * before / now)
+        let amount = value - earlier
+        return (amount, earlier > 0 ? Double(amount) / Double(earlier) : nil)
+    }
+
+    /// Dividends of twelve months relative to the cost basis of what is held; nil without a cost.
+    static func yieldOnCost(trailingDividends: Int64?, costBasis: Int64?) -> Double? {
+        guard let trailingDividends, let costBasis, costBasis > 0 else { return nil }
+        return Double(trailingDividends) / Double(costBasis)
+    }
 }
 
 /// The statement of assets at `day` with the period figures of `interval`, grouped but neither
@@ -161,7 +245,11 @@ struct HoldingsBase: Sendable {
     /// Changes whenever the model was rebuilt.
     let stamp = UUID()
     var day: Day
+    /// The stretch the period figures cover. It ends on `day`, or earlier when a fixed period
+    /// ended before the statement day.
     var interval: DayInterval
+    /// False when the period has no figures for this statement day (`ttwror` etc. are then nil).
+    var hasPeriodFigures: Bool
     var currency: CurrencyCode
     var grouping: HoldingsGrouping
     /// One group with an empty id when ungrouped.
@@ -172,9 +260,9 @@ struct HoldingsBase: Sendable {
     var securitiesValue: Int64
     var cashValue: Int64
     var costBasis: Int64
-    var ttwror: Double
+    var ttwror: Double?
     var irr: Double?
-    var absolutePerformance: Int64
+    var absolutePerformance: Int64?
     var positionCount: Int
     var cashCount: Int
     var staleCount: Int
@@ -185,17 +273,31 @@ struct HoldingsBase: Sendable {
     static let closedGroupID = "g:closed"
     /// Days without a new quote after which a price counts as stale.
     static let staleAfterDays = 7
+    /// The yield on cost always refers to the twelve months ending on the statement day.
+    static func trailingYear(endingOn day: Day) -> DayInterval { DayInterval(start: day.addingYears(-1), end: day) }
 
     var isEmpty: Bool { groups.allSatisfy(\.rows.isEmpty) }
 
     init(_ analysis: Analysis, query: HoldingsQuery) {
         let ledger = analysis.ledger
-        let snapshot = analysis.snapshot
-        let day = snapshot.day
+        let hasPeriod = query.hasPeriodFigures
+        // The statement is the snapshot of the statement day — not necessarily the end of the
+        // period (a fixed period may have ended before it).
+        let day = query.day ?? analysis.interval.end
+        let snapshot = day == analysis.interval.end ? analysis.snapshot : ledger.snapshot(on: day, scope: analysis.scope)
         let total = snapshot.totalValue.minor
         let reporting = analysis.currency
-        let performance = Dictionary(analysis.securities.map { ($0.securityID, $0) }, uniquingKeysWith: { a, _ in a })
+        let records = hasPeriod ? analysis.securities : []
+        let performance = Dictionary(records.map { ($0.securityID, $0) }, uniquingKeysWith: { a, _ in a })
         let sparkInterval = DayInterval(start: day.advanced(by: -90), end: day)
+        let trailingYear = Self.trailingYear(endingOn: day)
+        let trailing = Dictionary(
+            ledger.earnings(in: trailingYear, scope: analysis.scope).bySecurity.map { ($0.securityID, $0.amounts.dividends) },
+            uniquingKeysWith: { a, _ in a })
+        let converter = ledger.converter
+        func rate(_ currency: CurrencyCode, on day: Day) -> Double? {
+            currency == reporting ? 1 : converter.rate(from: currency, to: reporting, on: day)
+        }
 
         func share(_ value: Int64) -> Double? { total > 0 ? Double(value) / Double(total) : nil }
 
@@ -206,10 +308,18 @@ struct HoldingsBase: Sendable {
                 id: "s:\(security.id.uuidString)", kind: .position, securityID: security.id, name: security.name,
                 detail: Self.detail(of: security), searchText: Self.searchText(of: security), currency: security.currency)
             row.depotID = p.holdings.max { $0.value.minor < $1.value.minor }?.depotID
-            row.shares = p.shares
+            // A weighted scope (a classification) holds only part of the position: its value and
+            // cost are scaled by the engine, so the shares shown must be scaled as well.
+            if p.weight != 10_000 {
+                row.assignedWeight = p.weight
+                row.shares = Shares(raw: FixedMath.weighted(p.shares.raw, Int32(clamping: p.weight)))
+            } else {
+                row.shares = p.shares
+            }
             row.price = p.price
             row.priceDay = p.priceDay
             row.isValued = p.isValued
+            if !p.isValued { row.valuationIssue = p.price == nil ? .noPrice : .noExchangeRate }
             row.isStale = p.priceDay.map { $0.distance(to: day) > Self.staleAfterDays } ?? true
             row.localValue = p.valueInSecurityCurrency.minor
             row.value = p.value.minor
@@ -218,15 +328,26 @@ struct HoldingsBase: Sendable {
             row.purchasePrice = p.purchasePrice
             row.gain = p.unrealizedGain.minor
             row.gainFraction = p.unrealizedGainFraction
-            if p.isValued, let current = ledger.price(of: security.id, on: day),
+            // "Day": the value now against the value at the previous quote, shares unchanged, both
+            // in the reporting currency — so a foreign position's exchange-rate move is part of it.
+            // Not shown when the quote is stale or the previous one is far back: that is no day's move.
+            if p.isValued, !row.isStale, let current = ledger.price(of: security.id, on: day),
                let previous = ledger.price(of: security.id, on: current.day.advanced(by: -1)),
-               previous.day < current.day, previous.price.raw > 0 {
-                let change = Double(current.price.raw) / Double(previous.price.raw) - 1
-                row.dayChange = change
-                row.dayChangeAmount = FixedMath.saturatingInt64(Double(p.value.minor) * change / (1 + change))
+               previous.day < current.day, previous.day.distance(to: current.day) <= Self.staleAfterDays,
+               previous.price.raw > 0, current.price.raw > 0,
+               let rateNow = rate(security.currency, on: day), let rateBefore = rate(security.currency, on: previous.day),
+               let change = HoldingsMath.change(
+                   value: p.value.minor, price: Double(current.price.raw), rate: rateNow,
+                   previousPrice: Double(previous.price.raw), previousRate: rateBefore) {
+                row.dayChange = change.fraction
+                row.dayChangeAmount = change.amount
+                row.dayChangeSince = previous.day
+                row.quoteChange = Double(current.price.raw) / Double(previous.price.raw) - 1
             }
             row.spark = ledger.priceLevels(securityID: security.id, in: sparkInterval, basis: .securityCurrency) ?? []
             Self.apply(performance[security.id], to: &row)
+            row.trailingDividends = trailing[security.id]
+            row.yieldOnCost = HoldingsMath.yieldOnCost(trailingDividends: row.trailingDividends, costBasis: row.costBasis)
             return row
         }
 
@@ -236,9 +357,23 @@ struct HoldingsBase: Sendable {
                 id: "a:\(account.id.uuidString)", kind: .cash, accountID: account.id, name: account.name,
                 detail: "Cash · \(account.currency)", searchText: "\(account.name) cash \(account.currency)", currency: account.currency)
             row.isValued = c.isValued
+            if !c.isValued { row.valuationIssue = .noExchangeRate }
             row.localValue = c.balance.minor
             row.value = c.value.minor
             row.weight = share(c.value.minor)
+            // Cash moves only with its exchange rate: none in the reporting currency.
+            if c.isValued {
+                let before = day.advanced(by: -1)
+                if account.currency == reporting {
+                    row.dayChangeAmount = 0
+                } else if let rateNow = rate(account.currency, on: day), let rateBefore = rate(account.currency, on: before),
+                          let change = HoldingsMath.change(value: c.value.minor, rate: rateNow, previousRate: rateBefore) {
+                    // An unchanged rate (weekend) is no figure worth showing.
+                    row.dayChange = change.amount == 0 ? nil : change.fraction
+                    row.dayChangeAmount = change.amount
+                    row.dayChangeSince = change.amount == 0 ? nil : before
+                }
+            }
             return row
         }
 
@@ -246,13 +381,12 @@ struct HoldingsBase: Sendable {
         let cash = snapshot.cash.compactMap(cashRow)
         let held = Set(snapshot.positions.map(\.securityID))
 
-        closed = analysis.securities.compactMap { record in
+        closed = records.compactMap { record in
             guard record.shares.isZero, !held.contains(record.securityID), let security = ledger.security(record.securityID) else { return nil }
             var row = HoldingRow(
                 id: "c:\(security.id.uuidString)", kind: .closed, securityID: security.id, name: security.name,
                 detail: Self.detail(of: security), searchText: Self.searchText(of: security), currency: security.currency)
             Self.apply(record, to: &row)
-            row.yieldOnCost = nil
             return row
         }
 
@@ -301,16 +435,25 @@ struct HoldingsBase: Sendable {
             }
             // Phase 2: one engine pass per depot, side by side — each is a full daily valuation.
             let interval = analysis.interval
-            let figures: [(records: [SecurityPerformance], ttwror: Double?, irr: Double?)] = Self.concurrentMap(plans) { plan in
+            let figures: [(records: [SecurityPerformance], ttwror: Double?, irr: Double?, trailing: [UUID: Int64])] = Self.concurrentMap(plans) { plan in
+                let isSplit = plan.members.contains { $0.holdings.count > 1 }
+                // Twelve-month dividends of the depot's part of positions held in several depots.
+                var trailing: [UUID: Int64] = [:]
+                if canScopeDepots, isSplit {
+                    for entry in ledger.earnings(in: trailingYear, scope: .depot(plan.depot.id)).bySecurity {
+                        trailing[entry.securityID] = entry.amounts.dividends
+                    }
+                }
+                guard hasPeriod else { return ([], nil, nil, trailing) }
                 if wholePortfolio {
                     // One report gives both the group's return and the per-depot figures of
                     // positions that are split across depots.
                     let report = ledger.performance(in: interval, scope: .depot(plan.depot.id, account: plan.referenceRow?.accountID))
-                    return (report.securities, report.ttwror, report.irr)
-                } else if canScopeDepots, plan.members.contains(where: { $0.holdings.count > 1 }) {
-                    return (ledger.securityPerformance(in: interval, scope: .depot(plan.depot.id)), nil, nil)
+                    return (report.securities, report.ttwror, report.irr, trailing)
+                } else if canScopeDepots, isSplit {
+                    return (ledger.securityPerformance(in: interval, scope: .depot(plan.depot.id)), nil, nil, trailing)
                 }
-                return ([], nil, nil)
+                return ([], nil, nil, trailing)
             }
             for (plan, figure) in zip(plans, figures) {
                 let depot = plan.depot, members = plan.members, referenceRow = plan.referenceRow
@@ -319,12 +462,12 @@ struct HoldingsBase: Sendable {
                 let groupReturn = figure.ttwror.map { (ttwror: $0, irr: figure.irr) }
                 for p in members {
                     guard var row = positions.first(where: { $0.securityID == p.securityID }),
-                          let holding = p.holdings.first(where: { $0.depotID == depot.id }) else { continue }
+                          let holdingIndex = p.holdings.firstIndex(where: { $0.depotID == depot.id }) else { continue }
+                    let holding = p.holdings[holdingIndex]
                     row.depotID = depot.id
                     if p.holdings.count > 1 {
                         row.id = "s:\(p.securityID.uuidString)@\(depot.id.uuidString)"
-                        let fraction = p.value.minor != 0 ? Double(holding.value.minor) / Double(p.value.minor) : 0
-                        row.shares = holding.shares
+                        row.shares = p.weight != 10_000 ? Shares(raw: FixedMath.weighted(holding.shares.raw, Int32(clamping: p.weight))) : holding.shares
                         row.localValue = holding.valueInSecurityCurrency.minor
                         row.value = holding.value.minor
                         row.weight = share(holding.value.minor)
@@ -332,13 +475,15 @@ struct HoldingsBase: Sendable {
                         row.gain = holding.value.minor - holding.costBasis.minor
                         row.gainFraction = holding.costBasis.minor > 0 ? Double(holding.value.minor - holding.costBasis.minor) / Double(holding.costBasis.minor) : nil
                         row.purchasePrice = p.weight == 0 ? nil : Price(minor: mulDiv(holding.costBasis.minor, 10_000, Int64(p.weight)), per: holding.shares)
-                        row.dayChangeAmount = row.dayChangeAmount.map { FixedMath.saturatingInt64(Double($0) * fraction) }
+                        // The position's day amount, split so that the depots add up to it exactly.
+                        row.dayChangeAmount = row.dayChangeAmount.map { HoldingsMath.apportion($0, p.holdings.map(\.value.minor))[holdingIndex] }
                         row.ttwror = nil
                         row.irr = nil
                         row.dividends = nil
-                        row.yieldOnCost = nil
                         row.realized = nil
                         Self.apply(depotPerformance[p.securityID], to: &row)
+                        row.trailingDividends = canScopeDepots ? figure.trailing[p.securityID] ?? 0 : nil
+                        row.yieldOnCost = HoldingsMath.yieldOnCost(trailingDividends: row.trailingDividends, costBasis: row.costBasis)
                     }
                     rows.append(row)
                 }
@@ -363,27 +508,55 @@ struct HoldingsBase: Sendable {
                 groups = [Group(id: "", title: "", rows: positions + cash)]
                 break
             }
-            let allocation = analysis.allocation(for: taxonomy)
+            let allocation = ledger.allocation(for: taxonomy, snapshot: snapshot)
             var base: [AllocationVehicle: HoldingRow] = [:]
             for row in positions { base[.security(row.securityID!)] = row }
             for row in cash { base[.account(row.accountID!)] = row }
 
+            func isShown(_ item: AllocationItem) -> Bool { base[item.vehicle] != nil && (item.value != 0 || item.weight != 0) }
+
+            // A vehicle assigned to several classifications appears once per classification. Its
+            // additive figures are split by the assignment weights so that the parts add up to the
+            // position to the cent (rounding each part on its own would not).
+            var partWeights: [AllocationVehicle: [Int64]] = [:]
+            func collect(_ items: [AllocationItem]) {
+                for item in items where isShown(item) && item.weight != 10_000 {
+                    partWeights[item.vehicle, default: []].append(Int64(item.weight))
+                }
+            }
+            func collect(_ node: AllocationNode) {
+                collect(node.items)
+                for child in node.children { collect(child) }
+            }
+            for root in allocation.roots { collect(root) }
+            collect(allocation.unassigned)
+            var nextPart: [AllocationVehicle: Int] = [:]
+
+            // Same traversal order as `collect`, so the n-th row of a vehicle takes its n-th part.
             func rows(of items: [AllocationItem], suffix: String) -> [HoldingRow] {
                 items.compactMap { item in
-                    guard var row = base[item.vehicle], item.value != 0 || item.weight != 0 else { return nil }
+                    guard isShown(item), var row = base[item.vehicle] else { return nil }
                     guard item.weight != 10_000 else { return row }
-                    let w = Int32(clamping: item.weight)
+                    let whole = row
+                    let weights = partWeights[item.vehicle] ?? [Int64(item.weight)]
+                    let index = nextPart[item.vehicle, default: 0]
+                    nextPart[item.vehicle] = index + 1
+                    func part(_ total: Int64?) -> Int64? {
+                        total.map { index < weights.count ? HoldingsMath.apportion($0, weights)[index] : 0 }
+                    }
                     row.id += "#\(suffix)"
-                    row.assignedWeight = item.weight
-                    row.shares = row.shares.map { Shares(raw: FixedMath.weighted($0.raw, w)) }
-                    row.localValue = row.localValue.map { FixedMath.weighted($0, w) }
+                    // Part of the whole position: the scope's weight times the assignment's.
+                    row.assignedWeight = Int((Int64(whole.assignedWeight ?? 10_000) * Int64(item.weight) + 5_000) / 10_000)
+                    row.shares = part(whole.shares?.raw).map { Shares(raw: $0) }
+                    row.localValue = part(whole.localValue)
                     row.value = item.value
                     row.weight = share(item.value)
-                    row.costBasis = row.costBasis.map { FixedMath.weighted($0, w) }
+                    row.costBasis = part(whole.costBasis)
                     row.gain = row.costBasis.map { item.value - $0 }
-                    row.dayChangeAmount = row.dayChangeAmount.map { FixedMath.weighted($0, w) }
-                    row.dividends = row.dividends.map { FixedMath.weighted($0, w) }
-                    row.realized = row.realized.map { FixedMath.weighted($0, w) }
+                    row.dayChangeAmount = part(whole.dayChangeAmount)
+                    row.dividends = part(whole.dividends)
+                    row.trailingDividends = part(whole.trailingDividends)
+                    row.realized = part(whole.realized)
                     return row
                 }
             }
@@ -410,7 +583,7 @@ struct HoldingsBase: Sendable {
 
         // Period return per group: each group valued as a scope of its own (one daily pass each).
         // Only meaningful when the window shows the whole portfolio — scopes cannot be intersected.
-        if analysis.scope == .portfolio {
+        if analysis.scope == .portfolio, hasPeriod {
             for index in groups.indices {
                 guard let scope = groups[index].scope else { continue }
                 let valuation = ledger.valuation(in: analysis.interval, scope: scope)
@@ -421,15 +594,16 @@ struct HoldingsBase: Sendable {
 
         self.day = day
         interval = analysis.interval
+        hasPeriodFigures = hasPeriod
         currency = reporting
         grouping = query.grouping
         totalValue = total
         securitiesValue = snapshot.securitiesValue.minor
         cashValue = snapshot.cashValue.minor
         costBasis = snapshot.costBasis.minor
-        ttwror = analysis.ttwror
-        irr = analysis.irr
-        absolutePerformance = analysis.absolutePerformance
+        ttwror = hasPeriod ? analysis.ttwror : nil
+        irr = hasPeriod ? analysis.irr : nil
+        absolutePerformance = hasPeriod ? analysis.absolutePerformance : nil
         positionCount = positions.count
         cashCount = cash.count
         staleCount = positions.count(where: \.isStale)
@@ -476,7 +650,6 @@ struct HoldingsBase: Sendable {
         row.ttwror = record.ttwror
         row.irr = record.irr
         row.dividends = record.dividends
-        row.yieldOnCost = record.dividendYieldOnCost
         row.realized = record.realizedGain
     }
 
@@ -606,10 +779,10 @@ struct HoldingsDisplay: Sendable {
             if filter.isEmpty, options.showsCash {
                 summary.ttwror = base.ttwror
                 summary.irr = base.irr
-                summary.detail = "\(Fmt.integer(all.count)) \(all.count == 1 ? "line" : "lines")"
-            } else {
-                summary.detail = "of \(Fmt.integer(all.count)) shown"
             }
+            summary.detail = all.count == unfilteredCount
+                ? Self.holdings(all.count)
+                : "\(Fmt.integer(all.count)) of \(Self.holdings(unfilteredCount))"
             total = summary
         }
 
@@ -669,26 +842,34 @@ struct HoldingsDisplay: Sendable {
         }
     }
 
+    /// "1 holding", "16 holdings" — the one noun used for lines of the statement.
+    static func holdings(_ count: Int) -> String { "\(Fmt.integer(count)) \(count == 1 ? "holding" : "holdings")" }
+
     /// Sums of the additive columns; ratios are recomputed from the sums.
     static func summary(of rows: [HoldingRow], id: String, kind: HoldingRow.Kind, name: String, currency: CurrencyCode) -> HoldingRow {
         var row = HoldingRow(id: id, kind: kind, name: name, detail: "", searchText: "", currency: currency)
         row.count = rows.count
-        row.detail = "\(Fmt.integer(rows.count)) \(rows.count == 1 ? "line" : "lines")"
+        row.detail = holdings(rows.count)
         var value: Int64 = 0, weight = 0.0, hasWeight = false
         var cost: Int64 = 0, gain: Int64 = 0, hasCost = false
-        var day: Int64 = 0, hasDay = false, dayBase: Int64 = 0
-        var dividends: Int64 = 0, hasDividends = false, yieldCost: Int64 = 0, yieldDividends: Int64 = 0
+        var day: Int64 = 0, hasDay = false, since: Day?
+        var dividends: Int64 = 0, hasDividends = false, yieldCost: Int64 = 0, yieldDividends: Int64 = 0, hasYield = false
         var realized: Int64 = 0, hasRealized = false
         var local: Int64 = 0, localCurrency: CurrencyCode?, localIsUniform = true
         for r in rows {
             value += r.value
             if let w = r.weight { weight += w; hasWeight = true }
             if let c = r.costBasis { cost += c; gain += r.gain ?? 0; hasCost = true }
-            if let d = r.dayChangeAmount { day += d; dayBase += r.value - d; hasDay = true }
-            if let d = r.dividends {
-                dividends += d
-                hasDividends = true
-                if r.kind == .position, let c = r.costBasis, c > 0 { yieldCost += c; yieldDividends += d }
+            if let d = r.dayChangeAmount {
+                day += d
+                if r.dayChange != nil { hasDay = true }
+                if let s = r.dayChangeSince { since = min(since ?? s, s) }
+            }
+            if let d = r.dividends { dividends += d; hasDividends = true }
+            if r.kind == .position, let c = r.costBasis, c > 0, let t = r.trailingDividends {
+                yieldCost += c
+                yieldDividends += t
+                hasYield = true
             }
             if let x = r.realized { realized += x; hasRealized = true }
             if let l = r.localValue {
@@ -707,12 +888,17 @@ struct HoldingsDisplay: Sendable {
             row.gainFraction = cost > 0 ? Double(gain) / Double(cost) : nil
         }
         if hasDay {
+            // Relative to everything the line shows — cash and positions without a move of their
+            // own included — so the percentage and the amount belong to the Value next to them.
+            let before = value - day
             row.dayChangeAmount = day
-            row.dayChange = dayBase > 0 ? Double(day) / Double(dayBase) : nil
+            row.dayChange = before > 0 ? Double(day) / Double(before) : nil
+            row.dayChangeSince = since
         }
-        if hasDividends {
-            row.dividends = dividends
-            row.yieldOnCost = yieldCost > 0 ? Double(yieldDividends) / Double(yieldCost) : nil
+        if hasDividends { row.dividends = dividends }
+        if hasYield {
+            row.trailingDividends = yieldDividends
+            row.yieldOnCost = HoldingsMath.yieldOnCost(trailingDividends: yieldDividends, costBasis: yieldCost)
         }
         if hasRealized { row.realized = realized }
         if localIsUniform, let localCurrency {

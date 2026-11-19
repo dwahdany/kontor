@@ -22,11 +22,15 @@ public enum ExchangeRates {
         case (nil, nil):
             break
         case (let b?, nil): // quote is the pivot: invert
-            result.days = b.days
-            result.rates = b.rates.map { 1 / $0 }
+            for (day, rate) in zip(b.days, b.rates) where isUsable(rate) && isUsable(1 / rate) {
+                result.days.append(day)
+                result.rates.append(1 / rate)
+            }
         case (nil, let q?): // base is the pivot
-            result.days = q.days
-            result.rates = q.rates
+            for (day, rate) in zip(q.days, q.rates) where isUsable(rate) {
+                result.days.append(day)
+                result.rates.append(rate)
+            }
         case (let b?, let q?):
             var days = [Int32](), rates = [Double]()
             days.reserveCapacity(min(b.days.count, q.days.count))
@@ -38,8 +42,12 @@ public enum ExchangeRates {
                 } else if b.days[i] > q.days[j] {
                     j += 1
                 } else {
-                    days.append(b.days[i])
-                    rates.append(q.rates[j] / b.rates[i])
+                    // A zero or damaged rate on either leg yields no cross rate for that day.
+                    let cross = q.rates[j] / b.rates[i]
+                    if isUsable(b.rates[i]), isUsable(q.rates[j]), isUsable(cross) {
+                        days.append(b.days[i])
+                        rates.append(cross)
+                    }
                     i += 1
                     j += 1
                 }
@@ -49,6 +57,11 @@ public enum ExchangeRates {
         }
         return result
     }
+
+    /// A rate that can be stored and divided by: finite and greater than zero. (A zero rate would
+    /// turn into infinity in a derived series, and JSON cannot hold that: the file could no longer
+    /// be saved.)
+    public static func isUsable(_ rate: Double) -> Bool { rate.isFinite && rate > 0 }
 
     /// The rate `from → to` on `day` using whatever the file holds: identity, a direct series,
     /// an inverse series, or triangulation through the euro. nil if the rate cannot be derived.

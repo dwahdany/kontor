@@ -21,7 +21,10 @@ struct PlanInspector: View {
                 Section("Schedule") {
                     KeyValueRow("First Execution", Fmt.day(plan.start, style: .medium))
                     KeyValueRow("Ends", plan.end.map { Fmt.day($0, style: .medium) } ?? "No end")
-                    KeyValueRow("Next Execution", plan.nextDueDate(after: store.today).map { Fmt.day($0, style: .medium) } ?? "")
+                    // As in the list: a plan that cannot be executed has no next date.
+                    KeyValueRow("Next Execution", canRun(plan)
+                        ? plan.nextDueDate(after: store.today).map { Fmt.day($0, style: .medium) } ?? Fmt.missing
+                        : Fmt.missing)
                     KeyValueRow("Skipped Dates", Fmt.integer(plan.skippedDates?.count ?? 0))
                 }
                 Section("Books On") {
@@ -52,6 +55,13 @@ struct PlanInspector: View {
         } else {
             EmptyState("No Plan Selected", symbol: "calendar.badge.clock", message: "Select a plan to see its settings.")
         }
+    }
+
+    /// The editor's validation mirrors the engine's plan problems and needs no pass over the ledger.
+    private func canRun(_ plan: InvestmentPlan) -> Bool {
+        PlanDraft(plan).validate(
+            security: store.security(plan.securityID), depot: store.depot(plan.depotID), account: store.account(plan.accountID),
+            currency: plan.amount.currency) == nil
     }
 
     private func link(_ key: String, _ name: String?, action: @escaping () -> Void) -> some View {

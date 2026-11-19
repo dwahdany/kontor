@@ -67,10 +67,11 @@ enum EarningsExport {
     static func securities(_ model: EarningsModel, rows: [EarningsModel.SecurityRow], numbers: Numbers = .pasteboard) -> EarningsTable {
         EarningsTable(
             name: "\(model.kind.title) by Security",
-            header: ["Security", "Symbol", model.kind.title, "Share of total", "Payments", "Last payment", "Last amount",
-                     "Per share", "Yield on cost (12 months)", "Currency"],
+            header: ["Security", "Symbol", model.kind.title, "Share of total", "Dividend payments", "Last dividend", "Last dividend amount",
+                     "Dividend per share", "Yield on cost (12 months)", "Currency"],
             rows: rows.map { row in
-                [row.name, row.securityID == nil ? "" : row.detail, numbers.money(row.amount), numbers.fraction(row.share),
+                [row.name, row.securityID == nil ? "" : row.detail, numbers.money(row.amount),
+                 model.securitySharesAreMeaningful ? numbers.fraction(row.share) : "",
                  String(row.count), row.lastDay?.iso ?? "", row.lastDay == nil ? "" : numbers.money(row.lastGross),
                  row.perShare.map { numbers.string($0.decimalValue) } ?? "", numbers.fraction(row.yieldOnCost), model.currency]
             })
@@ -91,9 +92,11 @@ enum EarningsExport {
             name: "Dividend Payments",
             header: ["Date", "Security", "Account", "Shares", "Per share", "Gross", "Taxes", "Fees", "Net", "Yield", "Currency"],
             rows: rows.map { row in
-                [row.day.iso, row.security, row.account, row.shares.isZero ? "" : numbers.string(row.shares.decimalValue),
-                 row.perShare.map { numbers.string($0.decimalValue) } ?? "", numbers.money(row.gross), numbers.money(row.taxes),
-                 numbers.money(row.fees), numbers.money(row.net), numbers.fraction(row.yield), currency]
+                // A booking without an exchange rate has no amounts in the reporting currency.
+                func money(_ minor: Int64) -> String { row.isConverted ? numbers.money(minor) : "" }
+                return [row.day.iso, row.security, row.account, row.shares.isZero ? "" : numbers.string(row.shares.decimalValue),
+                        row.isConverted ? row.perShare.map { numbers.string($0.decimalValue) } ?? "" : "", money(row.gross), money(row.taxes),
+                        money(row.fees), money(row.net), numbers.fraction(row.yield), currency]
             })
     }
 
@@ -110,8 +113,20 @@ enum EarningsExport {
             rows: rows)
     }
 
+    /// Whether the whole cell is a plain number as `Numbers.plain` writes it: an optional minus,
+    /// digits, an optional fraction. (`Decimal(string:)` is no test for that — it parses a numeric
+    /// prefix, so "-1x Short DAX" would pass as −1.)
+    static func isPlainNumber(_ text: String) -> Bool {
+        var rest = Substring(text)
+        if rest.first == "-" { rest = rest.dropFirst() }
+        let parts = rest.split(separator: ".", omittingEmptySubsequences: false)
+        guard parts.count <= 2, let whole = parts.first, !whole.isEmpty else { return false }
+        return parts.allSatisfy { part in !part.isEmpty && part.allSatisfy { $0.isASCII && $0.isNumber } }
+    }
+
     /// RFC 4180 text. Cells that a spreadsheet would run as a formula are neutralized with a
-    /// leading apostrophe (names come from imported files).
+    /// leading apostrophe (names come from imported files). Only cells that are a number from
+    /// the first to the last character are written as they are.
     static func csv(_ table: EarningsTable) -> String {
         func cell(_ raw: String, isText: Bool) -> String {
             var text = raw
@@ -123,7 +138,7 @@ enum EarningsExport {
         }
         var lines = [table.header.map { cell($0, isText: true) }.joined(separator: ",")]
         for row in table.rows {
-            lines.append(row.map { cell($0, isText: Decimal(string: $0) == nil) }.joined(separator: ","))
+            lines.append(row.map { cell($0, isText: !isPlainNumber($0)) }.joined(separator: ","))
         }
         return lines.joined(separator: "\r\n") + "\r\n"
     }

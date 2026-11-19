@@ -19,8 +19,9 @@ enum HoldingsActions {
     static func sell(_ row: HoldingRow, in store: PortfolioStore) {
         guard let securityID = row.securityID, row.kind == .position else { return }
         let depot = depot(for: row, in: store)
-        // Offer the shares actually held in that depot (not a scope- or classification-weighted part).
-        let held = heldShares(of: securityID, depot: depot?.id, in: store) ?? row.shares
+        // Offer the shares actually held today in that depot — never the row's count, which may be
+        // a classification-weighted part or the holding of a past statement day.
+        let held = heldShares(of: securityID, depot: depot?.id, in: store)
         store.present(.newTransaction(TransactionPrefill(
             kind: .sell, date: store.today, securityID: securityID, accountID: depot?.referenceAccountID, depotID: depot?.id, shares: held)))
     }
@@ -28,7 +29,7 @@ enum HoldingsActions {
     static func recordDividend(_ row: HoldingRow, in store: PortfolioStore) {
         guard let securityID = row.securityID else { return }
         let depot = depot(for: row, in: store)
-        let held = row.kind == .position ? heldShares(of: securityID, depot: depot?.id, in: store) ?? row.shares : nil
+        let held = row.kind == .position ? heldShares(of: securityID, depot: depot?.id, in: store) : nil
         store.present(.newTransaction(TransactionPrefill(
             kind: .dividend, date: store.today, securityID: securityID, accountID: depot?.referenceAccountID, depotID: depot?.id, shares: held)))
     }
@@ -148,7 +149,7 @@ enum HoldingsExport {
             "Type", "Name", "Details", "Currency", "Shares", "Price", "Price Date", "Day Change %",
             "Value (Local)", "Value (\(reportingCurrency))", "Weight %", "Cost Basis (\(reportingCurrency))",
             "Purchase Price (\(reportingCurrency))", "Unrealized Gain (\(reportingCurrency))", "Unrealized Gain %",
-            "TTWROR %", "IRR %", "Dividends (\(reportingCurrency))", "Yield on Cost %", "Realized Gain (\(reportingCurrency))",
+            "TTWROR %", "IRR %", "Dividends (\(reportingCurrency))", "Yield on Cost % (12 Months)", "Realized Gain (\(reportingCurrency))",
         ]
     }
 

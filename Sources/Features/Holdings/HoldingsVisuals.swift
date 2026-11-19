@@ -24,7 +24,8 @@ struct HoldingsTreemapCard: View {
                 }
                 TreemapChart(display.treemap, format: .money(currency), coloring: .performance(limit: nil), title: "Holdings by market value, colored by period return")
                     .selection(state.selection.count == 1 ? state.selection.first : nil) { id in
-                        state.selection = id.map { [$0] } ?? []
+                        // Expands the row's group and scrolls the table to it.
+                        if let id { state.reveal(id) } else { state.selection = [] }
                     }
                     .loading(isLoading)
                     .emptyMessage("No holdings with a positive value")
@@ -103,7 +104,7 @@ struct HoldingsConcentrationCard: View {
                             if inside { hovered = segment.id } else if hovered == segment.id { hovered = nil }
                         }
                         .onTapGesture {
-                            if let rowID = segment.rowID { state.selection = [rowID] }
+                            if let rowID = segment.rowID { state.reveal(rowID) }
                         }
                         .help("\(segment.name): \(Fmt.money(minor: segment.value, currency: currency)) · \(Fmt.percent(segment.share, decimals: 1))")
                 }
@@ -136,7 +137,7 @@ struct HoldingsConcentrationCard: View {
                     if inside { hovered = segment.id } else if hovered == segment.id { hovered = nil }
                 }
                 .onTapGesture {
-                    if let rowID = segment.rowID { state.selection = [rowID] }
+                    if let rowID = segment.rowID { state.reveal(rowID) }
                 }
                 .accessibilityElement(children: .combine)
             }

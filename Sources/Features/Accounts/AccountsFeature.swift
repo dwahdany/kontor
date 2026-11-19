@@ -32,7 +32,7 @@ public enum AccountsFeature {
         var result = [
             PaletteCommand(id: "accounts.transfer", title: "Transfer Between Accounts…", symbol: Transaction.Kind.cashTransfer.symbol,
                            keywords: ["move", "cash transfer"]) {
-                store.present(.newTransaction(TransactionPrefill(kind: .cashTransfer, date: store.today, accountID: store.route.accountID)))
+                store.present(.newTransaction(TransactionPrefill(kind: .cashTransfer, date: store.today, accountID: store.account(store.route.accountID)?.id)))
             },
             PaletteCommand(id: "accounts.copy-balances", title: "Copy Account Balances", subtitle: "Tab-separated, for a spreadsheet",
                            symbol: "doc.on.doc", keywords: ["export", "clipboard", "tsv"]) {
@@ -46,8 +46,10 @@ public enum AccountsFeature {
                 }
             },
         ]
+        // The route can still name an entity that was just deleted (the store drops such a focus on
+        // undo and navigation, not after every edit): no commands for something that is gone.
         let focused: AccountsEntity? = store.route.accountID.map { .account($0) } ?? store.route.depotID.map { .depot($0) }
-        if store.route.screen == .accounts, let focused {
+        if store.route.screen == .accounts, let focused, AccountsActions.exists(focused, in: store) {
             let name: String
             let kinds: [Transaction.Kind]
             switch focused {
@@ -69,6 +71,10 @@ public enum AccountsFeature {
                     })
             }
             let retired = AccountsActions.isRetired(focused, in: store)
+            result.append(PaletteCommand(id: "accounts.show-transactions", title: "Show “\(name)” in Transactions", symbol: "list.bullet.rectangle",
+                                         keywords: ["ledger", "entries", "filter"]) {
+                AccountsActions.showTransactions(focused, in: store)
+            })
             result.append(PaletteCommand(id: "accounts.edit", title: "Edit “\(name)”…", symbol: "pencil") {
                 switch focused {
                 case .account(let id): store.present(.editAccount(id))

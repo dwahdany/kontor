@@ -532,14 +532,54 @@ enum ScreenshotRunner {
         if let captured = image, !isBlank(captured) {
             return try resample(captured, to: pointSize, scale: scale)
         }
-        // In-process fallback: draws the frame view (titlebar + content) into a bitmap.
-        guard let frameView = window.contentView?.superview ?? window.contentView,
-              let rep = frameView.bitmapImageRepForCachingDisplay(in: frameView.bounds) else {
-            throw Failure(description: "window has no view to capture")
+        // In-process fallback (the window server returns nothing while the screen is locked or the
+        // display sleeps): draws the frame view (titlebar + content) into a bitmap. Materials that
+        // only the window server composites (the sidebar's glass) stay empty in this mode.
+        guard let cg = inProcessImage(of: window) else { throw Failure(description: "window has no view to capture") }
+        // An attached sheet and popovers are windows of their own: draw them on top, dimming the
+        // window behind a sheet the way the system does.
+        let overlays = windows.dropLast().reversed().compactMap { overlay -> (image: CGImage, frame: CGRect)? in
+            inProcessImage(of: overlay).map { ($0, overlay.frame) }
         }
+        guard !overlays.isEmpty else { return try resample(cg, to: pointSize, scale: scale) }
+        let backing = CGFloat(cg.width) / max(pointSize.width, 1)
+        guard let context = CGContext(
+            data: nil, width: cg.width, height: cg.height, bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { throw Failure(description: "could not create bitmap context") }
+        context.draw(cg, in: CGRect(x: 0, y: 0, width: cg.width, height: cg.height))
+        if window.attachedSheet != nil {
+            context.setFillColor(CGColor(gray: 0, alpha: 0.22))
+            context.fill(CGRect(x: 0, y: 0, width: cg.width, height: cg.height))
+        }
+        for overlay in overlays {
+            // Window frames are in screen coordinates with the origin at the bottom left, like the context.
+            let rect = CGRect(
+                x: (overlay.frame.minX - window.frame.minX) * backing, y: (overlay.frame.minY - window.frame.minY) * backing,
+                width: overlay.frame.width * backing, height: overlay.frame.height * backing)
+            let path = CGPath(roundedRect: rect, cornerWidth: 12 * backing, cornerHeight: 12 * backing, transform: nil)
+            context.saveGState()
+            context.setShadow(offset: CGSize(width: 0, height: -6 * backing), blur: 24 * backing, color: CGColor(gray: 0, alpha: 0.3))
+            context.setFillColor(overlay.frame.isEmpty ? CGColor(gray: 1, alpha: 0) : (window.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? CGColor(gray: 0.16, alpha: 1) : CGColor(gray: 0.96, alpha: 1)))
+            context.addPath(path)
+            context.fillPath()
+            context.restoreGState()
+            context.saveGState()
+            context.addPath(path)
+            context.clip()
+            context.draw(overlay.image, in: rect)
+            context.restoreGState()
+        }
+        guard let composed = context.makeImage() else { throw Failure(description: "in-process capture produced no image") }
+        return try resample(composed, to: pointSize, scale: scale)
+    }
+
+    /// The window's frame view (titlebar + content) drawn in-process.
+    private static func inProcessImage(of window: NSWindow) -> CGImage? {
+        guard let frameView = window.contentView?.superview ?? window.contentView,
+              let rep = frameView.bitmapImageRepForCachingDisplay(in: frameView.bounds) else { return nil }
         frameView.cacheDisplay(in: frameView.bounds, to: rep)
-        guard let cg = rep.cgImage else { throw Failure(description: "in-process capture produced no image") }
-        return try resample(cg, to: pointSize, scale: scale)
+        return rep.cgImage
     }
 
     private static func resample(_ image: CGImage, to pointSize: CGSize, scale: CGFloat) throws -> NSBitmapImageRep {
@@ -576,7 +616,7 @@ enum ScreenshotRunner {
 
 /// A window that always renders in its active (key/main) state, so captures show the focused look
 /// even though the screenshot process never becomes the frontmost app.
-private final class ShotWindow: NSWindow {
+final class ShotWindow: NSWindow {
     override var isKeyWindow: Bool { true }
     override var isMainWindow: Bool { true }
     override var canBecomeKey: Bool { true }

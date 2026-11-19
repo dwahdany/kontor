@@ -17,22 +17,29 @@ extension UTType {
 /// The document behind a portfolio window.
 ///
 /// `ReferenceFileDocument` (rather than the value-type `FileDocument`) because edits flow through
-/// one long-lived `PortfolioStore` per window: undo registration marks the document edited without
-/// SwiftUI diffing/copying the whole file through a binding on every keystroke, and saving
-/// snapshots the value-type `PortfolioFile` on the main thread (O(1), copy-on-write) and encodes
-/// it on a background thread.
+/// one long-lived `PortfolioStore` per document: undo registration marks the document edited
+/// without SwiftUI diffing/copying the whole file through a binding on every keystroke.
+///
+/// Saving never touches the main actor. AppKit asks for the snapshot on a background thread *while
+/// the main thread waits for it* (`-[NSDocument _waitForUserInteractionUnblocking]`), so hopping to
+/// the main thread there deadlocks every save and autosave. The store mirrors its file into
+/// `latest` (a lock-protected value) on every change, and `snapshot` reads that.
 final class KontorDocument: ReferenceFileDocument {
     static let readableContentTypes: [UTType] = [.kontorPortfolio]
     static let writableContentTypes: [UTType] = [.kontorPortfolio]
 
     /// The store all windows of this document share.
-    @MainActor private(set) lazy var store = PortfolioStore(file: initialFile)
-    private let initialFile: PortfolioFile
+    @MainActor private(set) lazy var store = PortfolioStore(file: latest.current, snapshot: latest)
+    /// The current file, readable from any thread.
+    private let latest: FileSnapshot
+    /// What was repaired while opening (unusable exchange rates), to tell the user once.
+    let repairs: DocumentIO.Repairs
 
     /// A new, untitled document starts from the sample-data starter: a cash account, a depot and
     /// the standard taxonomies, so the first transaction can be recorded right away.
     init(file: PortfolioFile = SampleData.starterPortfolio(name: "", baseCurrency: AppPreferences.defaultCurrency)) {
-        initialFile = file
+        latest = FileSnapshot(file)
+        repairs = DocumentIO.Repairs()
     }
 
     init(configuration: ReadConfiguration) throws {
@@ -40,9 +47,20 @@ final class KontorDocument: ReferenceFileDocument {
             throw CocoaError(.fileReadCorruptFile)
         }
         do {
-            initialFile = try PortfolioFile(data: data)
+            let result = try Self.read(data)
+            latest = FileSnapshot(result.file)
+            repairs = result.repairs
+        }
+    }
+
+    /// The read path of the document, shared with the self-test.
+    static func read(_ data: Data) throws -> (file: PortfolioFile, repairs: DocumentIO.Repairs) {
+        do {
+            return try DocumentIO.read(data)
         } catch let error as PortfolioFile.FormatError {
             throw CocoaError(.fileReadUnknown, userInfo: [NSLocalizedDescriptionKey: error.description])
+        } catch let error as DocumentIO.ReadError {
+            throw CocoaError(.fileReadCorruptFile, userInfo: [NSLocalizedDescriptionKey: error.description])
         } catch {
             throw CocoaError(.fileReadCorruptFile, userInfo: [
                 NSLocalizedDescriptionKey: "The file is not a valid Kontor portfolio.",
@@ -51,16 +69,30 @@ final class KontorDocument: ReferenceFileDocument {
         }
     }
 
-    /// SwiftUI takes the snapshot on the main thread; the hop keeps this correct if that ever changes.
+    /// Called on AppKit's background writing thread while the main thread is blocked: must not
+    /// wait for the main actor.
     func snapshot(contentType: UTType) throws -> PortfolioFile {
-        if Thread.isMainThread {
-            return MainActor.assumeIsolated { store.file }
-        }
-        return DispatchQueue.main.sync { store.file }
+        latest.current
     }
 
     /// Runs off the main thread: encoding even large portfolios never blocks the UI.
     func fileWrapper(snapshot: PortfolioFile, configuration: WriteConfiguration) throws -> FileWrapper {
-        FileWrapper(regularFileWithContents: try snapshot.encoded(pretty: AppPreferences.prettyPrintFiles))
+        FileWrapper(regularFileWithContents: try Self.write(snapshot))
+    }
+
+    /// The write path of the document, shared with the self-test.
+    static func write(_ file: PortfolioFile) throws -> Data {
+        do {
+            return try DocumentIO.write(file, pretty: AppPreferences.prettyPrintFiles)
+        } catch {
+            throw CocoaError(.fileWriteUnknown, userInfo: [
+                NSLocalizedDescriptionKey: "The portfolio could not be saved because it contains a value that cannot be written (\(error.localizedDescription)).",
+                NSUnderlyingErrorKey: error,
+            ])
+        }
     }
 }
+
+/// AppKit calls `snapshot` and `fileWrapper` on background threads. Both only touch `latest`
+/// (lock-protected); `store` is main-actor isolated.
+extension KontorDocument: @unchecked Sendable {}

@@ -57,7 +57,7 @@ Internals.
 | Prices | last known quote on or before the day; before the first quote the first quote is used. Securities without quotes are valued with prices derived from their own buys/sells (flagged). |
 | FX | last known rate on or before the day (first rate before the series starts); transactions convert at their own day's rate. |
 | Bad data | never traps. Unconvertible / unpriced values count as 0 and are reported in `diagnostics`. Invalid transactions are skipped and listed in `ledger.diagnostics`. |
-| Same-day ordering | Transactions are processed in the order of `Transaction.chronological` (day, time of day, id). Bookings that share a day **and** time of day (typically untimed imports) have no natural order; there, a booking that would take more shares out of a holding than it holds is processed *after* same-moment bookings adding shares to it, so an untimed buy + sell of one day is never reported as a short sale. Nothing else is reordered; give transactions a `minuteOfDay` to force an order. |
+| Same-day ordering | Transactions are processed in the order of `Transaction.chronological` (day, time of day, id). Bookings that share a day **and** time of day (typically untimed imports) have no natural order; and an untimed booking means "some time that day", not "before everything timed". In both cases a booking that would take more shares out of a holding than it holds is processed *after* the bookings it may float past (same moment; for an untimed removal: the whole day) that add shares to it. So an untimed buy + sell of one day, or an untimed transfer on the day of a timed purchase, is never reported as a short sale. Nothing else is reordered, and timed bookings keep their order among themselves. |
 | Bookings without a depot | A dividend, fee or tax that names a security but no depot (Portfolio Performance books these on the account only) is attributed to the depot holding the security at that time — after a complete sale, to the depot it was last moved in. Only while several depots hold the security at once does it stay unattributed; it then counts in full for every depot scope that ever held the security. |
 | Rounding | half away from zero, everywhere. Values are rounded per (security, depot) holding and per account, so totals of partial scopes add up exactly to the portfolio. |
 
@@ -569,6 +569,9 @@ let a = Analysis(file: file, interval: interval, reportingCurrency: "USD")   // 
 
 a.snapshot, a.initialSnapshot                        // Snapshot at interval.end / interval.start
 a.valuation, a.returns, a.ttwror, a.ttwrorAnnualized, a.irr, a.absolutePerformance
+a.measuredInterval                                   // the interval, not starting before the first transaction:
+                                                     // decide "per year" by ITS length; ttwrorAnnualized uses it
+a.irrOfPeriod                                        // the annual irr taken back to the measured interval
 a.breakdown, a.securities, a.security(id), a.risk, a.report      // report == ledger.performance(in:scope:)
 a.drawdowns, a.investedCapital, a.heatmap, a.rollingReturns(windowDays: 365)
 a.trades                                             // closed in the interval, open at its end

@@ -609,3 +609,70 @@ import Testing
         #expect(FileFormat.allCases.allSatisfy { !$0.displayName.isEmpty })
     }
 }
+
+/// Findings of the migration review: what a CSV says must not be reinterpreted silently.
+@Suite struct CSVImportReviewTests {
+    /// "$181.18" in a file without a currency column is in dollars, whatever the portfolio's base
+    /// currency is. Into an empty euro portfolio the rows are booked in USD on a new USD account;
+    /// against an existing euro account they are errors, never euro bookings.
+    @Test func aCurrencySymbolInTheAmountDecidesTheCurrency() throws {
+        let document = CSVDocument(data: try Fixture.data("csv/broker_us_tab.csv"))
+        let empty = PortfolioFile(settings: Settings(baseCurrency: "EUR"))
+        let proposal = CSVImporter.propose(document, file: empty)
+        #expect(proposal.rows.allSatisfy { $0.transaction?.amount.currency == "USD" })
+        #expect(proposal.newAccounts.map(\.currency) == ["USD"])
+
+        let euro = Account(name: "Giro", currency: "EUR")
+        let existing = PortfolioFile(settings: Settings(baseCurrency: "EUR"), accounts: [euro])
+        let refused = CSVImporter.propose(document, options: CSVImportOptions(defaultAccountID: euro.id), file: existing)
+        #expect(refused.rows.allSatisfy { $0.status == .error })
+        #expect(refused.rows[0].messages.contains { $0.contains("USD") && $0.contains("EUR") })
+        #expect(refused.apply(to: existing).transactions.isEmpty)
+
+        #expect(CSVImporter.currencyWritten(in: "($1,816.80)", context: "EUR") == "USD")
+        #expect(CSVImporter.currencyWritten(in: "$5", context: "CAD") == "CAD")
+        #expect(CSVImporter.currencyWritten(in: "12,50 EUR", context: "USD") == "EUR")
+        #expect(CSVImporter.currencyWritten(in: "chf 3.20", context: "USD") == "CHF")
+        #expect(CSVImporter.currencyWritten(in: "1.234,56", context: "USD") == nil)
+        #expect(CSVImporter.currencyWritten(in: "5 each", context: "USD") == nil)
+    }
+
+    /// The transactions export writes a Depot column for every row; reading it back must keep
+    /// the depot of dividends, fees and taxes on a security (the engine attributes by it).
+    @Test func exportedDepotsOfDividendsFeesAndTaxesComeBack() throws {
+        let account = Account(name: "Giro", currency: "EUR")
+        let first = Depot(name: "Main", referenceAccountID: account.id), second = Depot(name: "Kids", referenceAccountID: account.id)
+        let stock = Security(name: "Stock", currency: "EUR", isin: "DE0001234567")
+        let transactions = [
+            Transaction(kind: .deposit, date: day("2024-01-02"), accountID: account.id, amount: Money(minor: 1_000_000, currency: "EUR")),
+            Transaction(kind: .buy, date: day("2024-01-03"), accountID: account.id, depotID: first.id, securityID: stock.id, shares: Shares(10), amount: Money(minor: 100_000, currency: "EUR")),
+            Transaction(kind: .buy, date: day("2024-01-04"), accountID: account.id, depotID: second.id, securityID: stock.id, shares: Shares(5), amount: Money(minor: 50_000, currency: "EUR")),
+            Transaction(kind: .dividend, date: day("2024-03-01"), accountID: account.id, depotID: second.id, securityID: stock.id, shares: Shares(5), amount: Money(minor: 500, currency: "EUR")),
+            Transaction(kind: .dividend, date: day("2024-03-01"), accountID: account.id, depotID: first.id, securityID: stock.id, shares: Shares(10), amount: Money(minor: 1_000, currency: "EUR")),
+            Transaction(kind: .fee, date: day("2024-03-05"), accountID: account.id, depotID: second.id, securityID: stock.id, amount: Money(minor: 120, currency: "EUR")),
+            Transaction(kind: .tax, date: day("2024-03-06"), accountID: account.id, depotID: first.id, securityID: stock.id, amount: Money(minor: 80, currency: "EUR")),
+            // No depot stays no depot.
+            Transaction(kind: .dividend, date: day("2024-06-01"), accountID: account.id, securityID: stock.id, shares: Shares(15), amount: Money(minor: 1_500, currency: "EUR")),
+        ]
+        let file = PortfolioFile(settings: Settings(baseCurrency: "EUR"), securities: [stock], accounts: [account], depots: [first, second], transactions: transactions)
+        let data = CSVExporter.data(CSVExporter.transactions(file))
+        let imported = CSVImporter.propose(CSVDocument(data: data), file: PortfolioFile(settings: Settings(baseCurrency: "EUR"))).apply(to: PortfolioFile(settings: Settings(baseCurrency: "EUR")))
+        func depotName(_ t: Transaction, in f: PortfolioFile) -> String { f.depots.first { $0.id == t.depotID }?.name ?? "-" }
+        let original = transactions.map { "\($0.kind.rawValue) \($0.date.iso) \(depotName($0, in: file))" }
+        let back = imported.transactions.sorted(by: Transaction.chronological).map { "\($0.kind.rawValue) \($0.date.iso) \(depotName($0, in: imported))" }
+        #expect(back.sorted() == original.sorted())
+    }
+
+    /// A trade that names a depot but no cash account settles on that depot's reference account,
+    /// not on the wizard's default account.
+    @Test func aNamedDepotDecidesTheSettlementAccount() throws {
+        let main = Account(name: "Settlement", currency: "EUR"), savings = Account(name: "Savings", currency: "EUR")
+        let depot = Depot(name: "Main Depot", referenceAccountID: main.id), kids = Depot(name: "Kids Depot", referenceAccountID: savings.id)
+        let stock = Security(name: "Stock", currency: "EUR", isin: "DE0001234567")
+        let file = PortfolioFile(settings: Settings(baseCurrency: "EUR"), securities: [stock], accounts: [main, savings], depots: [depot, kids])
+        let csv = "Date;Type;ISIN;Shares;Value;Securities Account\n2024-02-01;Buy;DE0001234567;2;200,00;Kids Depot\n2024-02-02;Buy;DE0001234567;1;100,00;\n"
+        let proposal = CSVImporter.propose(CSVDocument(data: Data(csv.utf8)), options: CSVImportOptions(defaultAccountID: main.id, defaultDepotID: depot.id), file: file)
+        #expect(proposal.rows.map { $0.transaction?.accountID } == [savings.id, main.id])
+        #expect(proposal.rows.map { $0.transaction?.depotID } == [kids.id, depot.id])
+    }
+}

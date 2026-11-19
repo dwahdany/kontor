@@ -51,7 +51,7 @@ private struct SecurityHeader: View {
         let previous = security.prices.count >= 2 ? security.prices[security.prices.count - 2] : nil
         HStack(alignment: .top, spacing: DS.Spacing.l) {
             VStack(alignment: .leading, spacing: DS.Spacing.xs) {
-                Text(security.name.isEmpty ? "Untitled Security" : security.name)
+                Text(security.displayName)
                     .font(.title2.weight(.semibold))
                     .lineLimit(2)
                     .textSelection(.enabled)
@@ -72,7 +72,7 @@ private struct SecurityHeader: View {
                     .fixedSize()
                     .help("Record a purchase — hold for sale, dividend or delivery")
                     Menu {
-                        SecurityContextMenu(ids: [security.id])
+                        SecurityContextMenu(store: store, ids: [security.id])
                     } label: {
                         Label("More", systemImage: "ellipsis")
                             .labelStyle(.iconOnly)
@@ -91,10 +91,11 @@ private struct SecurityHeader: View {
                     .lineLimit(1)
                     .fixedSize()
                 if let latest, let previous, previous.price.raw > 0 {
-                    let delta = Double(latest.price.raw - previous.price.raw) / Double(Scale.price)
+                    let delta = latest.price.raw - previous.price.raw
                     HStack(alignment: .firstTextBaseline, spacing: DS.Spacing.s) {
                         DeltaLabel(fraction: Double(latest.price.raw) / Double(previous.price.raw) - 1)
-                        GainText(Fmt.number(delta, decimals: abs(delta) < 0.1 ? 4 : 2, signed: true), trend: Trend(delta))
+                        GainText((delta > 0 ? "+" : "") + Fmt.price(Price(raw: delta), currency: security.currency, maxDecimals: 4),
+                                 trend: Trend(Double(delta)))
                     }
                     .font(.callout)
                     .fixedSize()
@@ -144,37 +145,54 @@ private struct DetailTabStrip: View {
     let counts: [DetailTab: Int]
 
     var body: some View {
-        ScrollView(.horizontal) {
-            HStack(spacing: DS.Spacing.l) {
-                ForEach(Array(DetailTab.allCases.enumerated()), id: \.element) { index, tab in
-                    Button {
-                        selection = tab
-                    } label: {
-                        HStack(spacing: DS.Spacing.xs) {
-                            Text(tab.title)
-                                .fontWeight(selection == tab ? .semibold : .regular)
-                                .foregroundStyle(selection == tab ? .primary : .secondary)
-                            if let count = counts[tab], count > 0 {
-                                Text(Fmt.integer(count)).font(.caption).numeric().foregroundStyle(.tertiary)
-                            }
-                        }
-                        .padding(.vertical, 7)
-                        .overlay(alignment: .bottom) {
-                            Rectangle()
-                                .fill(selection == tab ? Color.accentColor : .clear)
-                                .frame(height: 2)
-                        }
-                        .contentShape(Rectangle())
+        // Every tab stays reachable: first tighter spacing without the counts, and only when even
+        // that does not fit a scrolling strip whose trailing edge fades out to show there is more.
+        ViewThatFits(in: .horizontal) {
+            strip(spacing: DS.Spacing.l, showsCounts: true)
+            strip(spacing: DS.Spacing.m, showsCounts: false)
+            ScrollView(.horizontal) { strip(spacing: DS.Spacing.m, showsCounts: false) }
+                .scrollIndicators(.never)
+                .mask {
+                    HStack(spacing: 0) {
+                        Color.black
+                        LinearGradient(colors: [.black, .clear], startPoint: .leading, endPoint: .trailing).frame(width: 28)
                     }
-                    .buttonStyle(.plain)
-                    .keyboardShortcut(KeyEquivalent(Character("\(index + 1)")), modifiers: .control)
-                    .help("\(tab.title) (⌃\(index + 1))")
-                    .accessibilityAddTraits(selection == tab ? .isSelected : [])
                 }
-            }
-            .padding(.horizontal, inset)
         }
-        .scrollIndicators(.never)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func strip(spacing: CGFloat, showsCounts: Bool) -> some View {
+        HStack(spacing: spacing) {
+            ForEach(Array(DetailTab.allCases.enumerated()), id: \.element) { index, tab in
+                Button {
+                    selection = tab
+                } label: {
+                    HStack(spacing: DS.Spacing.xs) {
+                        Text(tab.title)
+                            .fontWeight(selection == tab ? .semibold : .regular)
+                            .foregroundStyle(selection == tab ? .primary : .secondary)
+                        if showsCounts, let count = counts[tab], count > 0 {
+                            Text(Fmt.integer(count)).font(.caption).numeric().foregroundStyle(.tertiary)
+                        }
+                    }
+                    .lineLimit(1)
+                    .fixedSize()
+                    .padding(.vertical, 7)
+                    .overlay(alignment: .bottom) {
+                        Rectangle()
+                            .fill(selection == tab ? Color.accentColor : .clear)
+                            .frame(height: 2)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .keyboardShortcut(KeyEquivalent(Character("\(index + 1)")), modifiers: .control)
+                .help("\(tab.title) (⌃\(index + 1))")
+                .accessibilityAddTraits(selection == tab ? .isSelected : [])
+            }
+        }
+        .padding(.horizontal, inset)
     }
 }
 
@@ -252,7 +270,7 @@ struct SecurityOverview: View {
                 } else {
                     TimeSeriesChart(chartModel?.series ?? [], format: chartModel?.format ?? .price(security.currency),
                                     baseline: chartModel?.isComparison == true ? .zero : .data,
-                                    title: "Price of \(security.name)")
+                                    title: "Price of \(security.displayName)")
                         .markers(chartModel?.markers ?? [])
                         .timeDomain(chartModel?.interval)
                         .pinnedHover(view.pinnedHover)
@@ -315,7 +333,7 @@ struct SecurityOverview: View {
                 }
             }
         } label: {
-            Label(view.compareID.flatMap { store.security($0)?.name }.map { "vs. \($0)" } ?? "Compare", systemImage: "arrow.left.arrow.right")
+            Label(view.compareID.flatMap { store.security($0)?.displayName }.map { "vs. \($0)" } ?? "Compare", systemImage: "arrow.left.arrow.right")
                 .lineLimit(1)
         }
         .frame(maxWidth: 220)
@@ -327,7 +345,7 @@ struct SecurityOverview: View {
         Button {
             view.compareID = other.id
         } label: {
-            if view.compareID == other.id { Label(other.name, systemImage: "checkmark") } else { Text(other.name) }
+            if view.compareID == other.id { Label(other.displayName, systemImage: "checkmark") } else { Text(other.displayName) }
         }
     }
 
@@ -379,12 +397,29 @@ struct SecurityOverview: View {
                 .foregroundStyle(.tertiary)
                 .help("Markers for purchases, sales and dividends are shown for up to \(SecurityChartModel.markerLimit) transactions.")
         }
+        if model.interval.end < store.today, let last = security.prices.lastDay {
+            Text(compact ? "ends \(Fmt.day(last, style: .medium))" : "Quotes end \(Fmt.day(last, style: .medium))")
+                .foregroundStyle(.tertiary)
+                .help("There are no newer quotes, so the chart periods end on the latest quote instead of today.")
+        }
         Spacer(minLength: 0)
     }
 
     // MARK: Key figures
 
     private let figureColumns = [GridItem(.adaptive(minimum: 128), spacing: DS.Spacing.l, alignment: .topLeading)]
+
+    /// Why figures show "–": a missing quote or exchange rate.
+    @ViewBuilder private func problemNote(_ model: SecurityFigures) -> some View {
+        if let note = model.problemNote {
+            Label(note, systemImage: "exclamationmark.triangle.fill")
+                .font(.callout)
+                .foregroundStyle(DS.Colors.warning)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+                .help("Figures that depend on it cannot be calculated and show “–”. Add quotes on the Prices tab; exchange rates come with the quote update.")
+        }
+    }
 
     private var positionCard: some View {
         Card("Position", symbol: "briefcase") {
@@ -393,17 +428,19 @@ struct SecurityOverview: View {
                     LazyVGrid(columns: figureColumns, alignment: .leading, spacing: DS.Spacing.m) {
                         Figure(label: "Shares") { Text(Fmt.shares(model.shares)).numeric() }
                         Figure(label: "Market Value", footnote: foreignValue(model)) {
-                            Text(model.isValued ? Fmt.money(model.value) : Fmt.missing).numeric()
+                            Text(Fmt.money(model.value)).numeric()
                         }
                         Figure(label: "Cost Basis", topic: .costBasis) { Text(Fmt.money(model.costBasis)).numeric() }
-                        Figure(label: "Purchase Price", topic: .purchasePrice) {
+                        Figure(label: "Purchase Price", topic: .purchasePrice,
+                               footnote: model.purchasePriceInSecurityCurrency.map { Fmt.price($0, currency: model.securityCurrency, maxDecimals: 4) }) {
                             Text(model.purchasePrice.map { Fmt.price($0, currency: model.currency) } ?? Fmt.missing).numeric()
                         }
                         Figure(label: "Unrealized Gain", topic: .unrealizedGains,
                                footnote: model.unrealizedGainFraction.map { Fmt.percent($0, signed: true) }) {
-                            if let gain = model.unrealizedGain, model.isValued { GainText(money: gain) } else { Text(Fmt.missing) }
+                            if let gain = model.unrealizedGain { GainText(money: gain) } else { Text(Fmt.missing) }
                         }
                     }
+                    problemNote(model)
                     if model.holdings.count > 1 {
                         Divider()
                         VStack(spacing: DS.Spacing.xs) {
@@ -422,7 +459,7 @@ struct SecurityOverview: View {
                     }
                 } else {
                     VStack(alignment: .leading, spacing: DS.Spacing.s) {
-                        Text(model.transactionCount == 0 ? "Not held — on your watchlist only." : "Not held at the moment.")
+                        Text(notHeldText(model))
                             .foregroundStyle(.secondary)
                         if !security.isRetired {
                             Button("Record a Purchase…") { store.presentNewTransaction(.buy, securityID: security.id) }
@@ -445,6 +482,12 @@ struct SecurityOverview: View {
         return Fmt.money(value)
     }
 
+    private func notHeldText(_ model: SecurityFigures) -> String {
+        if model.transactionCount == 0 { return "Not held — on your watchlist only." }
+        // The card is as of the end of the reporting period, which may lie in the past.
+        return model.interval.end < store.today ? "Not held on \(Fmt.day(model.interval.end, style: .medium))." : "Not held at the moment."
+    }
+
     private var performanceCard: some View {
         Card("Performance", symbol: "chart.line.uptrend.xyaxis") {
             if let model = figures.value {
@@ -452,21 +495,24 @@ struct SecurityOverview: View {
                     let money = { (minor: Int64) in Money(minor: minor, currency: model.currency) }
                     LazyVGrid(columns: figureColumns, alignment: .leading, spacing: DS.Spacing.m) {
                         Figure(label: "TTWROR", topic: .ttwror,
-                               footnote: model.ttwrorAnnualized.map { "\(Fmt.percent($0, signed: true)) p.a." }) {
+                               footnote: model.ttwrorAnnualized.map { "\(Fmt.percent($0, signed: true)) per year" }) {
                             if let value = model.ttwror { GainText(percent: value) } else { Text(Fmt.missing) }
                         }
                         Figure(label: "IRR", topic: .irr, footnote: "per year") {
                             if let value = model.irr { GainText(percent: value) } else { Text(Fmt.missing) }
                         }
-                        Figure(label: "Realized Gain", topic: .realizedGains) { GainText(money: money(model.realizedGain)) }
+                        Figure(label: "Realized Gain", topic: .realizedGains) {
+                            if model.isCostKnown, model.arePeriodAmountsKnown { GainText(money: money(model.realizedGain)) } else { Text(Fmt.missing) }
+                        }
                         Figure(label: "Dividends", topic: .grossVersusNet,
                                footnote: model.dividendCount == 0 ? "none" : "\(model.dividendCount) payment\(model.dividendCount == 1 ? "" : "s"), gross") {
-                            Text(Fmt.money(money(model.dividends))).numeric()
+                            Text(model.arePeriodAmountsKnown ? Fmt.money(money(model.dividends)) : Fmt.missing).numeric()
                         }
-                        Figure(label: "Fees & Taxes", footnote: "fees \(Fmt.money(money(model.fees)))") {
-                            Text(Fmt.money(money(model.fees + model.taxes))).numeric()
+                        Figure(label: "Fees & Taxes", footnote: model.arePeriodAmountsKnown ? "fees \(Fmt.money(money(model.fees)))" : nil) {
+                            Text(model.arePeriodAmountsKnown ? Fmt.money(money(model.fees + model.taxes)) : Fmt.missing).numeric()
                         }
                     }
+                    problemNote(model)
                 } else {
                     Text("No position or transactions in this period.")
                         .foregroundStyle(.secondary)

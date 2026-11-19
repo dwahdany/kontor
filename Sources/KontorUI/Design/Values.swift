@@ -77,13 +77,17 @@ public struct DeltaLabel: View {
     private let fraction: Double?
     private let amount: Money?
     private let trend: Trend
+    private let decimals: Int
 
     /// - Parameters:
     ///   - fraction: Relative change (0.0124 = 1.24 %).
     ///   - amount: Absolute change.
-    public init(fraction: Double? = nil, amount: Money? = nil) {
+    ///   - decimals: Decimals of the percentage (2 by default; use the precision of the figures
+    ///     shown next to it).
+    public init(fraction: Double? = nil, amount: Money? = nil, decimals: Int = 2) {
         self.fraction = fraction.flatMap { $0.isFinite ? $0 : nil }
         self.amount = amount
+        self.decimals = decimals
         if let amount, amount.minor != 0 {
             trend = Trend(minor: amount.minor)
         } else if let f = self.fraction {
@@ -100,7 +104,7 @@ public struct DeltaLabel: View {
                 .baselineOffset(1)
                 .accessibilityHidden(true)
             if let fraction {
-                Text(Fmt.percent(abs(fraction)))
+                Text(Fmt.percent(abs(fraction), decimals: decimals))
             }
             if let amount {
                 Text(Fmt.money(amount, signed: true))
@@ -115,7 +119,7 @@ public struct DeltaLabel: View {
 
     private var accessibilityText: String {
         var parts = [trend.accessibilityWord]
-        if let fraction { parts.append(Fmt.percent(abs(fraction))) }
+        if let fraction { parts.append(Fmt.percent(abs(fraction), decimals: decimals)) }
         if let amount { parts.append(Fmt.money(amount)) }
         return parts.joined(separator: " ")
     }
@@ -161,7 +165,9 @@ public struct StatTile: View {
                 HStack(alignment: .firstTextBaseline, spacing: DS.Spacing.xs) {
                     if let delta { delta }
                     if let footnote {
-                        Text(footnote).foregroundStyle(.tertiary)
+                        // Secondary, not tertiary: the footnote says which period or which basis
+                        // the figure has, and tertiary gray is below 2:1 contrast on white.
+                        Text(footnote).foregroundStyle(.secondary)
                     }
                 }
                 .font(.callout)

@@ -10,13 +10,15 @@ shares no code or design with them.
 - **Target:** macOS 27, Swift 6 (strict concurrency), SwiftPM only — no Xcode project, no third-party
   dependencies.
 - **Status:** all eleven screens, the editors, import/export and the app shell are implemented and
-  integrated. `swift build` is warning-free and `swift test` is green with every feature compiled in.
+  integrated. `swift build` is warning-free, `swift test` is green with every feature compiled in,
+  and `Scripts/selftest.sh` drives the app end to end without anyone clicking (see
+  [Self-test](#self-test)). What is still open is listed under [Known limitations](#known-limitations).
 
 ## What Kontor does
 
 | Screen | What you get |
 |---|---|
-| **Dashboard** (⌘1) | A widget grid you arrange yourself (⌘E): net worth, returns, performance and value charts, allocation, top movers, largest holdings, dividends, drawdown, volatility, cash, upcoming plans, recent transactions, watchlist, consistency check — 21 widget kinds, several dashboards per file, each widget optionally pinned to its own period and scope. |
+| **Dashboard** (⌘1) | A widget grid you arrange yourself (⌘E): net worth, returns, performance and value charts, allocation, top movers, largest holdings, dividends, drawdown, volatility, cash, upcoming plans, recent transactions, watchlist, consistency check — 21 widget kinds, several dashboards per file. A widget can be pinned to its own period and scope; Monthly Returns always shows whole years, statement widgets (net worth, holdings, cash) show the last day of the period, and Recent Transactions and Upcoming Plans always cover the whole portfolio. |
 | **Holdings** (⌘2) | The statement of assets for any day: sortable, groupable table (depot, currency, any taxonomy) with cost basis, unrealized gain, TTWROR, IRR, dividends and sparkline; treemap and concentration views; inspector with price chart and open tax lots; buy / sell / dividend straight from a row. |
 | **Performance** (⌘3) | TTWROR, IRR, gain, drawdown, volatility and Sharpe ratio for the period; return vs. benchmarks, value vs. invested capital, drawdown; drag across the chart to measure any stretch; a reconciling statement from initial to final value with the transactions behind every line; monthly heatmap, calendar years, rolling returns, risk figures, performance per security. |
 | **Allocation** (⌘4) | Taxonomies (asset classes, regions, sectors … or your own) with target weights; donut, sunburst, treemap and target-vs-actual; an editor with drag-and-drop assignment and weighted splits; rebalancing proposals that become reviewed, undoable transactions. |
@@ -26,7 +28,7 @@ shares no code or design with them.
 | **Transactions** (⌘8) | The complete ledger with filters, running balance per account and consistency issues; one editor for all 15 transaction kinds that calculates the missing figure, converts currencies and previews the resulting position. |
 | **Accounts** (⌘9) | Cash accounts and depots: balances, net worth by account, statements, positions per depot. |
 | **Plans** (⌘0) | Savings, deposit and withdrawal plans: due executions are proposed for review, never booked silently; per-plan performance; a what-if projection. |
-| **Import** | Portfolio Performance files (open as a new portfolio or merge), CSV wizard for broker statements, quotes and security lists with a live preview and remembered layouts; export as CSV, Portfolio Performance XML or Kontor JSON. Drop a file anywhere on a screen to import it. |
+| **Import** | Portfolio Performance files (become the content of a new portfolio, merge into an existing one, or open as a portfolio of their own), CSV wizard for broker statements, quotes and security lists with a live preview and remembered layouts; export as CSV, Portfolio Performance XML or Kontor JSON. Drop a file anywhere on a screen to import it. |
 
 Everywhere: one reporting period and one scope (whole portfolio, a depot, an account, a
 classification) per window; ⌘K command palette; inspector (⌥⌘I); every change is one undo step;
@@ -35,8 +37,15 @@ classification) per window; ⌘K command palette; inspector (⌥⌘I); every cha
 **Words Kontor uses.** A **depot** is a securities account (where shares and funds are held); a
 **cash account** holds money in one currency; a depot settles against its **reference account**.
 Ledger entries are always called **transactions**. **TTWROR** is the time-weighted return, **IRR**
-the money-weighted return per year (the Dashboard spells both out). These terms are used
-consistently in menus, tables and help texts.
+the money-weighted return. Both are shown **per year** only when there is more than a year to
+measure — a portfolio that is four weeks old shows the return of those four weeks, whatever period
+is selected, and the Sharpe ratio and volatility wait until there is enough history.
+
+**How numbers differ from Portfolio Performance.** Imported ledgers reproduce PP's balances, share
+counts and trades. Two conventions differ on purpose: the cost basis includes purchase fees but
+**not** purchase taxes (PP includes both), and exchange rates are not part of PP files — Kontor
+downloads them right after an import, and until then amounts in foreign currencies count as zero
+(the import sheet says so).
 
 Developers: read [The feature-module contract](#the-feature-module-contract) and
 [`Sources/KontorUI/API.md`](Sources/KontorUI/API.md), then `Core/Engine/API.md` for the calculations.
@@ -47,6 +56,7 @@ Developers: read [The feature-module contract](#the-feature-module-contract) and
 swift build                     # everything: all eleven features (what CI and releases build)
 swift test                      # KontorUI tests + every feature's tests
 (cd Core/Engine && swift test)  # each Core package has its own suite: Model Engine MarketData Interchange SampleData
+Scripts/selftest.sh             # end-to-end self-test of the built app, invisible (see "Self-test")
 
 Scripts/bundle.sh               # → dist/Kontor.app (debug): hardened runtime, NOT sandboxed
 Scripts/bundle.sh release       # → dist/Kontor.app (release): hardened runtime + App Sandbox
@@ -211,6 +221,73 @@ automated or agent runs** — it takes the focus of whoever is using the Mac.
 asynchronous work in `await store.whileBusy { … }`; make the screen reflect `store.route.focus`,
 `store.period`, `store.scope`, `store.today` and `store.launchState`.
 
+## Self-test
+
+Nobody can click through the app in an automated session (UI scripting would take the focus of
+whoever is using the Mac). `Scripts/selftest.sh` is the next best thing: it drives the **real app
+objects** end to end, invisibly, and exits with 0 or 1.
+
+```sh
+Scripts/selftest.sh                      # debug bundle: everything, about 7 minutes
+Scripts/selftest.sh --quick              # without the stress portfolio and the deep tours, about 2 minutes
+Scripts/selftest.sh release              # the sandboxed release bundle
+Scripts/selftest.sh --verbose            # timing per step, other stderr output at the end
+Scripts/selftest.sh --only tours         # one phase: scenario | documents | import | tours
+Scripts/selftest.sh --no-document | --document-only
+```
+
+It runs two programs:
+
+**1. `Kontor --selftest`** (in-process, windows below the desktop picture like the screenshot mode).
+One line per step, `ok` or `FAIL` with the reason:
+
+- **Scenario** — a starter document; accounts, a depot and securities through the editors' own save
+  code; all 15 transaction kinds typed into the real `TransactionDraft` (including a foreign-currency
+  purchase and a cross-currency transfer), validated and saved like the sheet does; cash balances and
+  positions per depot checked against the engine; a savings plan and its due transactions; a quote
+  update against a stub HTTP server through the real providers and parsers; a rebalancing proposal
+  turned into transactions; then **every step undone and redone with the file compared at each step**.
+- **Documents** — the document's write and read paths (saved, reopened, compared, byte-identical),
+  the snapshot taken on a background thread while the main thread waits, JSON that is not a
+  portfolio, unusable exchange rates, undo depth.
+- **Import and export** — Portfolio Performance XML into an empty portfolio and merged into one with
+  data (twice), CSV through the wizard with its automatic mapping (twice: the second import must
+  find only duplicates), the CSV round trip, and — in debug — every Portfolio Performance fixture
+  of the repository.
+- **Hosted UI** — the real `MainWindowView` for the starter, demo, scenario and stress portfolios:
+  every screen in every documented sub-view (`--state` variants), six periods and four scopes per
+  screen, deep links with the inspector open, back and forward, every sheet request (all transaction
+  kinds, all editors, import, export, the feature-private sheets), the palette, quote report, toast
+  and confirmation layers, and an edit plus undo while each screen is mounted. A view that reads a
+  missing environment object, throws during layout or never settles fails its step.
+- **Runtime warnings** — everything the process wrote to standard error and to the unified log is
+  searched for "Modifying state during view update", "Publishing changes from within view updates",
+  AttributeGraph cycles, `NSTableView` re-entrancy, constraint conflicts, "tried to update multiple
+  times per frame", layout recursion and logged exceptions; each hit is attributed to the step that
+  was running. Two messages are expected and ignored: SwiftUI's note that scene storage is inert in
+  a window that is not part of an `App` scene, and AppKit's one-time layout-recursion note when
+  SwiftUI resizes the transaction editor's sheet (no frame of the app is on that stack).
+
+Options of the binary: `--verbose`, `--quick`, `--today <day>`, `--fixtures <dir>` (import every
+`.xml` in it), `--only <phase>`, and for the tours `--portfolio starter,demo,scenario,stress` and
+`--parts screens,periods,links,sheets,layers,edits`.
+
+**2. `Kontor --document-selftest <dir|auto>`** (a normal launch, started hidden and in the
+background with `open -n -g -j`). Only a running document app has AppKit's `NSDocument` machinery,
+so this part opens a file through the document controller and then: edit → document is edited →
+**Save** → compare the file → **autosave** → undo/redo through the document's undo manager → a
+change that bypasses undo → **Revert** after the file changed on disk → the window is wired to the
+new store (undo manager, change tracking, services) → edit → Save → compare. A watchdog on a
+background thread reports a blocked main thread as a failure instead of hanging.
+
+To make a feature testable this way, expose what its sheet does as a function instead of a private
+method of the view (`TransactionEditor.commit`, `AccountEditor.commit`, …) and add a small
+`public enum <Feature>SelfTest` with hooks the shell calls (`Sources/Features/*/*SelfTest.swift`).
+
+What the self-test cannot see: anything that needs a pointer or a key press (drag and drop, focus
+order, context menus, shortcuts), open and save panels, and how things look — that is what the
+screenshots are for.
+
 ## Repository layout
 
 ```
@@ -225,11 +302,12 @@ Sources/KontorUI              shared UI kit: store + analysis cache, routing, sh
   Charts/                     the shared chart kit (time series, bars, donut, sunburst, treemap, heatmap, …)
 Sources/Features/<Name>       one library target per screen: Feature<Name>
 Sources/Kontor                executable: app scenes, menus, sidebar, toolbar, palette, welcome,
-                              settings, document type, consistency sheet, quote updates, screenshot mode
+                              settings, document type, consistency sheet, quote updates, screenshot
+                              mode, self-test
 Tests/KontorUITests           Swift Testing suite for KontorUI (store, analysis cache, formatting, …)
 Tests/Feature<Name>Tests      one test target per feature (owned by that feature)
 Resources/                    Info.plist, entitlements (sandboxed + development)
-Scripts/                      bundle.sh, shot.sh, run.sh, make-icon.swift
+Scripts/                      bundle.sh, shot.sh, selftest.sh, run.sh, make-icon.swift
 ```
 
 Dependency rules (declared in `Package.swift`):
@@ -408,9 +486,9 @@ reveal it (`store.route.securityID`, `.accountID`, `.depotID`, `.transactionID`,
 | `.newSecurity(SecurityPrefill)`, `.editSecurity(id)` | FeatureSecurities |
 | `.newAccount(AccountPrefill)`, `.editAccount(id)`, `.newDepot(DepotPrefill)`, `.editDepot(id)` | FeatureAccounts |
 | `.newPlan(PlanPrefill)`, `.editPlan(id)` | FeaturePlans |
-| `.importFile(URL?)`, `.export(ExportRequest)`, `.custom("import.export")` | FeatureImport (a build without it falls back to the shell's JSON export) |
+| `.importFile(URL?)`, `.export(ExportRequest)`, `.custom("import.export")`, `.custom("import.file")` (payload `path`, `target`) | FeatureImport (a build without it falls back to the shell's JSON export) |
 | `.portfolioSettings`, `.consistencyReport` | the shell |
-| `.custom(id:payload:)` | whoever claims the id — in use: `dashboard.gallery`, `dashboard.widget`, `allocation.split`, `allocation.rebalance-review`, `securities.split`, `transactions.change-date`, `plans.generate`, `import.export` |
+| `.custom(id:payload:)` | whoever claims the id — in use: `dashboard.gallery`, `dashboard.widget`, `allocation.split`, `allocation.rebalance-review`, `securities.split`, `transactions.change-date`, `plans.generate`, `import.export`, `import.file` |
 
 ### 4. Contribute to the shell (in `<Name>Feature.swift`)
 
@@ -463,8 +541,9 @@ forms, the table guideline for lists, `HelpButton(.ttwror)` next to every financ
 [`Sources/KontorUI/API.md`](Sources/KontorUI/API.md).
 
 The shell's toolbar already has back/forward, the period picker, Update Quotes, "+", search and the
-inspector toggle. Your `.toolbar { }` items appear next to them — add `ScopePicker()` there if your
-screen is scope-aware.
+inspector toggle. Your `.toolbar { }` items appear next to them — add `ScopePicker(store: store)`
+there if your screen is scope-aware. Toolbar items, table cells and selection context menus are
+hosted outside your view tree: hand them the store instead of reading it from the environment.
 
 ### Do / Don't
 
@@ -483,7 +562,9 @@ screen is scope-aware.
 | `Scripts/shot.sh … --today 2026-06-30`, then look at the PNG (light + dark, `--stress`) | `Scripts/run.sh`, `open`, `--onscreen`, `bundle.sh --verify`, `screencapture`, UI scripting |
 | Network only via `store.updateQuotes` (shell-installed updater; absent in screenshot mode and tests) | Own `URLSession` calls from a screen |
 | `@State` as the source of truth, mirrored into `@SceneStorage("<feature>.key")` for state that should survive relaunch (scene storage is inert in the screenshot window) | Unprefixed scene-storage / `@AppStorage` keys; seeding `@SceneStorage` from `launchState` |
-| Create a `Table` only once its rows exist; pass the store into cells | `@Environment(PortfolioStore.self)` inside table cells or selection context menus; mounting an empty `Table` and filling it later (AppKit re-entrancy warning) |
+| Create a `Table` only once its rows exist; pass the store into cells, toolbar items and selection context menus; give a `Table` a new `.id` when a result adds many rows at once (a cleared filter) | `@Environment(PortfolioStore.self)` inside table cells, toolbar items or selection context menus; mounting an empty `Table` and filling it later, or letting a live `Table` take hundreds of new rows (AppKit re-entrancy warning) |
+| `Table` or a `LazyVStack` in a `ScrollView` for collections that can exceed about 100 rows | `List` for long collections (on macOS 27 it logs an `NSTableView` re-entrancy warning when first filled) |
+| Expose what a sheet's Save does as a function and add a `<Feature>SelfTest` hook, so `Scripts/selftest.sh` can drive it | Logic that exists only inside a private method of a view |
 
 ## App shell reference
 
@@ -492,31 +573,57 @@ screen is scope-aware.
   `app.kontor.portfolio` (conforms to `public.json`), bundle id `app.kontor.Kontor`.
   `.xml`/`.portfolio`/`.csv` files opened with Kontor are routed to the importer
   (`store.present(.importFile(url))`) instead of being opened as documents.
+  - *Saving never waits for the main thread.* AppKit takes the snapshot on a background thread while
+    the main thread is blocked; the store mirrors every change into a lock-protected `FileSnapshot`
+    that `KontorDocument.snapshot` reads.
+  - *The window follows the document instance.* Revert, restoring a version and an external change
+    hand the window a new document and store; the content is keyed by the document, so undo
+    manager, change tracking, services and state restoration are wired again.
+  - *Reading is strict, writing is forgiving* (`DocumentIO` in KontorUI): JSON without a format
+    version or any portfolio collection, a `null` or misspelt collection and a format version below
+    1 are refused with a message instead of opening as an empty portfolio. Exchange rates that are
+    zero, negative or not a number are dropped on open (a toast says so) and can never make a
+    document unsaveable. Unknown top-level keys are not preserved across a save.
+  - *Undo depth is bounded:* 100 steps, fewer for very large files (each step keeps a copy of the
+    collections it changed — about 12 MB per transaction edit with 50,000 transactions; such a file
+    keeps 15 steps).
 - **Welcome window** at launch when no document is restored: New Portfolio (name + base currency →
   `SampleData.starterPortfolio`), Open…, Open Demo Portfolio (`SampleData.demoPortfolio`), Import
-  from Portfolio Performance…, recents.
+  from Portfolio Performance…, recents. An import into the untouched starter document makes the file
+  its content ("Import into This Portfolio"); "Open as New Portfolio" closes the untouched host
+  window.
 - **Main window:** sidebar (Overview · Analysis · Data · Tools), feature screen, optional inspector,
   toolbar (back/forward, period, update quotes, "+", search, inspector + the screen's own items),
   ⌘K command palette, toasts. Route, period, scope and inspector state are restored per window.
+  While a sheet is open, the menu commands that navigate, open the palette or open further sheets
+  are disabled.
 - **Quote updates:** toolbar button / ⌘R / Portfolio ▸ Update Quotes, and automatically when a
   portfolio opens (Settings ▸ Market Data; optional 30-minute refresh). Progress shows in the toolbar
-  button ("Updating quotes 3/14", click to cancel); everything downloaded is applied as **one
-  undoable step** ("Undo Update Quotes"); failures are listed per security in a popover with "Show"
-  links and "Retry Failed". Securities without a feed, with a manual feed and retired ones are never
-  requested. One `QuoteUpdater` (KontorMarketData) is shared by all windows.
+  button ("Updating quotes 3/14", click to cancel); failures are listed per security in a popover
+  with "Show" links and "Retry Failed". An update **you** start is **one undoable step** ("Undo
+  Update Quotes"); an automatic one marks the document as edited but never becomes an undo step and
+  never clears the redo stack. An update that finds nothing new leaves the document untouched.
+  Securities without a feed, with a manual feed and retired ones are never requested; a portfolio
+  with more than one currency fetches exchange rates even without any quote feed (also right after
+  an import). Closing a window cancels its download. One `QuoteUpdater` (KontorMarketData) is shared
+  by all windows.
 - **Check Consistency** (⇧⌘K): the engine's `ConsistencyChecker` findings grouped by severity; "Show"
   navigates to the transaction, security, account or depot concerned.
 - **Shortcuts:** ⌘1…⌘9/⌘0 screens · ⌘K palette · ⌘[ ⌘] history · ⌥⌘I inspector · ⌥⌘1…5 period ·
   ⇧⌘N transaction · ⌥⌘N security · ⌃⌘N account · ⌘R update quotes · ⇧⌘K check consistency ·
   ⌥⌘, portfolio settings · ⇧⌘I import · ⇧⌘E export · ⌘, app settings.
-  Screen-level conventions (audited to be free of conflicts with the menus and the system):
-  ⌃1…⌃6 switch a screen's sections (Performance, Earnings, Trades, Securities) · ⌘F quick filter ·
-  ⌘E edit (dashboard layout, selected security) · Return opens/edits · Delete deletes (undoable) ·
-  ⌘C copies rows as TSV · ⌘D duplicate (Transactions) · ⌃⌘B/⌃⌘S/⌃⌘D/⌃⌘T buy, sell, dividend, show
-  transactions for the selected holding · ⌃⌘D/⌃⌘I/⌃⌘E record dividend, interest, export (Earnings) ·
+  Screen-level conventions: ⌃1…⌃6 switch a screen's sections (Performance, Earnings, Trades,
+  Securities) · ⌘F quick filter · ⌘E edit (dashboard layout, selected security) · Return opens/edits ·
+  Delete deletes (undoable) · ⌘C copies rows as TSV · ⌘D duplicate (Transactions) ·
+  ⌃⌘B / ⇧⌃⌘S / ⌃⌘D / ⌃⌘T buy, sell, dividend, show transactions for the selected holding (⌃⌘S alone
+  is the system's sidebar toggle) · ⌃⌘D/⌃⌘I/⌃⌘E record dividend, interest, export (Earnings) ·
   ⌘T statement for today (Holdings) · ⇧⌘G generate due plan transactions · ⌘↑ back to the accounts
-  overview · ⌃⌘↑↓←→ move/indent classifications · ⌘↩ save, ⇧⌘↩ save & new, ⌃-letter picks the kind
-  (transaction editor).
+  overview · ⌃⌘↑↓←→ move/indent classifications · ⌘↩ save, ⇧⌘↩ save & new, ⌃⌥K opens the kind
+  list and ⌃⌥-letter picks a kind (transaction editor; plain ⌃-letter belongs to text editing).
+  Two of these collide with system shortcuts when those are enabled: ⌃⌘D (Look Up) and ⌃1…⌃6
+  (Mission Control "Switch to Desktop n").
+- **Appearance** (Settings ▸ General) is applied by the app delegate for the whole process, with or
+  without the welcome window.
 - **File drop:** a `.kontor` file dropped on a screen opens as a document; `.xml`, `.portfolio` and
   `.csv` files go to the importer.
 - **Settings:** app-level preferences (`AppPreferences.Key`, `@AppStorage`) in the Settings window;
@@ -524,5 +631,40 @@ screen is scope-aware.
   Portfolio ▸ Portfolio Settings…, stored in the file.
 - **Where things are wired** (all in `Sources/Kontor`): `FeatureCatalog.makeRegistry()` — feature
   modules by `#if canImport`; `ShellContext.installServices(on:network:)` — import panel and the
-  shared `QuoteUpdater`; `SheetHost` — feature sheets, shell sheets, placeholder; `ScreenshotRunner`
-  — the headless mode.
+  shared `QuoteUpdater`; `KontorApp.swift` (`DocumentWindow` / `DocumentContent`) — store ↔ window
+  wiring; `SheetHost` — feature sheets, shell sheets, placeholder; `ScreenshotRunner` — the headless
+  screenshot mode; `SelfTest` / `DocumentSelfTest` — the self-test.
+
+## Known limitations
+
+Verified by the self-test, the test suites and screenshots; **never driven by hand** — nothing that
+needs a pointer, a key press or a system panel has been exercised.
+
+- **Not exercised:** drag and drop, keyboard shortcuts and focus order, context menus, open/save
+  panels (sandboxed or not), Finder double-click, Versions browser, VoiceOver and Full Keyboard
+  Access. Heatmap, treemap, waterfall, donut and sunburst selection is pointer-only.
+- **Documents:** unknown top-level keys of a file are dropped on the next save. Undo steps are whole
+  snapshots (bounded in number, not in bytes). Undo and Redo stay enabled while an editor sheet is
+  open. Reverting in the very instant a file is replaced on disk has been seen to fail with "not in
+  the correct format"; a moment later it works.
+- **Numbers:** the cost basis excludes purchase taxes (Portfolio Performance includes them). A
+  security's annualized TTWROR is annualized over the whole period even if it was held for part of
+  it. Very short trades show an astronomically large annualized return. A classification scope and
+  the same group in a taxonomy can differ by cents (two apportioning rules). Same-day entries
+  without a time of day are ordered by id, except where that would produce a short position.
+- **Import:** no PDF import. Quote CSV files hold one security. Exchange rates are not read from
+  Portfolio Performance files (they are downloaded afterwards). Portfolio Performance attributes of
+  accounts, depots and plans, `latestFeed` settings, a plan's "generate automatically" switch and
+  client properties are dropped without a note. The CSV transactions export has no column for a
+  security's currency or a dividend's ex-date. The import report cannot be reopened after importing.
+- **Plans:** pausing a plan overwrites its end date (the model has no pause state). The stress
+  sample has no plans.
+- **Screens:** names in dense tables are truncated in the middle (full name in the tooltip); at
+  900 pt width the Securities detail header and the Transactions table are cut off rather than
+  reflowed; a total row scrolls with its table. A flat chart series gets a wide default axis. The
+  Dashboard does not flag outdated quotes beyond the sidebar footer. There is no place to enter an
+  exchange rate by hand.
+- **Wording:** a pass over vocabulary (one gain figure has several names across screens, portfolio
+  share is called Weight, Share and Actual) and a shared section-tab, filter-field and inspector
+  layout is still to do. Strings are not localisable yet (English only; numbers and dates follow
+  the region).

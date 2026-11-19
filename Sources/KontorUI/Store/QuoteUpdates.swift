@@ -74,8 +74,17 @@ extension PortfolioStore {
         return file.securities.contains { !$0.isRetired && quoteUpdater.registry.isAutomatic($0.feed) }
     }
 
-    /// Downloads new quotes and exchange rates and applies them as **one undoable step**
-    /// ("Undo Update Quotes"). Progress is published as the store's background activity; the outcome
+    /// True if the file uses more than one currency and an updater is installed: exchange rates
+    /// are worth downloading even when no security has an automatic quote feed (a freshly imported
+    /// multi-currency portfolio would otherwise value everything foreign at zero).
+    public var needsExchangeRates: Bool {
+        quoteUpdater != nil && file.currencies.count > 1
+    }
+
+    /// Downloads new quotes and exchange rates. A user-initiated (`interactive`) update is applied
+    /// as **one undoable step** ("Undo Update Quotes"); an automatic one marks the document as
+    /// edited without touching the undo and redo stacks. A run that finds nothing new leaves the
+    /// document untouched. Progress is published as the store's background activity; the outcome
     /// ends up in ``lastQuoteUpdate``.
     ///
     /// Does nothing while an update is already running. Securities without a feed, with a `manual`
@@ -138,9 +147,15 @@ extension PortfolioStore {
     }
 
     private func finishQuoteUpdate(_ result: UpdateResult, targetCount: Int, names: [UUID: String], interactive: Bool) -> QuoteUpdateReport {
-        var summary = ApplySummary()
-        mutate("Update Quotes") { file in
-            summary = result.apply(to: &file)
+        // Applied to a copy first: a run that brought nothing new only stamps "last checked" times,
+        // which must neither mark the document as edited nor become an undo step.
+        var updated = file
+        let summary = result.apply(to: &updated)
+        let broughtData = summary.prices > 0 || summary.rates > 0 || summary.derivedRates > 0 || summary.events > 0
+        if broughtData {
+            // The user's own update is one undo step. An automatic one must not take over ⌘Z or wipe
+            // the redo stack behind the user's back: it only marks the document as edited.
+            mutate("Update Quotes", undoable: interactive) { $0 = updated }
         }
         var failures = result.failures.map { target, message -> QuoteUpdateReport.Failure in
             switch target {

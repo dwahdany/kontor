@@ -17,6 +17,23 @@ struct ComparisonInfo: Sendable, Identifiable, Hashable {
     var total: Double
 }
 
+/// The inputs of the overview besides scope and period.
+struct OverviewQuery: Hashable, Sendable {
+    /// Ad-hoc comparison securities of the window.
+    var compare: [UUID]
+    /// Name of the scope's own series in the chart ("Portfolio", "Kids Depot").
+    var scopeName: String
+}
+
+enum ComparisonRules {
+    /// Whether the engine can draw `securityID` as a comparison line: it needs a price (a quote, or
+    /// one derived from its transactions) and an exchange rate into the reporting currency.
+    static func canDraw(_ securityID: UUID, ledger: Ledger, on day: Day) -> Bool {
+        guard let security = ledger.security(securityID), ledger.price(of: securityID, on: day) != nil else { return false }
+        return ledger.converter.canConvert(from: security.currency, to: ledger.reportingCurrency)
+    }
+}
+
 /// Header figures and the series of the main chart for the window's scope and period.
 struct OverviewModel: Sendable {
     /// The palette has eight slots and is never cycled: the portfolio plus seven comparisons.
@@ -44,11 +61,26 @@ struct OverviewModel: Sendable {
     var valueSeries: [TimeSeries]
     var drawdownSeries: [TimeSeries]
     var comparisons: [ComparisonInfo]
+    /// Ad-hoc comparisons that were asked for but cannot be drawn (no price, no exchange rate).
+    var undrawnComparisons: [UUID]
+    /// What the engine had to leave out or estimate for these figures.
+    var warnings: [DataWarning]
+
+    /// Days the figures really cover: the period, but not from before the first transaction. A
+    /// portfolio that is four weeks old has four weeks of history whatever period is selected.
+    var measuredDays: Int
 
     /// Annualizing less than a year extrapolates; the screen then shows the plain return only.
-    var showsAnnualized: Bool { interval.dayCount > 366 }
+    var showsAnnualized: Bool { ReturnHorizon.isAnnualized(days: measuredDays) }
+    /// The IRR as shown: per year for long periods, else the money-weighted return of the period.
+    var moneyWeightedReturn: Double? { ReturnHorizon.moneyWeighted(irr: irr, days: measuredDays) }
+    /// The Sharpe ratio divides an annualized return; for less than a year that is an extrapolation.
+    var showsSharpeRatio: Bool { ReturnHorizon.hasFullYear(days: measuredDays) }
+    var shownSharpeRatio: Double? { showsSharpeRatio ? sharpeRatio : nil }
+    /// Volatility from a handful of days says nothing.
+    var showsVolatility: Bool { ReturnHorizon.hasEnoughHistory(days: measuredDays) }
 
-    init(_ analysis: Analysis, compare: [UUID]) {
+    init(_ analysis: Analysis, compare: [UUID], scopeName: String = "Portfolio") {
         let ledger = analysis.ledger
         let valuation = analysis.valuation
         let returns = analysis.returns
@@ -57,6 +89,7 @@ struct OverviewModel: Sendable {
         let start = analysis.interval.start
         currency = analysis.currency
         interval = analysis.interval
+        measuredDays = analysis.measuredInterval.dayCount
         hasActivity = valuation.values.contains { $0 != 0 } || valuation.totalInflows != 0 || valuation.totalOutflows != 0
 
         ttwror = returns.total
@@ -70,7 +103,6 @@ struct OverviewModel: Sendable {
         sharpeRatio = risk.sharpeRatio
         riskFreeRate = ledger.settings.riskFreeRate
 
-        let scopeName = "Portfolio"
         var returnSeries = [TimeSeries(id: Self.portfolioSeriesID, scopeName, start: start, values: returns.cumulative, color: ChartColors.series(0))]
         var drawdownSeries = [TimeSeries(id: Self.portfolioSeriesID, scopeName, start: start, values: analysis.drawdowns.map { -$0 }, style: .area)]
         valueSeries = [
@@ -81,12 +113,24 @@ struct OverviewModel: Sendable {
         let benchmarks = ledger.settings.benchmarkSecurityIDs
         var seen = Set<UUID>()
         var infos: [ComparisonInfo] = []
-        for id in benchmarks + compare where infos.count < Self.comparisonLimit {
-            guard seen.insert(id).inserted, let security = ledger.security(id),
-                  let series = analysis.benchmark(securityID: id) else { continue }
+        var undrawn: [UUID] = []
+        // Palette slot 0 is the scope itself; every drawn comparison takes the next free slot.
+        var nextSlot = 1
+        for id in benchmarks + compare {
+            guard seen.insert(id).inserted, let security = ledger.security(id) else { continue }
             let isBenchmark = benchmarks.contains(id)
-            // The first benchmark takes the neutral comparison color; everything else a palette slot.
-            let color = infos.isEmpty && isBenchmark ? ChartColors.comparison : ChartColors.series(infos.count + (benchmarks.isEmpty ? 1 : 0))
+            guard infos.count < Self.comparisonLimit, let series = analysis.benchmark(securityID: id) else {
+                if !isBenchmark { undrawn.append(id) }
+                continue
+            }
+            // A benchmark drawn first takes the neutral comparison color; everything else a palette slot.
+            let color: Color
+            if infos.isEmpty, isBenchmark {
+                color = ChartColors.comparison
+            } else {
+                color = ChartColors.series(nextSlot)
+                nextSlot += 1
+            }
             infos.append(ComparisonInfo(id: id, name: security.name, isBenchmark: isBenchmark, total: series.total))
             returnSeries.append(TimeSeries(id: id.uuidString, security.name, start: start, values: series.cumulative, color: color, dashed: isBenchmark))
             drawdownSeries.append(TimeSeries(id: id.uuidString, security.name, start: start, values: series.drawdowns().map { -$0 },
@@ -95,6 +139,9 @@ struct OverviewModel: Sendable {
         self.returnSeries = returnSeries
         self.drawdownSeries = drawdownSeries
         comparisons = infos
+        undrawnComparisons = undrawn
+        // Last: the engine collects diagnostics while it computes the figures above.
+        warnings = DataWarning.warnings(for: analysis)
     }
 
     func day(at fraction: Double) -> Day {
@@ -111,8 +158,15 @@ struct RangeFigures: Sendable, Equatable {
     var absolutePerformance: Int64
     var maxDrawdown: Double?
 
+    var measuredDays: Int
+
+    var isAnnualized: Bool { ReturnHorizon.isAnnualized(days: measuredDays) }
+    /// Per year for ranges longer than a year, else the money-weighted return of the range.
+    var moneyWeightedReturn: Double? { ReturnHorizon.moneyWeighted(irr: irr, days: measuredDays) }
+
     init(_ analysis: Analysis) {
         interval = analysis.interval
+        measuredDays = analysis.measuredInterval.dayCount
         currency = analysis.currency
         ttwror = analysis.ttwror
         irr = analysis.irr
@@ -130,13 +184,17 @@ struct PeriodFigures: Sendable, Equatable {
     var currency: CurrencyCode
     var dayCount: Int
 
+    var isAnnualized: Bool { ReturnHorizon.isAnnualized(days: dayCount) }
+    /// Per year for periods longer than a year, else the money-weighted return of the period.
+    var moneyWeightedReturn: Double? { ReturnHorizon.moneyWeighted(irr: irr, days: dayCount) }
+
     init(_ analysis: Analysis) {
         ttwror = analysis.ttwror
         ttwrorAnnualized = analysis.ttwrorAnnualized
         irr = analysis.irr
         absolutePerformance = analysis.breakdown.absolutePerformance
         currency = analysis.currency
-        dayCount = analysis.interval.dayCount
+        dayCount = analysis.measuredInterval.dayCount
     }
 }
 
@@ -207,6 +265,14 @@ enum StatementLine: String, Sendable, Hashable, CaseIterable {
         }
     }
 
+    /// Lines whose amount is made of individual transactions (the others are valuations or sums).
+    var listsTransactions: Bool {
+        switch self {
+        case .initialValue, .finalValue, .netFlows, .performance, .unrealizedGains, .cashCurrencyGains, .roundingResidue: false
+        default: true
+        }
+    }
+
     static let flowLines: [StatementLine] = [.deposits, .deliveriesIn, .transfersIn, .withdrawals, .deliveriesOut, .transfersOut]
     static let componentLines: [StatementLine] = [
         .realizedGains, .unrealizedGains, .dividends, .interest, .fees, .taxes, .cashCurrencyGains, .roundingResidue,
@@ -224,9 +290,13 @@ struct ContributionRow: Sendable, Identifiable, Hashable {
     /// The part of the transaction that belongs to the line, signed like the line, in the
     /// transaction's own currency.
     var amount: Money
+    /// `amount` in the reporting currency at the transaction day's rate; nil when there is no rate
+    /// (the engine then leaves the amount out of the line).
+    var value: Int64?
 
     var kindTitle: String { kind.title }
-    var amountMinor: Int64 { amount.minor }
+    /// Sort key of the amount column: comparable across currencies.
+    var sortValue: Int64 { value ?? 0 }
 }
 
 /// A security's share of a gain line (engine figures, reporting currency).
@@ -301,6 +371,8 @@ struct LineDetail: Sendable {
     var isWeighted: Bool
     /// True when every listed amount is in the reporting currency, so the list adds up to the line.
     var isSingleCurrency: Bool
+    /// Listed amounts without an exchange rate — shown, but not part of the line.
+    var unconvertedCount: Int
 
     init(_ analysis: Analysis, query: LineDetailQuery) {
         let ledger = analysis.ledger
@@ -321,18 +393,26 @@ struct LineDetail: Sendable {
             securities = []
         }
 
-        let filter = ScopeFilter(analysis.scope)
-        isWeighted = filter.isWeighted
         var rows: [ContributionRow] = []
-        let period = analysis.interval
-        for t in ledger.transactions where period.contains(t.date) {
-            let minor = Self.contribution(of: t, to: line, filter: filter)
-            guard minor != 0 else { continue }
-            let subject = t.securityID.flatMap { ledger.security($0)?.name } ?? t.accountID.flatMap { ledger.account($0)?.name } ?? ""
-            rows.append(ContributionRow(id: t.id, date: t.date, kind: t.kind, subject: subject, note: t.note,
-                                        amount: Money(minor: minor, currency: t.amount.currency)))
+        isWeighted = ScopeFilter.isWeighted(analysis.scope)
+        // Only lines made of transactions need the replay that attributes them.
+        if line.listsTransactions {
+            let attribution = PositionAttribution(ledger)
+            let filter = ScopeFilter(analysis.scope, attribution: attribution)
+            let period = analysis.interval
+            let converter = ledger.converter
+            for t in ledger.transactions where period.contains(t.date) && !attribution.skipped.contains(t.id) {
+                let minor = Self.contribution(of: t, to: line, filter: filter)
+                guard minor != 0 else { continue }
+                let subject = t.securityID.flatMap { ledger.security($0)?.name } ?? t.accountID.flatMap { ledger.account($0)?.name } ?? ""
+                let currency = t.amount.currency
+                let value = currency == analysis.currency ? minor : converter.convert(minor: minor, from: currency, to: analysis.currency, on: t.date)
+                rows.append(ContributionRow(id: t.id, date: t.date, kind: t.kind, subject: subject, note: t.note,
+                                            amount: Money(minor: minor, currency: currency), value: value))
+            }
         }
         isSingleCurrency = rows.allSatisfy { $0.amount.currency == analysis.currency }
+        unconvertedCount = rows.count { $0.value == nil }
         transactions = rows.sorted(using: query.sortOrder)
     }
 
@@ -342,7 +422,7 @@ struct LineDetail: Sendable {
     static func contribution(of t: KontorModel.Transaction, to line: StatementLine, filter: ScopeFilter) -> Int64 {
         let position = filter.includesPosition(t), account = filter.includesAccount(t)
         // A fee or tax booking follows its security when it names one, else its account.
-        let standalone = t.securityID != nil ? position : account
+        let standalone = filter.hasSecurity(t) ? position : account
         switch line {
         case .deposits: return t.kind == .deposit && account ? t.amount.minor : 0
         case .withdrawals: return t.kind == .withdrawal && account ? -t.amount.minor : 0
@@ -388,8 +468,8 @@ struct LineDetail: Sendable {
         switch t.kind {
         case .buy: return position - account
         case .sell, .dividend: return account - position
-        case .fee, .tax: return t.securityID != nil ? position - account : 0
-        case .feeRefund, .taxRefund: return t.securityID != nil ? account - position : 0
+        case .fee, .tax: return filter.hasSecurity(t) ? position - account : 0
+        case .feeRefund, .taxRefund: return filter.hasSecurity(t) ? account - position : 0
         case .cashTransfer: return (filter.includesCounterAccount(t) ? 1 : 0) - account
         case .securityTransfer: return (filter.includesCounterPosition(t) ? 1 : 0) - position
         case .deposit, .withdrawal, .deliveryIn, .deliveryOut, .interest, .interestCharge: return 0
@@ -401,23 +481,29 @@ struct LineDetail: Sendable {
 /// security-related amounts follow the position, cash bookings follow the account.
 struct ScopeFilter: Sendable {
     private let scope: Scope
+    private let attribution: PositionAttribution
 
-    init(_ scope: Scope) { self.scope = scope }
+    init(_ scope: Scope, attribution: PositionAttribution) {
+        self.scope = scope
+        self.attribution = attribution
+    }
 
     var isWholePortfolio: Bool { scope == .portfolio }
-    var isWeighted: Bool { if case .weighted = scope { true } else { false } }
+    var isWeighted: Bool { Self.isWeighted(scope) }
+    /// A fee or tax follows its security when it names one the file contains, else its account.
+    func hasSecurity(_ t: KontorModel.Transaction) -> Bool { attribution.hasSecurity(t) }
+    static func isWeighted(_ scope: Scope) -> Bool { if case .weighted = scope { true } else { false } }
 
     func includesPosition(_ t: KontorModel.Transaction) -> Bool {
         switch scope {
         case .portfolio:
             return true
         case .subset(let depots, _):
-            if let depot = t.depotID { return depots.contains(depot) }
-            // Bookings without a depot follow the security's holding; the engine resolves which.
-            return t.securityID != nil && !depots.isEmpty
+            // Bookings without a depot follow the depot that holds the security (see `PositionAttribution`).
+            return attribution.isPosition(of: t, in: depots)
         case .security(let id, let depot):
             guard t.securityID == id else { return false }
-            return depot == nil || t.depotID == nil || t.depotID == depot
+            return depot.map { attribution.isPosition(of: t, in: [$0]) } ?? true
         case .weighted(let securities, _):
             return t.securityID.map { (securities[$0] ?? 0) > 0 } ?? false
         }
@@ -468,16 +554,23 @@ struct ReturnExtreme: Sendable, Identifiable, Hashable {
 struct ReturnsModel: Sendable {
     var interval: DayInterval
     var heatmap: ReturnHeatmap
+    /// Heatmap rows, newest first; a year the period covers only partly is marked with "*".
+    var heatmapRows: [HeatmapRow]
     var years: [BarCategory]
     var yearlyReturns: [Double]
+    /// Explains the "*" years ("2025 covers Jul–Dec only"); nil when every year is complete.
+    var partialYearsNote: String?
+    /// Names the edge months the period cuts off; nil when every month is complete.
+    var partialMonthsNote: String?
     var rollingOneYear: [Double?]
     var rollingThreeYears: [Double?]
     var hasRollingOneYear: Bool
     var hasRollingThreeYears: Bool
     var extremes: [ReturnExtreme]
+    /// Complete calendar months in the period, and how many of them ended with a gain.
     var monthCount: Int
     var positiveMonths: Int
-    /// Share of 12-month windows that ended with a gain.
+    /// Share of 12-month windows that ended with a gain (nil without enough windows).
     var positiveYearWindows: Double?
     var averageYearWindow: Double?
 
@@ -486,25 +579,47 @@ struct ReturnsModel: Sendable {
         let risk = analysis.risk
         interval = analysis.interval
         heatmap = analysis.heatmap
+        let coverage = CalendarCoverage(interval: analysis.interval, firstTransactionDay: analysis.ledger.firstTransactionDay)
 
+        // Calendar years: a year cut off by a period edge is shown, but marked and never ranked.
         let yearly = returns.yearlyReturns()
-        years = yearly.map { BarCategory.year($0.year) }
+        let partialYears = yearly.map(\.year).filter { !coverage.isComplete(year: $0) }
+        years = yearly.map { y in
+            partialYears.contains(y.year)
+                ? BarCategory(id: String(y.year), label: "\(y.year)*", detail: "\(y.year) (\(coverage.monthsLabel(of: y.year)) only)")
+                : BarCategory.year(y.year)
+        }
         yearlyReturns = yearly.map(\.value)
+        heatmapRows = heatmap.rows.reversed().map { row in
+            HeatmapRow(id: String(row.year), label: partialYears.contains(row.year) ? "\(row.year)*" : String(row.year),
+                       cells: row.months, total: row.total)
+        }
+        partialYearsNote = partialYears.isEmpty ? nil
+            : "* " + partialYears.map { "\($0) covers \(coverage.monthsLabel(of: $0)) only" }.joined(separator: ", ") + "."
 
         let one = analysis.rollingReturns(windowDays: 365)
         let three = analysis.rollingReturns(windowDays: 365 * 3, annualized: true)
         rollingOneYear = one.values
         rollingThreeYears = three.values
         // A line needs more than a handful of end dates: a period of exactly one year has a single
-        // 12-month window, which would draw as one lonely dot.
+        // 12-month window, which would draw as one lonely dot — and is no statistic either.
         hasRollingOneYear = one.best != nil && rollingOneYear.lazy.filter { $0 != nil }.count >= 5
         hasRollingThreeYears = three.best != nil
-        positiveYearWindows = one.positiveShare
-        averageYearWindow = one.average
+        positiveYearWindows = hasRollingOneYear ? one.positiveShare : nil
+        averageYearWindow = hasRollingOneYear ? one.average : nil
 
+        // Month statistics count complete calendar months only.
         let monthly = returns.monthlyReturns()
-        monthCount = monthly.count
-        positiveMonths = monthly.filter { $0.value > 0 }.count
+        let complete = monthly.filter { coverage.isComplete(year: $0.year, month: $0.month) }
+        let partialMonths = monthly.filter { !coverage.isComplete(year: $0.year, month: $0.month) }
+        monthCount = complete.count
+        positiveMonths = complete.filter { $0.value > 0 }.count
+        if partialMonths.isEmpty {
+            partialMonthsNote = nil
+        } else {
+            let names = partialMonths.map { Fmt.month(year: $0.year, month: $0.month) }
+            partialMonthsNote = "\(names.joined(separator: " and ")) \(names.count == 1 ? "is" : "are") only partly inside the period and not counted as \(names.count == 1 ? "a month" : "months")."
+        }
 
         var rows: [ReturnExtreme] = []
         if risk.bestDay != nil || risk.worstDay != nil {
@@ -513,17 +628,19 @@ struct ReturnsModel: Sendable {
                 best: risk.bestDay?.value, bestLabel: risk.bestDay.map { Fmt.day($0.day, style: .medium) } ?? "",
                 worst: risk.worstDay?.value, worstLabel: risk.worstDay.map { Fmt.day($0.day, style: .medium) } ?? ""))
         }
-        if monthly.count > 1 {
+        if complete.count > 1, let best = complete.max(by: { $0.value < $1.value }), let worst = complete.min(by: { $0.value < $1.value }) {
             rows.append(ReturnExtreme(
                 id: "month", span: "Month",
-                best: risk.bestMonth?.value, bestLabel: risk.bestMonth.map { Fmt.month(year: $0.year, month: $0.month) } ?? "",
-                worst: risk.worstMonth?.value, worstLabel: risk.worstMonth.map { Fmt.month(year: $0.year, month: $0.month) } ?? ""))
+                best: best.value, bestLabel: Fmt.month(year: best.year, month: best.month),
+                worst: worst.value, worstLabel: Fmt.month(year: worst.year, month: worst.month)))
         }
-        if yearly.count > 1, let best = yearly.max(by: { $0.value < $1.value }), let worst = yearly.min(by: { $0.value < $1.value }) {
+        let completeYears = yearly.filter { !partialYears.contains($0.year) }
+        if completeYears.count > 1, let best = completeYears.max(by: { $0.value < $1.value }),
+           let worst = completeYears.min(by: { $0.value < $1.value }) {
             rows.append(ReturnExtreme(id: "year", span: "Calendar Year", best: best.value, bestLabel: String(best.year),
                                       worst: worst.value, worstLabel: String(worst.year)))
         }
-        if one.best != nil {
+        if hasRollingOneYear {
             func windowLabel(_ target: Double?) -> String {
                 guard let target, let index = one.values.firstIndex(where: { $0 == target }) else { return "" }
                 let end = one.day(at: index)
@@ -588,9 +705,12 @@ struct RiskModel: Sendable {
     var sharpeRatio: Double?
     var riskFreeRate: Double
     var annualizedReturn: Double?
+    /// False for periods of less than a year: the Sharpe ratio would rest on an extrapolated return.
+    var showsSharpeRatio: Bool
     var dailyHistogram: Histogram
     var monthlyHistogram: Histogram
     var dailyCount: Int
+    /// Complete calendar months in the period.
     var monthlyCount: Int
 
     static let episodeLimit = 10
@@ -613,6 +733,7 @@ struct RiskModel: Sendable {
         sharpeRatio = risk.sharpeRatio
         riskFreeRate = analysis.ledger.settings.riskFreeRate
         annualizedReturn = returns.annualized
+        showsSharpeRatio = ReturnHorizon.hasFullYear(days: analysis.measuredInterval.dayCount)
 
         // Like the engine's volatility: weekends are structurally zero and left out. Days before
         // anything was held are left out too.
@@ -624,7 +745,9 @@ struct RiskModel: Sendable {
         }
         dailyCount = daily.count
         dailyHistogram = Histogram(daily, targetBins: 41)
-        let monthly = returns.monthlyReturns().map(\.value)
+        // Complete calendar months only: a month cut off by a period edge is not a monthly return.
+        let coverage = CalendarCoverage(interval: analysis.interval, firstTransactionDay: analysis.ledger.firstTransactionDay)
+        let monthly = returns.monthlyReturns().filter { coverage.isComplete(year: $0.year, month: $0.month) }.map(\.value)
         monthlyCount = monthly.count
         monthlyHistogram = Histogram(monthly, targetBins: 21)
     }
@@ -640,6 +763,7 @@ struct SecurityRow: Sendable, Identifiable, Hashable {
     var isHeld: Bool
     var marketValue: Int64
     var ttwror: Double
+    /// Money-weighted return as shown: per year for periods over a year, else of the period itself.
     var irr: Double?
     var absolutePerformance: Int64
     var realized: Int64
@@ -649,6 +773,22 @@ struct SecurityRow: Sendable, Identifiable, Hashable {
     var taxes: Int64
     /// This security's result relative to the size of the total result (nil when the total is 0).
     var share: Double?
+    /// Set when the engine could not value the security from quotes.
+    var priceIssue: PriceIssue?
+
+    enum PriceIssue: Sendable, Hashable {
+        /// No quotes: valued at the prices of its own transactions.
+        case derived
+        /// No price at all: valued at zero.
+        case missing
+
+        var explanation: String {
+            switch self {
+            case .derived: "No quotes — valued at the price of its own transactions, so its gain only changes when you trade."
+            case .missing: "No price — valued at zero."
+            }
+        }
+    }
 
     /// Sort keys for optional columns: missing values sort below everything.
     var irrKey: Double { irr ?? -.infinity }
@@ -667,34 +807,72 @@ struct SecuritiesModel: Sendable {
     /// Sum of the securities' results, and the scope's total result.
     var securitiesResult: Int64
     var totalResult: Int64
+    /// True when the IRR column is per year (periods over a year).
+    var irrIsAnnualized: Bool
+    /// What `totalResult − securitiesResult` is made of; adds up to it exactly.
+    var remainder: [RemainderPart]
+
+    /// A part of the result that is not tied to a security.
+    struct RemainderPart: Sendable, Identifiable, Hashable {
+        var label: String
+        var amount: Int64
+        var id: String { label }
+    }
 
     init(_ analysis: Analysis, query: SecuritiesQuery) {
         let ledger = analysis.ledger
+        let breakdown = analysis.breakdown
+        let days = analysis.measuredInterval.dayCount
         currency = analysis.currency
-        totalResult = analysis.breakdown.absolutePerformance
+        totalResult = breakdown.absolutePerformance
+        irrIsAnnualized = ReturnHorizon.isAnnualized(days: days)
         let total = totalResult
-        let all = analysis.securities.map { p in
+        let performances = analysis.securities
+        var issues: [UUID: SecurityRow.PriceIssue] = [:]
+        for diagnostic in analysis.diagnostics {
+            switch diagnostic {
+            case .pricesDerivedFromTransactions(let id): if issues[id] == nil { issues[id] = .derived }
+            case .missingPrice(let id): issues[id] = .missing
+            default: break
+            }
+        }
+        let all = performances.map { p in
             let security = ledger.security(p.securityID)
             return SecurityRow(
                 id: p.securityID, name: security?.name ?? "Unknown Security",
                 symbol: security.map { $0.ticker.isEmpty ? $0.isin : $0.ticker } ?? "",
                 isRetired: security?.isRetired ?? false, isHeld: !p.shares.isZero,
-                marketValue: p.marketValue, ttwror: p.ttwror, irr: p.irr, absolutePerformance: p.absolutePerformance,
+                marketValue: p.marketValue, ttwror: p.ttwror, irr: ReturnHorizon.moneyWeighted(irr: p.irr, days: days),
+                absolutePerformance: p.absolutePerformance,
                 realized: p.periodRealizedGain, unrealized: p.periodUnrealizedGain, dividends: p.dividends,
                 fees: p.fees, taxes: p.taxes,
-                share: total != 0 ? Double(p.absolutePerformance) / Double(abs(total)) : nil)
+                share: total != 0 ? Double(p.absolutePerformance) / Double(abs(total)) : nil,
+                priceIssue: issues[p.securityID])
         }
         totalCount = all.count
         securitiesResult = all.reduce(0) { $0 + $1.absolutePerformance }
+
+        // The rest of the result, by what it is: the breakdown's lines less the securities' share.
+        let otherFees = breakdown.fees - all.reduce(0) { $0 + $1.fees }
+        let otherTaxes = breakdown.taxes - all.reduce(0) { $0 + $1.taxes }
+        var parts = [
+            RemainderPart(label: "Interest", amount: breakdown.interest),
+            RemainderPart(label: "Account fees", amount: -otherFees),
+            RemainderPart(label: otherTaxes < 0 ? "Tax refunds, less taxes" : "Taxes, less refunds", amount: -otherTaxes),
+            RemainderPart(label: "Exchange rates on cash", amount: breakdown.cashCurrencyGains),
+        ]
+        let rest = totalResult - securitiesResult - parts.reduce(0) { $0 + $1.amount }
+        parts.append(RemainderPart(label: "Rounding and other", amount: rest))
+        remainder = parts.filter { $0.amount != 0 }
         let filter = QuickFilter(query.filter)
         rows = all.filter { filter.matches($0.name, $0.symbol) }.sorted(using: query.sortOrder)
     }
 
-    static func tsv(_ rows: [SecurityRow], currency: CurrencyCode) -> String {
+    static func tsv(_ rows: [SecurityRow], currency: CurrencyCode, irrIsAnnualized: Bool = true) -> String {
         func money(_ minor: Int64) -> String { TSV.number(Money(minor: minor, currency: currency).decimalValue) }
         func fraction(_ value: Double?) -> String { value.map { TSV.number(Decimal($0)) } ?? "" }
         return TSV.string(
-            header: ["Security", "Symbol", "Value", "TTWROR", "IRR", "Gain", "Realized", "Unrealized", "Dividends", "Fees", "Taxes",
+            header: ["Security", "Symbol", "Value", "TTWROR", irrIsAnnualized ? "IRR per Year" : "IRR (not annualized)", "Gain", "Realized", "Unrealized", "Dividends", "Fees", "Taxes",
                      "Share of Result", "Currency"],
             rows: rows.map {
                 [$0.name, $0.symbol, money($0.marketValue), fraction($0.ttwror), fraction($0.irr), money($0.absolutePerformance),
@@ -710,8 +888,13 @@ struct SecurityFigures: Sendable {
     var currency: CurrencyCode
     var performance: SecurityPerformance?
     var levels: [Double]
+    var dayCount: Int
+
+    var irrIsAnnualized: Bool { ReturnHorizon.isAnnualized(days: dayCount) }
+    var moneyWeightedReturn: Double? { ReturnHorizon.moneyWeighted(irr: performance?.irr, days: dayCount) }
 
     init(_ analysis: Analysis, securityID: UUID) {
+        dayCount = analysis.measuredInterval.dayCount
         name = analysis.ledger.security(securityID)?.name ?? "Unknown Security"
         currency = analysis.currency
         performance = analysis.security(securityID)
@@ -727,19 +910,24 @@ struct PerformanceSummary: Sendable {
         let risk = analysis.risk
         let currency = analysis.currency
         func money(_ minor: Int64) -> String { Fmt.money(minor: minor, currency: currency) }
+        let days = analysis.measuredInterval.dayCount
+        let annualized = ReturnHorizon.isAnnualized(days: days)
         var rows: [[String]] = [
             ["Scope", scopeTitle],
             ["Period", Fmt.interval(analysis.interval)],
             ["TTWROR", Fmt.percent(analysis.ttwror, signed: true)],
-            ["TTWROR p.a.", Fmt.percent(analysis.ttwrorAnnualized, signed: true)],
-            ["IRR", Fmt.percent(analysis.irr, signed: true)],
+        ]
+        // "Per year" figures only for periods over a year — anything shorter would be extrapolated.
+        if annualized { rows.append(["TTWROR per Year", Fmt.percent(analysis.ttwrorAnnualized, signed: true)]) }
+        rows += [
+            [annualized ? "IRR per Year" : "IRR (not annualized)", Fmt.percent(ReturnHorizon.moneyWeighted(irr: analysis.irr, days: days), signed: true)],
             ["Absolute Performance", money(analysis.breakdown.absolutePerformance)],
             ["Initial Value", money(analysis.breakdown.initialValue)],
             ["Final Value", money(analysis.breakdown.finalValue)],
             ["Maximum Drawdown", Fmt.percent(risk.maxDrawdown.map { -$0.depth })],
             ["Volatility", Fmt.percent(risk.volatility)],
-            ["Sharpe Ratio", Fmt.ratio(risk.sharpeRatio)],
         ]
+        if ReturnHorizon.hasFullYear(days: days) { rows.append(["Sharpe Ratio", Fmt.ratio(risk.sharpeRatio)]) }
         rows.append(contentsOf: analysis.breakdown.lines.dropFirst().dropLast().filter { $0.amount != 0 }.map { [$0.line.title, money($0.amount)] })
         text = TSV.string(rows: rows)
     }

@@ -5,7 +5,9 @@ import KontorSampleData
 
 /// Process entry point. Normal launches start the SwiftUI app; `--screenshot …` runs the headless
 /// renderer instead (see `ScreenshotRunner`), `--write-demo <file>` saves the demo portfolio as a
-/// `.kontor` file, `--help` prints the command line reference.
+/// `.kontor` file, `--selftest` runs the headless end-to-end self-test (see `SelfTest`),
+/// `--document-selftest` exercises the document machinery inside a normal launch (see
+/// `DocumentSelfTest`), `--help` prints the command line reference.
 @main
 enum Launcher {
     @MainActor
@@ -40,6 +42,14 @@ enum Launcher {
                 return
             } catch {
                 FileHandle.standardError.write(Data("kontor: \(error)\n".utf8))
+                exit(64)
+            }
+        }
+        if arguments.contains("--selftest") {
+            do {
+                SelfTest.run(try SelfTest.Options(arguments: arguments))
+            } catch {
+                FileHandle.standardError.write(Data("kontor: \(error)\nusage: Kontor --selftest [--verbose] [--quick] [--today YYYY-MM-DD] [--fixtures <dir>] [--only scenario|documents|import|tours]\n".utf8))
                 exit(64)
             }
         }

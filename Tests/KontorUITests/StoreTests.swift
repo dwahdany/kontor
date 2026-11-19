@@ -1,6 +1,8 @@
 import Foundation
 import Testing
 import KontorModel
+import KontorMarketData
+import KontorSampleData
 @testable import KontorUI
 
 @MainActor
@@ -376,5 +378,151 @@ private func grouped(_ undo: UndoManager, _ body: () -> Void) {
         #expect(pts.count == 3)
         #expect(pts[0].y > pts[2].y)
         #expect(Sparkline.points([5], in: CGSize(width: 100, height: 20), inset: 1).isEmpty)
+    }
+}
+
+// MARK: - Document safety
+
+@Suite struct DocumentIOTests {
+    @Test func refusesJSONThatIsNotAPortfolio() throws {
+        func error(_ text: String) -> DocumentIO.ReadError? {
+            do {
+                _ = try DocumentIO.read(Data(text.utf8))
+                return nil
+            } catch let error as DocumentIO.ReadError {
+                return error
+            } catch {
+                return nil
+            }
+        }
+        #expect(error("{}") == .notAPortfolio)
+        #expect(error(#"{"name":"left-pad","version":"1.0.0","dependencies":{"a":[1,2]}}"#) == .notAPortfolio)
+        #expect(error(#"{"formatVersion":1,"transactions":null,"securities":null}"#) == .damaged(key: "transactions"))
+        #expect(error(#"{"formatVersion":1,"securities":{}}"#) == .damaged(key: "securities"))
+        #expect(error(#"{"formatVersion":1,"Transactions":[]}"#) == .unknownSpelling(key: "Transactions", expected: "transactions"))
+        #expect(error(#"{"formatVersion":0,"transactions":[]}"#) == .invalidVersion(0))
+        #expect(error(#"{"formatVersion":-5}"#) == .invalidVersion(-5))
+        // Malformed JSON is the decoder's business (it throws its own error).
+        #expect(throws: (any Error).self) { try DocumentIO.read(Data("[1,2".utf8)) }
+        #expect(throws: (any Error).self) { try DocumentIO.read(Data("[]".utf8)) }
+        // A newer format is still reported as such.
+        #expect(throws: PortfolioFile.FormatError.self) { try DocumentIO.read(Data(#"{"formatVersion":99}"#.utf8)) }
+    }
+
+    @Test func acceptsRealDocuments() throws {
+        // Minimal, hand-written, with unusual spacing and escapes in strings.
+        #expect(try DocumentIO.read(Data(#"{"formatVersion":1}"#.utf8)).file == PortfolioFile())
+        let odd = try DocumentIO.read(Data("\u{FEFF} { \"name\" : \"a \\\"quoted\\\" } ] name\" ,\n \"transactions\" : [ ] }".utf8))
+        #expect(odd.file.name == "a \"quoted\" } ] name" && odd.repairs.isEmpty)
+        for file in [SampleData.demoPortfolio(today: Day(year: 2026, month: 6, day: 30)), SampleData.starterPortfolio(name: "S", baseCurrency: "CHF")] {
+            for pretty in [false, true] {
+                let data = try DocumentIO.write(file, pretty: pretty)
+                let read = try DocumentIO.read(data)
+                #expect(read.file == file && read.repairs.isEmpty)
+                #expect(try DocumentIO.write(read.file, pretty: pretty) == data)
+            }
+        }
+    }
+
+    @Test func unusableNumbersAreRepairedOnReadAndNeverBlockSaving() throws {
+        var file = PortfolioFile(name: "Rates")
+        file.exchangeRates = [ExchangeRateSeries(base: "EUR", quote: "USD", days: [20_000, 20_001, 20_002], rates: [1.1, 0, -3])]
+        let read = try DocumentIO.read(try file.encoded())
+        #expect(read.repairs.droppedRates == 2 && !read.repairs.isEmpty)
+        #expect(read.file.exchangeRates[0].days == [20_000] && read.file.exchangeRates[0].rates == [1.1])
+
+        // Infinity and NaN cannot be written as JSON; the document is saved without them.
+        file.exchangeRates[0].rates = [1.1, .infinity, .nan]
+        file.settings.riskFreeRate = .nan
+        #expect(throws: (any Error).self) { try file.encoded() }
+        let saved = try DocumentIO.read(try DocumentIO.write(file, pretty: false)).file
+        #expect(saved.exchangeRates[0].rates == [1.1] && saved.settings.riskFreeRate == 0)
+
+        // Derived cross rates never contain infinity, whatever the stored series hold.
+        let pivot = ExchangeRateSeries(base: "EUR", quote: "USD", days: [1, 2, 3], rates: [1.1, 0, 1.2])
+        let other = ExchangeRateSeries(base: "EUR", quote: "CHF", days: [1, 2, 3], rates: [0.9, 0.95, 0])
+        let inverse = ExchangeRates.triangulate(base: "USD", quote: "EUR", pivotToBase: pivot, pivotToQuote: nil)
+        #expect(inverse.days == [1, 3] && inverse.rates.allSatisfy { $0.isFinite && $0 > 0 })
+        let cross = ExchangeRates.triangulate(base: "USD", quote: "CHF", pivotToBase: pivot, pivotToQuote: other)
+        #expect(cross.days == [1] && cross.rates.allSatisfy { $0.isFinite && $0 > 0 })
+    }
+}
+
+@Suite @MainActor struct StoreSafetyTests {
+    @Test func theSnapshotMirrorFollowsEveryChangeAndIsReadableOffTheMainActor() async {
+        let store = PortfolioStore(file: PortfolioFile(name: "One"))
+        let snapshot = store.snapshot
+        #expect(snapshot.current.name == "One")
+        store.mutate("Rename") { $0.name = "Two" }
+        #expect(await Task.detached { snapshot.current.name }.value == "Two")
+        store.replaceFile(PortfolioFile(name: "Three"))
+        #expect(snapshot.current.name == "Three")
+        // A mirror handed in (the document's) is the one that is kept up to date.
+        let shared = FileSnapshot(PortfolioFile(name: "Stale"))
+        let second = PortfolioStore(file: PortfolioFile(name: "Fresh"), snapshot: shared)
+        #expect(shared.current.name == "Fresh")
+        second.mutate("Rename") { $0.name = "Fresher" }
+        #expect(shared.current.name == "Fresher")
+    }
+
+    @Test func undoDepthShrinksForLargeDocuments() {
+        #expect(PortfolioStore.undoLevels(for: PortfolioFile()) == 100)
+        var large = PortfolioFile()
+        let account = Account(name: "A", currency: "EUR")
+        large.accounts = [account]
+        large.transactions = (0..<50_000).map { _ in Transaction(kind: .deposit, date: Day(rawValue: 20_000), accountID: account.id, amount: Money(minor: 1, currency: "EUR")) }
+        let levels = PortfolioStore.undoLevels(for: large)
+        #expect(levels >= 10 && levels <= 20)
+        let store = PortfolioStore(file: PortfolioFile())
+        let undo = UndoManager()
+        store.undoManager = undo
+        #expect(undo.levelsOfUndo == 100)
+        store.replaceFile(large)
+        #expect(undo.levelsOfUndo == levels)
+    }
+
+    @Test func deletingTheFocusedEntityDropsTheFocus() {
+        let security = Security(name: "S", currency: "EUR")
+        let store = PortfolioStore(file: PortfolioFile(securities: [security]))
+        store.navigate(to: .security(security.id))
+        store.mutate("Delete") { $0.securities.removeAll() }
+        #expect(store.route == Route(.securities))
+    }
+}
+
+@Suite struct NumberParsingSafetyTests {
+    @Test func aSeparatorAfterALeadingZeroIsTheDecimalSeparator() {
+        let german = KontorFormatter(locale: Locale(identifier: "de_DE")), english = KontorFormatter(locale: Locale(identifier: "en_US"))
+        #expect(german.parseFixed("0.125", scaleDigits: 8) == 12_500_000)
+        #expect(english.parseFixed("0,125", scaleDigits: 8) == 12_500_000)
+        #expect(german.parseFixed("00.500", scaleDigits: 3) == 500)
+        // Still grouping where it can be grouping.
+        #expect(german.parseFixed("1.234", scaleDigits: 2) == 123_400)
+        #expect(english.parseFixed("1,234", scaleDigits: 2) == 123_400)
+        #expect(german.parseFixed("1,234", scaleDigits: 3) == 1_234)
+    }
+
+    @Test func lettersBetweenDigitsAreNotANumber() {
+        let formatter = KontorFormatter(locale: Locale(identifier: "en_US"))
+        #expect(formatter.parseFixed("1e5", scaleDigits: 2) == nil)
+        #expect(formatter.parseFixed("12x3", scaleDigits: 2) == nil)
+        // Units and currencies before or after the number are fine.
+        #expect(formatter.parseFixed("EUR 1,234.50", scaleDigits: 2) == 123_450)
+        #expect(formatter.parseFixed("1,234.50 EUR", scaleDigits: 2) == 123_450)
+        #expect(formatter.parseFixed("12.5 %", scaleDigits: 2) == 1_250)
+    }
+}
+
+@Suite struct AxisLabelTests {
+    @Test func percentAxisLabelsAreExactAndUnique() {
+        let format = ChartValueFormat.percent()
+        // A nearly flat series: ticks half a hundredth of a percent apart.
+        let tiny = format.axisLabels([0, -0.00005, -0.0001, -0.00015, -0.0002])
+        #expect(Set(tiny).count == tiny.count)
+        // A 2.5 % step: 12.5 % must not be printed as 13 %.
+        let english = Fmt.percent(0.125, decimals: 1)
+        #expect(format.axisLabels([0.1, 0.125, 0.15]).contains(english))
+        // Whole percents stay whole.
+        #expect(format.axisLabels([0, 0.05, 0.1]) == [Fmt.percent(0, decimals: 0), Fmt.percent(0.05, decimals: 0), Fmt.percent(0.1, decimals: 0)])
     }
 }

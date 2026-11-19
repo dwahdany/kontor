@@ -6,26 +6,36 @@ import KontorUI
 /// securities as CSV, a Portfolio Performance XML, or a readable Kontor JSON copy), set the CSV
 /// notation, see the first lines, then save.
 ///
+/// The preview is the last finished build; it is written only if it was built for the options, the
+/// document revision and the day that are current when the user saves (`ExportSnapshot`), so a quick
+/// click can never put one format's data under another format's file name.
+///
 /// Launch state (screenshots): `format=transactions|holdings|quotes|securities|pp|json`,
-/// `preset=international|german`.
+/// `preset=international|german`, `asof=<yyyy-MM-dd>` (holdings).
 struct ExportSheet: View {
     let request: ExportRequest
     var initialFormat: ExportFormat?
 
     @Environment(PortfolioStore.self) private var store
     @State private var options = ExportOptions()
-    @State private var result = Loadable<ExportResult>()
+    /// The last finished build and what it was built from.
+    @State private var snapshot: ExportSnapshot?
+    @State private var isBuilding = false
     @State private var isSaving = false
     @State private var isConfigured = false
 
     /// Everything the preview depends on.
     private struct Query: Hashable {
-        var options: ExportOptions
-        var revision: Int
-        var scope: Scope
-        var interval: DayInterval
+        var key: ExportKey
         var isConfigured: Bool
     }
+
+    /// What an export made right now would be built from.
+    private var currentKey: ExportKey { ExportKey(options: options, revision: store.revision, today: store.today) }
+    /// The preview shows exactly what would be written.
+    private var isCurrent: Bool { snapshot?.isCurrent(for: currentKey) == true }
+    /// The last good result — also while a newer one is being built (shown dimmed).
+    private var shown: ExportResult? { snapshot?.result }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -43,7 +53,7 @@ struct ExportSheet: View {
         }
         .frame(width: 800)
         .onAppear(perform: configure)
-        .task(id: Query(options: options, revision: store.revision, scope: store.scope, interval: store.periodInterval, isConfigured: isConfigured)) {
+        .task(id: Query(key: currentKey, isConfigured: isConfigured)) {
             guard isConfigured else { return }
             await refresh()
         }
@@ -64,6 +74,9 @@ struct ExportSheet: View {
         if value.securityID == nil {
             value.securityID = store.route.securityID ?? store.file.securities.first { !$0.prices.isEmpty }?.id
         }
+        // Holdings: the window's scope is the starting point; the statement is for today unless changed.
+        value.holdingsScope = store.scopeSelection.resolve(in: store.file) == nil ? .portfolio : store.scopeSelection
+        value.holdingsDay = store.launchValue("asof").flatMap { Day(iso: $0) }
         let preset = store.launchValue("preset", as: CSVPreset.self)
             ?? UserDefaults.standard.string(forKey: Self.presetKey).flatMap(CSVPreset.init(rawValue:))
         if preset == .german { value.csv = .german }
@@ -71,7 +84,7 @@ struct ExportSheet: View {
         isConfigured = true
     }
 
-    private static let presetKey = "export.csv.preset"
+    private static let presetKey = "import.export.csv.preset"
 
     // MARK: Formats
 
@@ -156,7 +169,7 @@ struct ExportSheet: View {
         case .transactions:
             "One row per transaction, in date order, with the column titles Portfolio Performance uses — the file imports again here and there."
         case .holdings:
-            "Positions and cash balances of \(store.isWholePortfolioScope ? "the whole portfolio" : store.scopeTitle) on \(Fmt.day(store.periodInterval.end, style: .medium)), valued in \(store.baseCurrency)."
+            "Positions and cash balances of \(holdingsScopeTitle ?? "the whole portfolio") on \(Fmt.day(currentKey.holdingsDay, style: .medium)), valued in \(store.baseCurrency)."
         case .quotes:
             "The stored price history of one security: date and quote."
         case .securities:
@@ -195,7 +208,19 @@ struct ExportSheet: View {
                     label("Layout")
                     Toggle("Pretty-printed (indented, one value per line)", isOn: $options.prettyJSON)
                 }
-            case .holdings, .securities, .portfolioPerformance:
+            case .holdings:
+                GridRow {
+                    label("As of")
+                    HStack(spacing: DS.Spacing.l) {
+                        DayField("As of", day: Binding(get: { currentKey.holdingsDay }, set: { options.holdingsDay = $0 == store.today ? nil : $0 }))
+                            .labelsHidden()
+                            .fixedSize()
+                        ScopePicker(selection: $options.holdingsScope)
+                            .fixedSize()
+                            .help("The part of the portfolio the statement covers")
+                    }
+                }
+            case .securities, .portfolioPerformance:
                 EmptyView()
             }
             if options.format.isCSV {
@@ -284,11 +309,11 @@ struct ExportSheet: View {
                     .numeric()
             }
             Group {
-                if let problem = result.value?.problem {
+                if let problem = shown?.problem {
                     Text(problem)
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else if let lines = result.value?.previewLines, !lines.isEmpty {
+                } else if let lines = shown?.previewLines, !lines.isEmpty {
                     ScrollView([.horizontal, .vertical]) {
                         Text(lines.joined(separator: "\n"))
                             .font(.system(.caption, design: .monospaced))
@@ -298,7 +323,7 @@ struct ExportSheet: View {
                             .padding(DS.Spacing.s)
                             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                     }
-                } else if result.isLoading {
+                } else if isBuilding || snapshot == nil {
                     ProgressView().controlSize(.small)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
@@ -315,26 +340,45 @@ struct ExportSheet: View {
             .background(Color.primary.opacity(0.04))
             .clipShape(RoundedRectangle(cornerRadius: DS.Radius.control, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: DS.Radius.control, style: .continuous).strokeBorder(DS.Colors.hairline))
-            .opacity(result.isRefreshing ? 0.6 : 1)
-            if let warnings = result.value?.warnings, !warnings.isEmpty {
-                Label {
-                    Text("\(Fmt.integer(warnings.reduce(0) { $0 + $1.count })) details cannot be represented in Portfolio Performance: \(warnings[0].message)")
-                        .lineLimit(2)
-                } icon: {
-                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(DS.Colors.warning)
-                }
-                .font(.caption)
-                .help(warnings.map(\.description).joined(separator: "\n"))
+            .opacity(snapshot != nil && !isCurrent ? 0.6 : 1)
+            if isCurrent, let warnings = shown?.warnings, !warnings.isEmpty {
+                let count = warnings.reduce(0) { $0 + $1.count }
+                caution("\(ImportText.count(count, "detail", "details")) cannot be represented in Portfolio Performance: \(warnings[0].message)")
+                    .help(warnings.map(\.description).joined(separator: "\n"))
+            }
+            if isCurrent, let notice = shown?.notice {
+                caution(notice).help(notice)
             }
         }
     }
 
+    private func caution(_ text: String) -> some View {
+        Label {
+            Text(text).lineLimit(2)
+        } icon: {
+            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(DS.Colors.warning)
+        }
+        .font(.caption)
+    }
+
     private var sizeText: String {
-        guard let value = result.value, value.problem == nil else { return "" }
+        guard let value = shown, value.problem == nil else { return "" }
+        return Self.sizeText(rows: value.rowCount, bytes: value.data?.count)
+    }
+
+    /// "649 rows · 80 KB"
+    nonisolated static func sizeText(rows: Int?, bytes: Int?) -> String {
         var parts: [String] = []
-        if let rows = value.rowCount { parts.append("\(Fmt.integer(rows)) \(rows == 1 ? "row" : "rows")") }
-        if let data = value.data { parts.append(ByteText.string(data.count)) }
+        if let rows { parts.append(ImportText.count(rows, "row", "rows")) }
+        if let bytes { parts.append(ByteText.string(bytes)) }
         return parts.joined(separator: " · ")
+    }
+
+    /// Holdings: the chosen part of the portfolio; nil for the whole portfolio (or a scope that is gone).
+    private var holdingsScopeTitle: String? {
+        let selection = options.holdingsScope
+        guard selection != .portfolio, selection.resolve(in: store.file) != nil else { return nil }
+        return selection.title(in: store.file)
     }
 
     /// Shown instead of the first lines when the document is too large to serialise just for a preview.
@@ -358,7 +402,8 @@ struct ExportSheet: View {
                 .keyboardShortcut(.cancelAction)
             Button("Export…") { save() }
                 .keyboardShortcut(.defaultAction)
-                .disabled(isSaving || result.value?.problem != nil || (options.format == .quotes && options.securityID == nil))
+                // Only what the preview shows can be exported: not while a newer build is still running.
+                .disabled(isSaving || !isCurrent || shown?.problem != nil)
         }
         .padding(DS.Spacing.l)
     }
@@ -366,41 +411,64 @@ struct ExportSheet: View {
     // MARK: Work
 
     private func refresh() async {
-        let options = options
+        let key = currentKey
         let file = store.file
-        if !options.format.isCSV, ExportBuilder.isHeavy(file) {
+        if !key.options.format.isCSV, ExportBuilder.isHeavy(file) {
             // Too large to serialise for a preview: describe it, write on save.
-            result = Loadable(ExportResult(data: nil, previewLines: []))
+            snapshot = ExportSnapshot(key: key, result: ExportResult(data: nil, previewLines: []))
+            isBuilding = false
             return
         }
-        result.isLoading = true
-        let built = await build(options, file: file)
-        guard !Task.isCancelled else { return }
-        if let built { result = Loadable(built) }
-        result.isLoading = false
+        isBuilding = true
+        let built = await build(key, file: file)
+        // A newer choice or a changed document has its own run; this result is not for it.
+        guard !Task.isCancelled, key == currentKey else { return }
+        snapshot = ExportSnapshot(
+            key: key, result: built ?? ExportResult(data: nil, previewLines: [], problem: "The holdings could not be computed."))
+        isBuilding = false
     }
 
-    private func build(_ options: ExportOptions, file: PortfolioFile) async -> ExportResult? {
+    /// Builds the export for `key` from `file` (the document at `key.revision`). nil = holdings were not available.
+    private func build(_ key: ExportKey, file: PortfolioFile, preview: Bool = true) async -> ExportResult? {
+        let options = key.options
         var holdings: HoldingsExport?
         if options.format == .holdings {
-            holdings = try? await store.analyze("import.export.holdings") { analysis in HoldingsExport(analysis) }
+            let day = key.holdingsDay
+            let scope = options.holdingsScope.resolve(in: file) ?? .portfolio
+            holdings = try? await store.compute(HoldingsQuery(day: day, scope: scope)) { ledger in
+                HoldingsExport(ledger.snapshot(on: day, scope: scope), ledger: ledger)
+            }
             if holdings == nil { return nil }
         }
-        let snapshot = holdings
-        return await store.whileBusy { await Background.run { ExportBuilder.build(options, file: file, holdings: snapshot) } }
+        let positions = holdings
+        return await store.whileBusy {
+            await Background.run { ExportBuilder.build(options, file: file, holdings: positions, preview: preview) }
+        }
+    }
+
+    private struct HoldingsQuery: Hashable, Sendable {
+        var id = "import.export.holdings"
+        var day: Day
+        var scope: Scope
     }
 
     private func save() {
-        let options = options
+        // Everything that is written is fixed here, before the save panel runs its own event loop.
+        let key = currentKey
         let file = store.file
+        guard let snapshot, snapshot.isCurrent(for: key), snapshot.result.problem == nil else { return }
+        let options = key.options
+        let ready = snapshot.data(for: key)
+        let rows = snapshot.result.rowCount
         if options.format.isCSV { UserDefaults.standard.set(CSVPreset(options.csv).rawValue, forKey: Self.presetKey) }
         guard let url = ImportPanels.chooseDestination(
-            fileName: ExportBuilder.fileName(options, file: file, today: store.today), type: options.format.contentType,
-            message: "Export \(headline)") else { return }
+            fileName: ExportBuilder.fileName(options, file: file, today: key.today, scopeTitle: holdingsScopeTitle),
+            type: options.format.contentType, message: "Export \(headline)") else { return }
         isSaving = true
         Task {
-            var data = result.value?.data
-            if data == nil { data = await build(options, file: file)?.data }
+            // Large documents have no preview build: write one made from the same key now.
+            var data = ready
+            if data == nil { data = await build(key, file: file, preview: false)?.data }
             let payload = data
             let failure: String? = await store.whileBusy {
                 await Background.run {
@@ -417,8 +485,9 @@ struct ExportSheet: View {
             if let failure {
                 store.show(Toast("Export failed", message: failure, style: .error, duration: 6))
             } else {
+                let size = Self.sizeText(rows: rows, bytes: payload?.count)
                 store.dismissSheet()
-                store.toast("Exported “\(url.lastPathComponent)”", message: sizeText.isEmpty ? nil : sizeText, style: .success)
+                store.toast("Exported “\(url.lastPathComponent)”", message: size.isEmpty ? nil : size, style: .success)
             }
         }
     }

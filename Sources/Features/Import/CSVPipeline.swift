@@ -82,8 +82,12 @@ struct CSVPipelineInput: Sendable {
     var data: Data
     /// nil = sniff (first run).
     var dialect: CSVDialect?
-    /// nil = guess from the column titles (first run).
+    /// The user's decision; nil = not decided yet (first run): a remembered layout, the hint or the
+    /// column titles decide.
     var target: CSVImportTarget?
+    /// What the entry point expects the file to be ("Transactions from a Broker or Bank ▸ Choose CSV…").
+    /// A preference, not a decision: a remembered layout of the same kind still applies.
+    var targetHint: CSVImportTarget?
     /// The user's mapping; only used while the header still has `mappingSignature`.
     var mapping: CSVColumnMapping?
     var mappingSignature: String?
@@ -94,7 +98,8 @@ struct CSVPipelineInput: Sendable {
     var createMissingAccounts = true
     var sourceTag = "csv-import"
     var file: PortfolioFile
-    /// Remembered layouts; consulted on the first run only (`target == nil`).
+    /// Remembered layouts; consulted on the first run only (`target == nil`), and only a layout whose
+    /// content is what `targetHint` expects (if there is a hint).
     var memory: [String: RememberedMapping] = [:]
 }
 
@@ -239,7 +244,8 @@ enum CSVPipeline {
         var aliases = input.typeAliases
         var accountID = input.accountID, depotID = input.depotID
         var usedMemory = false
-        if target == nil, let remembered = input.memory[signature], remembered.columns.count == document.header.count {
+        if target == nil, let remembered = input.memory[signature], remembered.columns.count == document.header.count,
+           input.targetHint == nil || input.targetHint == remembered.target {
             usedMemory = true
             target = remembered.target
             mapping = CSVColumnMapping(columns: remembered.columns)
@@ -262,7 +268,7 @@ enum CSVPipeline {
                 depotID = match.id
             }
         }
-        let resolvedTarget = target ?? guessTarget(header: document.header)
+        let resolvedTarget = target ?? input.targetHint ?? guessTarget(header: document.header)
         if mapping == nil, let userMapping = input.mapping, input.mappingSignature == signature,
            userMapping.columns.count == document.header.count {
             mapping = userMapping
@@ -322,9 +328,30 @@ enum CSVPipeline {
                     guard let column = resolvedMapping.column(for: field), column < cells.count else { return "" }
                     return cells[column].trimmingCharacters(in: .whitespaces)
                 }
+                let separator = document.dialect.decimalSeparator
                 review.security = [cell(.securityName), cell(.isin), cell(.ticker)].first { !$0.isEmpty } ?? ""
-                review.kind = resolvedTarget == .securities ? "Security" : cell(.type)
-                if resolvedTarget == .securities { review.account = cell(.currency) }
+                switch resolvedTarget {
+                case .securities:
+                    review.kind = "Security"
+                    review.account = cell(.currency)
+                case .quotes:
+                    review.kind = "Quote"
+                    review.day = CSVValueParser.date(cell(.date), order: document.dialect.dateOrder)?.day
+                    review.price = CSVValueParser.decimal(cell(.quote), decimalSeparator: separator, digits: 8).map { Price(raw: $0) }
+                case .transactions:
+                    // Whatever of the row can be read, so that an error row is recognisable in the table.
+                    review.kind = cell(.type)
+                    review.day = CSVValueParser.date(cell(.date), order: document.dialect.dateOrder)?.day
+                    if let raw = CSVValueParser.decimal(cell(.shares), decimalSeparator: separator, digits: 8), raw != 0 {
+                        review.shares = Shares(raw: abs(raw))
+                    }
+                    if let minor = CSVValueParser.decimal(cell(.amount), decimalSeparator: separator, digits: 2) {
+                        let code = cell(.currency).uppercased()
+                        review.amount = Money(minor: abs(minor), currency: code.count == 3 ? code : input.file.settings.baseCurrency)
+                    }
+                    review.account = [cell(.account), cell(.depot)].first { !$0.isEmpty } ?? ""
+                    review.note = cell(.note)
+                }
             }
             if row.isRecommended { recommended.insert(row.index) }
             rows.append(review)
@@ -399,7 +426,7 @@ extension CSVImportTarget {
 
     var explanation: String {
         switch self {
-        case .transactions: "Purchases, sales, dividends, deposits, fees — one transaction per row. Cash and securities transactions may be mixed."
+        case .transactions: "Purchases, sales, dividends, deposits, fees — one per row, cash and securities mixed."
         case .quotes: "Historical prices of one security: a date and a price per row."
         case .securities: "A list of securities (name, ISIN, ticker, currency) without transactions."
         }

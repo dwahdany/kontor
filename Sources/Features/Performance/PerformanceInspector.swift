@@ -57,7 +57,9 @@ private struct SecurityInspector: View {
                 if let p = value.performance {
                     VStack(alignment: .leading, spacing: DS.Spacing.s) {
                         KeyValueRow("TTWROR") { SignedPercent(value: p.ttwror) }
-                        KeyValueRow("IRR per year") { SignedPercent(value: p.irr) }
+                        KeyValueRow(value.irrIsAnnualized ? "IRR per year" : "IRR, not annualized") {
+                            SignedPercent(value: value.moneyWeightedReturn)
+                        }
                         KeyValueRow("Gain") { SignedMoney(minor: p.absolutePerformance, currency: value.currency) }
                         Divider()
                         KeyValueRow("Value", Fmt.money(minor: p.marketValue, currency: value.currency))

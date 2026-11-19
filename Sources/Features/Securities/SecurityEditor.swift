@@ -388,6 +388,11 @@ struct SecurityEditor: View {
 
     private func save() {
         guard canSave else { return }
+        Self.commit(draft, isNew: isNew, isBenchmark: isBenchmark, isOnline: isOnline, in: store)
+    }
+
+    /// What "Save" does with the draft (also driven by the app's self-test).
+    static func commit(_ draft: Security, isNew: Bool, isBenchmark: Bool, isOnline: Bool, in store: PortfolioStore) {
         var security = draft
         security.name = security.name.trimmingCharacters(in: .whitespacesAndNewlines)
         security.isin = security.isin.trimmingCharacters(in: .whitespaces).uppercased()
@@ -443,7 +448,8 @@ struct SecurityEditor: View {
 
 // MARK: - Stock split
 
-/// `.custom(id: "securities.split", payload: ["security": <uuid>, "ratio": "2:1", "day": "YYYY-MM-DD"])` —
+/// `.custom(id: "securities.split", payload: ["security": <uuid>, "ratio": "2:1", "day": "YYYY-MM-DD",
+/// "adjust": "quotes" | "shares" | "both" | "none"])` —
 /// records a stock split through the engine's `StockSplit`, with a preview of what changes.
 struct SplitSheet: View {
     static let requestID = "securities.split"
@@ -455,16 +461,21 @@ struct SplitSheet: View {
     @State private var day = Day(rawValue: 0)
     @State private var newShares = 2
     @State private var oldShares = 1
+    /// Which half of the history is rewritten (see `SplitAdjustments`).
+    @State private var adjusting = SplitAdjustments()
+    @State private var hasAutomaticFeed = false
     @State private var preview = Loadable<SplitPreview>()
     @State private var didLoad = false
 
+    private var isRatioValid: Bool { newShares >= 1 && oldShares >= 1 }
+
     var body: some View {
         let security = store.security(securityID)
-        let query = SplitQuery(securityID: securityID ?? UUID(), day: day, newShares: newShares, oldShares: oldShares)
+        let query = SplitQuery(securityID: securityID ?? UUID(), day: day, newShares: newShares, oldShares: oldShares, adjusting: adjusting)
         VStack(spacing: 0) {
             VStack(spacing: DS.Spacing.xs) {
                 Text("Record Stock Split").font(.headline)
-                Text(security?.name ?? "").foregroundStyle(.secondary).lineLimit(1)
+                Text(security?.displayName ?? "").foregroundStyle(.secondary).lineLimit(1)
             }
             .padding(.top, DS.Spacing.l)
             .padding(.bottom, DS.Spacing.m)
@@ -493,12 +504,24 @@ struct SplitSheet: View {
                         }
                         .numeric()
                     }
-                    Text("\(Fmt.integer(max(newShares, 1))) new share\(newShares == 1 ? "" : "s") for every \(Fmt.integer(max(oldShares, 1))) old share\(oldShares == 1 ? "" : "s")")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .numeric()
+                    if isRatioValid {
+                        Text("\(Fmt.integer(newShares)) new share\(newShares == 1 ? "" : "s") for every \(Fmt.integer(oldShares)) old share\(oldShares == 1 ? "" : "s")")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .numeric()
+                    }
                 } footer: {
-                    Text("A 2-for-1 split doubles the number of shares and halves the price. Use it when quotes or share counts from before the split were entered on the old basis.")
+                    Text("A 2-for-1 split doubles the number of shares and halves the price.")
+                }
+                Section {
+                    Toggle("Adjust earlier quotes", isOn: $adjusting.quotes)
+                    Toggle("Adjust earlier share counts", isOn: $adjusting.shares)
+                } header: {
+                    Text("Adjust")
+                } footer: {
+                    Text(hasAutomaticFeed
+                         ? "Downloaded quotes are normally split-adjusted already, so only the share counts of your earlier transactions need the new basis. Switch quotes on if the history still shows the old prices."
+                         : "Switch off whatever is already on the new basis — for example quotes you entered after the split.")
                 }
                 Section("What Will Change") {
                     previewRows
@@ -511,9 +534,9 @@ struct SplitSheet: View {
                 Text("One step — undo with ⌘Z").font(.callout).foregroundStyle(.secondary)
                 Spacer()
                 Button("Cancel") { store.dismissSheet() }.keyboardShortcut(.cancelAction)
-                Button("Apply Split", action: apply)
+                Button(adjusting.quotes || adjusting.shares ? "Apply Split" : "Record Event", action: apply)
                     .keyboardShortcut(.defaultAction)
-                    .disabled(preview.value?.isValid != true || newShares == oldShares)
+                    .disabled(!isRatioValid || preview.value?.isValid != true || newShares == oldShares)
             }
             .padding(DS.Spacing.l)
         }
@@ -524,7 +547,11 @@ struct SplitSheet: View {
     }
 
     @ViewBuilder private var previewRows: some View {
-        if let preview = preview.value, preview.isValid, newShares != oldShares {
+        if !isRatioValid {
+            // The engine rejects such a ratio; say so instead of waiting for a preview that never comes.
+            Label("Enter whole numbers of 1 or more on both sides of the ratio.", systemImage: "exclamationmark.triangle.fill")
+                .foregroundStyle(DS.Colors.warning)
+        } else if let preview = preview.value, preview.isValid, newShares != oldShares {
             if preview.isRecorded {
                 Label("A \(preview.ratio) split on this day is already recorded. Applying it again would adjust the data twice.",
                       systemImage: "exclamationmark.triangle.fill")
@@ -532,15 +559,15 @@ struct SplitSheet: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             KeyValueRow("Quotes before \(Fmt.day(day, style: .medium))") {
-                Text(preview.adjustedPrices == 0 ? "none" : "\(Fmt.integer(preview.adjustedPrices)) adjusted").numeric()
+                Text(!adjusting.quotes ? "unchanged" : preview.adjustedPrices == 0 ? "none" : "\(Fmt.integer(preview.adjustedPrices)) adjusted").numeric()
             }
             if let before = preview.priceBefore, let after = preview.priceAfter {
                 KeyValueRow("Last quote before the split") {
-                    Text("\(Fmt.price(before, currency: preview.currency)) → \(Fmt.price(after, currency: preview.currency))").numeric()
+                    Text("\(Fmt.price(before, currency: preview.currency)) → \(Fmt.price(after, currency: preview.currency, maxDecimals: 4))").numeric()
                 }
             }
             KeyValueRow("Transactions before that day") {
-                Text(preview.adjustedTransactions == 0 ? "none" : "\(Fmt.integer(preview.adjustedTransactions)) adjusted").numeric()
+                Text(!adjusting.shares ? "unchanged" : preview.adjustedTransactions == 0 ? "none" : "\(Fmt.integer(preview.adjustedTransactions)) adjusted").numeric()
             }
             ForEach(preview.samples) { sample in
                 HStack {
@@ -572,7 +599,18 @@ struct SplitSheet: View {
             return
         }
         day = payload["day"].flatMap { Day(iso: $0) } ?? store.today
-        if let parts = payload["ratio"]?.split(separator: ":").compactMap({ Int($0) }), parts.count == 2, parts[0] > 0, parts[1] > 0 {
+        // Quotes from an automatic feed are split-adjusted by the provider; rescaling them again
+        // would halve a history that is already right. `adjust=quotes|shares|both|none` overrides.
+        hasAutomaticFeed = store.security(securityID)?.feed.map { MarketAccess.automaticProviders(store).contains($0.provider) } ?? false
+        adjusting.quotes = !hasAutomaticFeed
+        switch payload["adjust"] {
+        case "quotes"?: adjusting = SplitAdjustments(quotes: true, shares: false)
+        case "shares"?: adjusting = SplitAdjustments(quotes: false, shares: true)
+        case "both"?: adjusting = SplitAdjustments(quotes: true, shares: true)
+        case "none"?: adjusting = SplitAdjustments(quotes: false, shares: false)
+        default: break
+        }
+        if let parts = payload["ratio"]?.split(separator: ":").compactMap({ Int($0) }), parts.count == 2 {
             newShares = parts[0]
             oldShares = parts[1]
         }
@@ -580,10 +618,17 @@ struct SplitSheet: View {
 
     private func apply() {
         guard let securityID, let split = StockSplit(securityID: securityID, day: day, newShares: newShares, oldShares: oldShares) else { return }
+        let adjusting = adjusting
         store.mutate("Apply Stock Split \(split.ratio)") { file in
-            if let changed = file.applying(split) { file = changed }
+            if let changed = file.applying(split, adjusting: adjusting) { file = changed }
         }
         store.dismissSheet()
-        store.toast("Split \(split.ratio) applied", message: "Earlier quotes and share counts were adjusted.", style: .success)
+        let message = switch (adjusting.quotes, adjusting.shares) {
+        case (true, true): "Earlier quotes and share counts were adjusted."
+        case (true, false): "Earlier quotes were adjusted; share counts are unchanged."
+        case (false, true): "Earlier share counts were adjusted; quotes are unchanged."
+        case (false, false): "The event was recorded; quotes and share counts are unchanged."
+        }
+        store.toast("Split \(split.ratio) \(adjusting.quotes || adjusting.shares ? "applied" : "recorded")", message: message, style: .success)
     }
 }

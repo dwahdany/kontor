@@ -12,8 +12,13 @@ import KontorEngine
 /// .toolbar { ToolbarItem { ScopePicker() } }
 /// // then compute with store.scope — analysisTask does so by default
 /// ```
+///
+/// In a toolbar, pass the store (`ScopePicker(store: store)`): toolbar items are hosted outside the
+/// screen's view tree, and the picker renders nothing rather than trapping if the environment is
+/// not there (for example while a window is being torn down).
 public struct ScopePicker: View {
-    @Environment(PortfolioStore.self) private var store
+    @Environment(PortfolioStore.self) private var environmentStore: PortfolioStore?
+    private let explicitStore: PortfolioStore?
     private let external: Binding<ScopeSelection>?
     private let includesAccounts: Bool
     private let includesClassifications: Bool
@@ -22,18 +27,33 @@ public struct ScopePicker: View {
     /// - Parameters:
     ///   - accounts: Offer single cash accounts (screens about securities may leave them out).
     ///   - classifications: Offer taxonomy classifications.
-    public init(accounts: Bool = true, classifications: Bool = true) {
+    public init(store: PortfolioStore? = nil, accounts: Bool = true, classifications: Bool = true) {
+        explicitStore = store
         external = nil
         includesAccounts = accounts
         includesClassifications = classifications
     }
 
     /// Bound to a local selection.
-    public init(selection: Binding<ScopeSelection>, accounts: Bool = true, classifications: Bool = true) {
+    public init(selection: Binding<ScopeSelection>, store: PortfolioStore? = nil, accounts: Bool = true, classifications: Bool = true) {
+        explicitStore = store
         external = selection
         includesAccounts = accounts
         includesClassifications = classifications
     }
+
+    public var body: some View {
+        if let store = explicitStore ?? environmentStore {
+            ScopePickerMenu(store: store, external: external, includesAccounts: includesAccounts, includesClassifications: includesClassifications)
+        }
+    }
+}
+
+private struct ScopePickerMenu: View {
+    let store: PortfolioStore
+    let external: Binding<ScopeSelection>?
+    let includesAccounts: Bool
+    let includesClassifications: Bool
 
     private var selection: ScopeSelection {
         get {
@@ -45,7 +65,7 @@ public struct ScopePicker: View {
         }
     }
 
-    public var body: some View {
+    var body: some View {
         Menu {
             item(.portfolio, title: "Whole Portfolio")
             if !depots.isEmpty {

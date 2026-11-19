@@ -41,6 +41,38 @@ struct TabFooter: View {
 
 // MARK: - Transactions
 
+/// Which columns of the transactions table fit into the pane. `Table` lays its columns out at
+/// their ideal widths and scrolls sideways when they do not fit — nothing tells the user that
+/// there is more. So the least important columns go first and Amount always stays visible; the
+/// footer names what is hidden.
+struct TransactionColumns: Hashable {
+    var showsCosts: Bool
+    var showsPlace: Bool
+    var showsNote: Bool
+    /// Narrowest panes: tighter columns and the type as an icon.
+    var isTight: Bool
+    /// The Note column gets the room the other columns leave (in steps, so that resizing the
+    /// window does not rebuild the table for every point).
+    var noteWidth: CGFloat
+
+    /// Thresholds: the sum of the ideal widths in the table plus about 17 pt of chrome per column.
+    init(width: CGFloat) {
+        showsNote = width >= 780
+        showsPlace = width >= 730
+        showsCosts = width >= 630
+        isTight = width < 540
+        noteWidth = showsNote ? max(40, ((width - 740) / 20).rounded(.down) * 20) : 0
+    }
+
+    /// "Depot and Note hidden — widen the window", nil when everything is shown.
+    var hiddenHint: String? {
+        let hidden = [showsCosts ? nil : "Costs", showsPlace ? nil : "Depot", showsNote ? nil : "Note"].compactMap { $0 }
+        guard let last = hidden.last else { return nil }
+        let names = hidden.count == 1 ? last : hidden.dropLast().joined(separator: ", ") + " and " + last
+        return "\(names) hidden — widen the window"
+    }
+}
+
 struct SecurityTransactionsTab: View {
     @Environment(PortfolioStore.self) private var store
     let securityID: UUID
@@ -48,6 +80,8 @@ struct SecurityTransactionsTab: View {
     @State private var rows = Loadable<[SecurityTransactionRow]>()
     @State private var selection = Set<UUID>()
     @State private var sortOrder = [KeyPathComparator(\SecurityTransactionRow.date, order: .reverse)]
+    /// Width of the tab, known after the first layout pass.
+    @State private var width: CGFloat?
 
     private struct Query: Hashable, Sendable {
         var securityID: UUID
@@ -87,58 +121,90 @@ struct SecurityTransactionsTab: View {
                     Button("Record a Purchase…") { store.presentNewTransaction(.buy, securityID: securityID) }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if rows.value == nil {
+            } else if let width, rows.value != nil {
+                table(TransactionColumns(width: width))
+            } else {
                 // The table is created once the rows exist: populating an empty NSTableView with
                 // thousands of rows in one update makes AppKit log a re-entrancy warning.
                 Color.clear.frame(maxWidth: .infinity, maxHeight: .infinity).loadingOverlay(rows.isInitialLoad)
-            } else {
-                table
             }
             TabFooter(text: "\(Fmt.integer(items.count)) transaction\(items.count == 1 ? "" : "s")"
-                      + (selection.isEmpty ? "" : " · \(Fmt.integer(selection.count)) selected"))
+                      + (selection.isEmpty ? "" : " · \(Fmt.integer(selection.count)) selected"),
+                      trailing: width.flatMap { TransactionColumns(width: $0).hiddenHint })
         }
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
         .ledgerTask($rows, id: "securities.transactions", variant: query) { ledger in
             SecurityTransactionRow.rows(ledger, securityID: query.securityID).sorted(using: query.sortOrder)
         }
         .onChange(of: securityID) { _, _ in selection = [] }
+        .onChange(of: store.revision) { _, _ in
+            // Deleted here or elsewhere, or gone through undo: a selected row that no longer exists
+            // must not keep "1 selected" and Edit… alive.
+            let valid = selection.filter { store.transaction($0) != nil }
+            if valid.count != selection.count { selection = valid }
+        }
     }
 
-    private var table: some View {
-        Table(items, selection: $selection, sortOrder: $sortOrder) {
+    private func delete(_ ids: Set<UUID>) {
+        store.deleteTransactions(ids)
+        selection.subtract(ids)
+    }
+
+    private func table(_ columns: TransactionColumns) -> some View {
+        let tight = columns.isTight
+        return Table(items, selection: $selection, sortOrder: $sortOrder) {
             TableColumn("Date", value: \.date) { Text(Fmt.day($0.date)).numeric() }
-                .width(min: 76, ideal: 80, max: 110)
-            TableColumn("Type", value: \.kindTitle) { row in
-                Label(row.kindTitle, systemImage: row.kind.symbol).lineLimit(1)
+                .width(min: 70, ideal: tight ? 74 : 80, max: 110)
+            TableColumn(tight ? "" : "Type", value: \.kindTitle) { row in
+                if tight {
+                    Image(systemName: row.kind.symbol).help(row.kindTitle).accessibilityLabel(row.kindTitle)
+                } else {
+                    Label(row.kindTitle, systemImage: row.kind.symbol).lineLimit(1)
+                }
             }
-            .width(min: 70, ideal: 92, max: 170)
+            .width(min: tight ? 22 : 70, ideal: tight ? 24 : 88, max: 170)
             TableColumn("Shares", value: \.signedShares) { row in
-                Text(row.shares.isZero ? "" : Fmt.shares(Shares(raw: row.signedShares == 0 ? row.shares.raw : row.signedShares),
-                                                         signed: row.signedShares != 0))
+                let shares = Shares(raw: row.signedShares == 0 ? row.shares.raw : row.signedShares)
+                Text(row.shares.isZero ? "" : Fmt.shares(shares, signed: row.signedShares != 0, maxDecimals: 4))
                     .numeric()
                     .foregroundStyle(row.signedShares == 0 ? .secondary : .primary)
+                    .help(row.shares.isZero ? "" : Fmt.shares(shares, signed: row.signedShares != 0))
             }
-            .width(min: 70, ideal: 108, max: 140)
+            .width(min: 56, ideal: tight ? 60 : 80, max: 140)
             .alignment(.trailing)
             TableColumn("Price", value: \.priceRaw) { row in
-                Text(row.price.map { Fmt.price($0, currency: row.amount.currency) } ?? "").numeric()
-            }
-            .width(min: 64, ideal: 84, max: 130)
-            .alignment(.trailing)
-            TableColumn("Amount", value: \.amount.minor) { Text(Fmt.money($0.amount)).numeric() }
-                .width(min: 72, ideal: 88, max: 130)
-                .alignment(.trailing)
-            TableColumn("Costs", value: \.costs) { row in
-                Text(row.costs == 0 ? "" : Fmt.money(minor: row.costs, currency: row.amount.currency))
+                // Derived per-share figures (a dividend per share) have endless decimals: four are enough.
+                Text(row.price.map { Fmt.price($0, currency: row.priceCurrency, maxDecimals: 4) } ?? "")
                     .numeric()
-                    .help("Fees \(Fmt.money(minor: row.fees, currency: row.amount.currency)) · taxes \(Fmt.money(minor: row.taxes, currency: row.amount.currency))")
+                    .help(Self.priceHelp(row))
             }
-            .width(min: 50, ideal: 76, max: 120)
+            .width(min: 64, ideal: tight ? 84 : 96, max: 150)
             .alignment(.trailing)
-            TableColumn("Depot", value: \.place) { Text($0.place).lineLimit(1) }
-                .width(min: 60, ideal: 84, max: 200)
-            TableColumn("Note", value: \.note) { Text($0.note).lineLimit(1).foregroundStyle(.secondary) }
-                .width(min: 40, ideal: 56)
+            TableColumn("Amount", value: \.amount.minor) { row in
+                Text(Fmt.money(row.amount)).numeric().help(columns.showsCosts ? "" : Self.costsHelp(row))
+            }
+            .width(min: 72, ideal: tight ? 80 : 92, max: 150)
+            .alignment(.trailing)
+            if columns.showsCosts {
+                TableColumn("Costs", value: \.costs) { row in
+                    Text(row.costs == 0 ? "" : Fmt.money(minor: row.costs, currency: row.amount.currency))
+                        .numeric()
+                        .help(Self.costsHelp(row))
+                }
+                .width(min: 50, ideal: 76, max: 120)
+                .alignment(.trailing)
+            }
+            if columns.showsPlace {
+                TableColumn("Depot", value: \.place) { Text($0.place).lineLimit(1).help($0.place) }
+                    .width(min: 60, ideal: 80, max: 220)
+            }
+            if columns.showsNote {
+                TableColumn("Note", value: \.note) { Text($0.note).lineLimit(1).foregroundStyle(.secondary).help($0.note) }
+                    .width(min: 36, ideal: columns.noteWidth)
+            }
         }
+        // A different set of columns is a different table (AppKit keeps the old widths otherwise).
+        .id(columns)
         .opacity(rows.isRefreshing ? 0.7 : 1)
         .contextMenu(forSelectionType: UUID.self) { ids in
             Button("Edit…") { ids.first.map { store.present(.editTransaction($0)) } }.disabled(ids.count != 1)
@@ -150,20 +216,31 @@ struct SecurityTransactionsTab: View {
             Divider()
             Button("Copy") { Pasteboard.copy(tsv(ids)) }
             Divider()
-            Button("Delete", role: .destructive) { store.deleteTransactions(ids) }
+            Button("Delete", role: .destructive) { delete(ids) }
         } primaryAction: { ids in
             ids.first.map { store.present(.editTransaction($0)) }
         }
         .onCopyCommand { [NSItemProvider(object: tsv(selection) as NSString)] }
-        .onDeleteCommand { store.deleteTransactions(selection) }
+        .onDeleteCommand { delete(selection) }
+    }
+
+    private static func priceHelp(_ row: SecurityTransactionRow) -> String {
+        guard let price = row.price else { return "" }
+        var text = "\(Fmt.price(price, currency: row.priceCurrency)) per share"
+        if let booked = row.bookedPrice { text += " · booked at \(Fmt.price(booked, currency: row.amount.currency, maxDecimals: 4))" }
+        return text
+    }
+
+    private static func costsHelp(_ row: SecurityTransactionRow) -> String {
+        "Fees \(Fmt.money(minor: row.fees, currency: row.amount.currency)) · taxes \(Fmt.money(minor: row.taxes, currency: row.amount.currency))"
     }
 
     private func tsv(_ ids: Set<UUID>) -> String {
         TSV.string(
-            header: ["Date", "Type", "Shares", "Price", "Amount", "Fees", "Taxes", "Currency", "Depot", "Note"],
+            header: ["Date", "Type", "Shares", "Price", "Price Currency", "Amount", "Fees", "Taxes", "Currency", "Depot", "Note"],
             rows: items.filter { ids.contains($0.id) }.map { row in
                 [row.date.iso, row.kindTitle, TSV.number(row.shares.decimalValue), row.price.map { TSV.number($0.decimalValue) } ?? "",
-                 TSV.number(row.amount.decimalValue), TSV.number(Money(minor: row.fees, currency: row.amount.currency).decimalValue),
+                 row.price == nil ? "" : row.priceCurrency, TSV.number(row.amount.decimalValue), TSV.number(Money(minor: row.fees, currency: row.amount.currency).decimalValue),
                  TSV.number(Money(minor: row.taxes, currency: row.amount.currency).decimalValue), row.amount.currency, row.place, row.note]
             })
     }
@@ -209,8 +286,11 @@ struct SecurityPricesTab: View {
                     Button("Export Quotes…") { store.present(.export(ExportRequest(.quotes(securityID: id)))) }
                         .disabled(security.prices.isEmpty)
                     Divider()
-                    Button("Delete a Date Range…") { view.showsDeleteRange = true }
-                        .disabled(security.prices.isEmpty)
+                    Button("Delete a Date Range…") {
+                        resetDeleteRange()
+                        view.showsDeleteRange = true
+                    }
+                    .disabled(security.prices.isEmpty)
                 } label: {
                     Label("More", systemImage: "ellipsis.circle")
                 }
@@ -243,13 +323,32 @@ struct SecurityPricesTab: View {
             selection = []
             resetDrafts()
         }
+        .onChange(of: store.revision) { _, _ in
+            // Quotes removed by undo or a quote update must not stay "selected".
+            guard let prices = store.security(security.id)?.prices else { return }
+            let valid = selection.filter { prices.point(onOrBefore: Day(rawValue: $0))?.day.rawValue == $0 }
+            if valid.count != selection.count { selection = valid }
+        }
     }
 
     private func resetDrafts() {
         draftDay = store.today
         draftPrice = security.prices.point(onOrBefore: store.today)?.day == store.today ? security.prices.latest?.price ?? .zero : .zero
-        rangeTo = security.prices.lastDay ?? store.today
-        rangeFrom = security.prices.firstDay ?? store.today
+        resetDeleteRange()
+    }
+
+    /// The delete bar starts with the least it can: the selected quotes' span, else only the oldest
+    /// quote — never the whole history one click away from "Delete".
+    private func resetDeleteRange() {
+        let range = Self.defaultDeleteRange(selection: selection, prices: security.prices, today: store.today)
+        rangeFrom = range.lowerBound
+        rangeTo = range.upperBound
+    }
+
+    static func defaultDeleteRange(selection: Set<Int32>, prices: PriceSeries, today: Day) -> ClosedRange<Day> {
+        if let first = selection.min(), let last = selection.max() { return Day(rawValue: first)...Day(rawValue: last) }
+        let oldest = prices.firstDay ?? today
+        return oldest...oldest
     }
 
     private var table: some View {
@@ -285,25 +384,12 @@ struct SecurityPricesTab: View {
 
     private var deleteRangeBar: some View {
         let count = quoteCount(from: rangeFrom, to: rangeTo)
-        return HStack(spacing: DS.Spacing.s) {
-            Text("Delete quotes from")
-            DayField("From", day: $rangeFrom).labelsHidden().fixedSize()
-            Text("to")
-            DayField("To", day: $rangeTo).labelsHidden().fixedSize()
-            Text(count == 0 ? "no quotes in this range" : "\(Fmt.integer(count)) quote\(count == 1 ? "" : "s")")
-                .foregroundStyle(.secondary)
-                .numeric()
-            Spacer(minLength: DS.Spacing.s)
-            Button("Delete", role: .destructive) {
-                let from = rangeFrom, to = rangeTo
-                store.updateSecurity(id, actionName: "Delete \(count) Quote\(count == 1 ? "" : "s")") { security in
-                    security.prices = Self.removing(security.prices) { $0 >= from.rawValue && $0 <= to.rawValue }
-                }
-                view.showsDeleteRange = false
-                store.toast("Deleted \(Fmt.integer(count)) quotes", message: "Undo with ⌘Z", style: .info)
-            }
-            .disabled(count == 0)
-            Button("Cancel") { view.showsDeleteRange = false }.buttonStyle(.borderless)
+        let quotes = "\(Fmt.integer(count)) quote\(count == 1 ? "" : "s")"
+        // Narrow panes drop the words, never the dates, the count or the buttons.
+        return ViewThatFits(in: .horizontal) {
+            deleteRangeRow(lead: "Delete quotes from", count: count == 0 ? "no quotes in this range" : quotes, delete: "Delete", quotes: quotes)
+            deleteRangeRow(lead: nil, count: count == 0 ? "no quotes" : quotes, delete: "Delete", quotes: quotes)
+            deleteRangeRow(lead: nil, count: nil, delete: count == 0 ? "Delete" : "Delete \(Fmt.integer(count))", quotes: quotes)
         }
         .controlSize(.small)
         .lineLimit(1)
@@ -311,6 +397,34 @@ struct SecurityPricesTab: View {
         .padding(.vertical, DS.Spacing.s)
         .background(.quaternary.opacity(0.35))
         .overlay(alignment: .bottom) { Divider() }
+    }
+
+    private func deleteRangeRow(lead: String?, count: String?, delete: String, quotes: String) -> some View {
+        HStack(spacing: DS.Spacing.s) {
+            if let lead { Text(lead).fixedSize() }
+            DayField("From", day: $rangeFrom).labelsHidden().fixedSize()
+            Text("to").fixedSize()
+            DayField("To", day: $rangeTo).labelsHidden().fixedSize()
+            if let count { Text(count).foregroundStyle(.secondary).numeric().fixedSize() }
+            Spacer(minLength: DS.Spacing.s)
+            Button(delete, role: .destructive, action: deleteRange)
+                .fixedSize()
+                .disabled(quoteCount(from: rangeFrom, to: rangeTo) == 0)
+                .help("Delete \(quotes) (undo with ⌘Z)")
+            Button("Cancel") { view.showsDeleteRange = false }.buttonStyle(.borderless).fixedSize()
+        }
+    }
+
+    private func deleteRange() {
+        let from = rangeFrom, to = rangeTo
+        let count = quoteCount(from: from, to: to)
+        guard count > 0 else { return }
+        store.updateSecurity(id, actionName: "Delete \(count) Quote\(count == 1 ? "" : "s")") { security in
+            security.prices = Self.removing(security.prices) { $0 >= from.rawValue && $0 <= to.rawValue }
+        }
+        view.showsDeleteRange = false
+        selection = []
+        store.toast("Deleted \(Fmt.integer(count)) quote\(count == 1 ? "" : "s")", message: "Undo with ⌘Z", style: .info)
     }
 
     private func quoteCount(from: Day, to: Day) -> Int {
@@ -392,6 +506,8 @@ struct SecurityEventsTab: View {
     @State private var selection = Set<UUID>()
     @State private var noteDay = Day(rawValue: 0)
     @State private var noteText = ""
+    /// Width of the tab, known after the first layout pass.
+    @State private var width: CGFloat?
 
     var body: some View {
         let events = security.events.sorted { ($0.day, $0.kind.rawValue) > ($1.day, $1.kind.rawValue) }
@@ -400,7 +516,7 @@ struct SecurityEventsTab: View {
                 Button("Record Split…") {
                     store.present(.custom(id: SplitSheet.requestID, payload: ["security": security.id.uuidString]))
                 }
-                .help("Adjust earlier quotes and share counts for a stock split")
+                .help("Adjust earlier quotes, share counts or both for a stock split")
                 Button("Add Note") {
                     noteDay = store.today
                     view.showsNoteEditor = true
@@ -424,18 +540,24 @@ struct SecurityEventsTab: View {
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
+            } else if let width {
+                // `Table` gives a column its ideal width and no more, so Details is told how much
+                // room there is: everything the two fixed columns leave (about 17 pt chrome each).
+                let detailsWidth = (max(160, width - 110 - 104 - 3 * 17 - 12) / 40).rounded(.down) * 40
                 Table(events, selection: $selection) {
                     TableColumn("Date") { Text(Fmt.day($0.day, style: .medium)).numeric() }
-                        .width(min: 100, ideal: 120, max: 150)
+                        .width(min: 96, ideal: 110, max: 130)
                     TableColumn("Event") { event in
-                        Label(Self.title(event.kind), systemImage: Self.symbol(event.kind))
+                        Label(Self.title(event.kind), systemImage: Self.symbol(event.kind)).lineLimit(1)
                     }
-                    .width(min: 90, ideal: 120, max: 160)
+                    .width(min: 84, ideal: 104, max: 130)
                     TableColumn("Details") { event in
-                        Text(detail(event)).lineLimit(1).numeric()
+                        let text = detail(event)
+                        Text(text).lineLimit(1).numeric().help(text)
                     }
+                    .width(min: 160, ideal: detailsWidth)
                 }
+                .id(detailsWidth)
                 .contextMenu(forSelectionType: UUID.self) { ids in
                     if ids.count == 1, let event = events.first(where: { $0.id == ids.first }), event.kind == .dividend {
                         Button("Record Dividend…") { store.presentNewTransaction(.dividend, securityID: security.id, date: event.day) }
@@ -444,12 +566,21 @@ struct SecurityEventsTab: View {
                     Button("Delete", role: .destructive) { delete(ids) }
                 }
                 .onDeleteCommand { delete(selection) }
+            } else {
+                Color.clear.frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            TabFooter(text: "\(Fmt.integer(events.count)) event\(events.count == 1 ? "" : "s")",
+            TabFooter(text: "\(Fmt.integer(events.count)) event\(events.count == 1 ? "" : "s")"
+                      + (selection.isEmpty ? "" : " · \(Fmt.integer(selection.count)) selected"),
                       trailing: "Deleting an event does not change quotes or transactions")
         }
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
         .onAppear { if noteDay.rawValue == 0 { noteDay = store.today } }
         .onChange(of: security.id) { _, _ in selection = [] }
+        .onChange(of: store.revision) { _, _ in
+            let events = store.security(security.id)?.events ?? []
+            let valid = selection.filter { id in events.contains { $0.id == id } }
+            if valid.count != selection.count { selection = valid }
+        }
     }
 
     private var noteBar: some View {

@@ -3,6 +3,23 @@ import KontorModel
 import KontorEngine
 import KontorMarketData
 import Observation
+import Synchronization
+
+/// A thread-safe mirror of a store's current file.
+///
+/// The document layer needs the file while saving, on a background thread, at a moment when the
+/// main thread is blocked waiting for that very save. The store therefore publishes every new file
+/// here; `PortfolioFile` is a copy-on-write value type, so keeping the mirror costs nothing.
+public final class FileSnapshot: Sendable {
+    private let storage: Mutex<PortfolioFile>
+
+    public init(_ file: PortfolioFile) { storage = Mutex(file) }
+
+    /// The file as of the store's latest change. Safe to call from any thread, never blocks on the main actor.
+    public var current: PortfolioFile { storage.withLock { $0 } }
+
+    func set(_ file: PortfolioFile) { storage.withLock { $0 = file } }
+}
 
 /// The single source of truth of one open portfolio window: the document (`file`), derived lookup
 /// caches, the reporting period and all transient UI state (navigation, sheets, toasts, activity).
@@ -34,8 +51,23 @@ public final class PortfolioStore {
     /// identity of everything derived from the file.
     public private(set) var revision: Int = 0
 
-    /// The document's undo manager; the shell assigns it when the window appears.
-    @ObservationIgnored public var undoManager: UndoManager?
+    /// Always holds the current `file`; readable from any thread (used by the document while saving).
+    public nonisolated let snapshot: FileSnapshot
+
+    /// The document's undo manager; the shell assigns it when the window appears. Its depth is
+    /// bounded (see ``undoLevels(for:)``): every step retains the collections it changed.
+    @ObservationIgnored public var undoManager: UndoManager? {
+        didSet { undoManager?.levelsOfUndo = Self.undoLevels(for: file) }
+    }
+
+    /// How many undo steps to keep for `file`: 100 for everyday portfolios, fewer for very large
+    /// ones, because a step keeps a copy of every collection it changed (the whole ledger for a
+    /// transaction edit: about 12 MB with 50,000 transactions). At least 10.
+    public nonisolated static func undoLevels(for file: PortfolioFile) -> Int {
+        let bytesPerStep = max(1, file.transactions.count * MemoryLayout<Transaction>.stride)
+        let budget = 192 * 1024 * 1024
+        return min(100, max(10, budget / bytesPerStep))
+    }
 
     /// Called after a change that is *not* covered by an undo registration (`undoable: false`), so
     /// the document can still be marked as edited. Installed by the shell.
@@ -147,8 +179,12 @@ public final class PortfolioStore {
         var inception: Day??
     }
 
-    public init(file: PortfolioFile = PortfolioFile(), today: Day = .today, route: Route = Route(.dashboard)) {
+    /// - Parameter snapshot: the mirror to publish the file to; the document passes its own so
+    ///   it can save without touching the main actor.
+    public init(file: PortfolioFile = PortfolioFile(), today: Day = .today, route: Route = Route(.dashboard), snapshot: FileSnapshot? = nil) {
         self.file = file
+        self.snapshot = snapshot ?? FileSnapshot(file)
+        self.snapshot.set(file)
         self.today = today
         self.route = route
     }
@@ -164,8 +200,8 @@ public final class PortfolioStore {
     ///
     /// - Parameters:
     ///   - actionName: Shown in the Edit menu ("Undo Add Transaction").
-    ///   - undoable: Pass `false` for bulk background changes such as quote updates, which should
-    ///     dirty the document but not clutter the undo stack.
+    ///   - undoable: Pass `false` for background changes such as automatic quote updates, which
+    ///     dirty the document but neither add an undo step nor clear the redo stack.
     /// - Returns: `true` if the file changed.
     @discardableResult
     public func mutate(_ actionName: String, undoable: Bool = true, _ body: (inout PortfolioFile) throws -> Void) rethrows -> Bool {
@@ -179,6 +215,8 @@ public final class PortfolioStore {
         } else {
             onNonUndoableChange?()
         }
+        // A deleted entity must not stay the focus (inspector, "selected" commands).
+        validateRoute()
         return true
     }
 
@@ -190,17 +228,28 @@ public final class PortfolioStore {
 
     private func install(_ newFile: PortfolioFile) {
         file = newFile
+        snapshot.set(newFile)
         revision += 1
         caches = Caches()
+        if let undoManager {
+            let levels = Self.undoLevels(for: newFile)
+            if undoManager.levelsOfUndo != levels { undoManager.levelsOfUndo = levels }
+        }
+    }
+
+    /// Stops background work that belongs to this window (the shell calls it when the window closes).
+    public func shutdown() {
+        cancelQuoteUpdate()
     }
 
     private func registerUndo(restoring snapshot: PortfolioFile, actionName: String, in undoManager: UndoManager) {
-        undoManager.registerUndo(withTarget: self) { store in
+        // Weak: the handler lives in the manager's own stack and must not keep it alive.
+        undoManager.registerUndo(withTarget: self) { [weak undoManager] store in
             let current = store.file
             store.install(snapshot)
             store.validateRoute()
             // Registering during undo records the redo step (and vice versa).
-            store.registerUndo(restoring: current, actionName: actionName, in: undoManager)
+            if let undoManager { store.registerUndo(restoring: current, actionName: actionName, in: undoManager) }
         }
         undoManager.setActionName(actionName)
     }

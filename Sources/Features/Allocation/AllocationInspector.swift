@@ -11,9 +11,10 @@ struct AllocationInspector: View {
         let session = AllocationSession.session(for: store)
         Group {
             if let taxonomy = session.taxonomy(in: store.file) {
+                let key = store.allocationKey(for: taxonomy)
                 content(taxonomy, session: session)
-                    .analysisTask($model, id: "allocation.model", variant: taxonomy.id) { analysis in
-                        AllocationModel(analysis, taxonomy: taxonomy)
+                    .analysisTask($model, id: "allocation.model", variant: key) { analysis in
+                        AllocationModel(analysis, taxonomy: taxonomy, scopeRoot: key.scopeRoot)
                     }
             } else {
                 Form {
@@ -41,11 +42,17 @@ struct AllocationInspector: View {
                         Text(node.name).font(.headline)
                     }
                     KeyValueRow("Path", taxonomy.pathTitle(of: node.id))
-                    if !node.note.isEmpty { Text(node.note).foregroundStyle(.secondary) }
+                    NoteField(note: node.note) { note in
+                        store.editTaxonomy(taxonomy.id, "Change Note") { $0.update(node.id) { $0.note = note } }
+                    }
+                    .id(node.id)
                 }
                 Section("Allocation") {
                     KeyValueRow("Value") { Text(row.map { Fmt.money(minor: $0.value, currency: model?.currency) } ?? Fmt.missing).numeric() }
-                    KeyValueRow("Actual") { Text(Fmt.percent(row?.share)).numeric() }
+                    KeyValueRow("Actual") {
+                        Text(Fmt.percent(row?.share)).numeric()
+                            .help("Share of the classified value — the base the targets refer to")
+                    }
                     KeyValueRow("Target") {
                         HStack(spacing: DS.Spacing.xs) {
                             Text(Fmt.percent(row?.targetShare)).numeric()
@@ -103,5 +110,57 @@ struct AllocationInspector: View {
         }
         .formStyle(.grouped)
         .scrollContentBackground(.hidden)
+    }
+}
+
+/// The classification's note. Reads as text; a click turns it into a field that is saved when it
+/// loses focus or Return is pressed (one undo step per edit; clearing it is allowed). Not a
+/// permanent text field: that would take the keyboard focus whenever the inspector opens.
+private struct NoteField: View {
+    let note: String
+    let onCommit: (String) -> Void
+    @State private var draft = ""
+    @State private var isEditing = false
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        if isEditing {
+            TextField("Note", text: $draft, prompt: Text("Add a note"), axis: .vertical)
+                .lineLimit(1...5)
+                .labelsHidden()
+                .focused($isFocused)
+                .onSubmit(commit)
+                .onAppear { isFocused = true }
+                .onChange(of: isFocused) { _, focused in if !focused { commit() } }
+                .onExitCommand { isEditing = false }
+                .accessibilityLabel("Note")
+        } else {
+            Button {
+                draft = note
+                isEditing = true
+            } label: {
+                HStack(alignment: .firstTextBaseline, spacing: DS.Spacing.s) {
+                    Text(note.isEmpty ? "Add a note" : note)
+                        .foregroundStyle(note.isEmpty ? .tertiary : .secondary)
+                        .multilineTextAlignment(.leading)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Image(systemName: "pencil")
+                        .imageScale(.small)
+                        .foregroundStyle(.tertiary)
+                        .accessibilityHidden(true)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Edit the note of this classification — it is saved with the file")
+            .accessibilityLabel(note.isEmpty ? "Add a note" : "Note: \(note). Edit")
+        }
+    }
+
+    private func commit() {
+        guard isEditing else { return }
+        isEditing = false
+        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        if text != note { onCommit(text) }
     }
 }

@@ -49,7 +49,11 @@ struct ProjectionPanel: View {
                 .frame(width: 304)
                 VStack(alignment: .leading, spacing: DS.Spacing.l) {
                     if let outcome {
-                        results(outcome)
+                        if outcome.input.isEmpty {
+                            nothingToProject
+                        } else {
+                            results(outcome)
+                        }
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -78,12 +82,14 @@ struct ProjectionPanel: View {
         Card("Assumptions", symbol: "slider.horizontal.3") {
             VStack(alignment: .leading, spacing: DS.Spacing.m) {
                 controlRow("Expected Return", detail: "per year") {
-                    PercentField("Expected return per year", fraction: $annualReturn, decimals: 1).frame(width: 72)
-                    Stepper("Expected return", value: $annualReturn, in: -0.5...0.5, step: 0.005).labelsHidden()
+                    PercentField("Expected return per year", fraction: clamped($annualReturn, ProjectionInput.clampedReturn), decimals: 1)
+                        .frame(width: 72)
+                    Stepper("Expected return", value: $annualReturn, in: ProjectionInput.returnRange, step: 0.005).labelsHidden()
                 }
                 controlRow("Range", detail: "± around it") {
-                    PercentField("Range around the expected return", fraction: $spread, decimals: 1).frame(width: 72)
-                    Stepper("Range", value: $spread, in: 0...0.25, step: 0.005).labelsHidden()
+                    PercentField("Range around the expected return", fraction: clamped($spread, ProjectionInput.clampedSpread), decimals: 1)
+                        .frame(width: 72)
+                    Stepper("Range", value: $spread, in: ProjectionInput.spreadRange, step: 0.005).labelsHidden()
                 }
                 VStack(alignment: .leading, spacing: DS.Spacing.xs) {
                     HStack {
@@ -122,6 +128,11 @@ struct ProjectionPanel: View {
             Spacer(minLength: DS.Spacing.s)
             control()
         }
+    }
+
+    /// The text fields accept any number; what reaches the model stays within the stepper's range.
+    private func clamped(_ binding: Binding<Double>, _ clamp: @escaping (Double) -> Double) -> Binding<Double> {
+        Binding(get: { binding.wrappedValue }, set: { binding.wrappedValue = clamp($0) })
     }
 
     private var yearsSlider: Binding<Double> {
@@ -188,6 +199,28 @@ struct ProjectionPanel: View {
     }
 
     // MARK: Results
+
+    /// Instead of tiles and a chart full of zeros.
+    private var nothingToProject: some View {
+        let hasPortfolio = (base.value?.currentValue ?? 0) > 0
+        let hasPlans = base.value?.plans.contains(where: \.isActive) ?? false
+        return EmptyState(
+            "Nothing to Project Yet", symbol: "chart.line.uptrend.xyaxis",
+            message: hasPortfolio && !startsFromCurrent
+                ? "The projection starts at zero and no plan pays anything in. Start from today's portfolio, or include a plan that adds money."
+                : hasPlans
+                    ? "No plan that pays money in is included. Switch one on under Contributions."
+                    : "A projection needs a starting value or a plan that pays money in. Add a savings or deposit plan to see where it could lead."
+        ) {
+            if hasPortfolio && !startsFromCurrent {
+                Button("Start from Today's Portfolio") { startsFromCurrent = true }
+            }
+            if !hasPlans {
+                Button("New Plan…") { store.present(.newPlan) }
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: 360)
+    }
 
     @ViewBuilder private func results(_ outcome: ProjectionOutcome) -> some View {
         SectionHeader(years == 1 ? "In 1 Year" : "In \(Fmt.integer(outcome.years)) Years", subtitle: Fmt.day(outcome.endDay, style: .monthYear))
@@ -263,19 +296,20 @@ struct ProjectionPanel: View {
         let input = ProjectionInput(
             startValue: startsFromCurrent ? max(base.currentValue, 0) : 0,
             flows: base.flows(including: selection, years: years),
-            annualReturn: annualReturn, spread: spread, years: years)
+            annualReturn: ProjectionInput.clampedReturn(annualReturn), spread: ProjectionInput.clampedSpread(spread),
+            years: min(max(years, 1), ProjectionBase.maximumYears))
         outcome = ProjectionOutcome(input: input, base: base)
     }
 
     private func applyLaunchState() {
         guard !didApplyLaunchState else { return }
         didApplyLaunchState = true
-        annualReturn = storedReturn
-        spread = storedSpread
+        annualReturn = ProjectionInput.clampedReturn(storedReturn)
+        spread = ProjectionInput.clampedSpread(storedSpread)
         years = min(max(storedYears, 1), ProjectionBase.maximumYears)
         startsFromCurrent = storedFromCurrent
-        if let value = store.launchValue("return").flatMap(Fmt.parseDouble) { annualReturn = value / 100 }
-        if let value = store.launchValue("spread").flatMap(Fmt.parseDouble) { spread = abs(value) / 100 }
+        if let value = store.launchValue("return").flatMap(Fmt.parseDouble) { annualReturn = ProjectionInput.clampedReturn(value / 100) }
+        if let value = store.launchValue("spread").flatMap(Fmt.parseDouble) { spread = ProjectionInput.clampedSpread(value / 100) }
         if let value = store.launchValue("years").flatMap({ Int($0) }) { years = min(max(value, 1), ProjectionBase.maximumYears) }
         if store.launchValue("start") == "zero" { startsFromCurrent = false }
         switch store.launchValue("include") {
@@ -310,6 +344,11 @@ struct ProjectionOutcome {
     var series: [TimeSeries]
     var paidInCaption: String
     var depletionNote: String
+    /// Whether a scenario exceeds `limit` within the horizon.
+    var isCapped: Bool
+
+    /// The largest value shown, in minor units — just below what `Int64` holds.
+    static let limit = 9.2e18
 
     init(input: ProjectionInput, base: ProjectionBase) {
         self.input = input
@@ -333,16 +372,20 @@ struct ProjectionOutcome {
 
         let days = (0...result.months).map { today.addingMonths($0) }
         let hue = ChartColors.series(0)
+        // Extreme assumptions over decades outgrow what money values can hold; the chart is drawn
+        // up to that limit (the tiles and milestones saturate at it, see `money`).
+        func capped(_ values: [Double]) -> [Double] { values.map { min(max($0, -Self.limit), Self.limit) } }
+        isCapped = (result.optimistic + result.expected).contains { $0 > Self.limit }
         series = [
-            TimeSeries("Expected", days: days, values: result.expected, style: .area, color: hue),
-            TimeSeries("Optimistic", days: days, values: result.optimistic, color: hue, dashed: true),
-            TimeSeries("Pessimistic", days: days, values: result.pessimistic, color: hue, dashed: true),
-            TimeSeries("Paid in", days: days, values: result.contributions, style: .step, color: ChartColors.comparison),
+            TimeSeries("Expected", days: days, values: capped(result.expected), style: .area, color: hue),
+            TimeSeries("Optimistic", days: days, values: capped(result.optimistic), color: hue, dashed: true),
+            TimeSeries("Pessimistic", days: days, values: capped(result.pessimistic), color: hue, dashed: true),
+            TimeSeries("Paid in", days: days, values: capped(result.contributions), style: .step, color: ChartColors.comparison),
         ]
 
         let contributed = end.paidIn - Double(input.startValue)
         let start = Fmt.moneyRounded(Money(minor: input.startValue, currency: currency))
-        let added = Fmt.moneyRounded(Money(minor: Int64(abs(contributed).rounded()), currency: currency))
+        let added = Fmt.moneyRounded(Money(minor: FixedMath.saturatingInt64(abs(contributed)), currency: currency))
         if input.startValue == 0 {
             paidInCaption = contributed == 0 ? "No contributions" : "Contributions only"
         } else if contributed == 0 {
@@ -350,14 +393,18 @@ struct ProjectionOutcome {
         } else {
             paidInCaption = "\(start) \(contributed < 0 ? "−" : "+") \(added)"
         }
-        if let month = result.depletedMonth {
+        if isCapped {
+            depletionNote = " With these assumptions the value outgrows the largest amount Kontor can show; it is capped there."
+        } else if let month = result.depletedMonth {
             depletionNote = " With these withdrawals the expected scenario runs out of money in \(Fmt.day(today.addingMonths(month), style: .monthYear))."
         } else {
             depletionNote = ""
         }
     }
 
+    /// A projected value as money. Fifty years of compounding can exceed what `Int64` holds, so
+    /// the conversion saturates instead of trapping.
     func money(_ value: Double) -> Money {
-        Money(minor: Int64(value.rounded()), currency: currency)
+        Money(minor: FixedMath.saturatingInt64(value), currency: currency)
     }
 }

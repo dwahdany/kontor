@@ -40,14 +40,14 @@ struct MetricTile<Value: View>: View {
     }
 }
 
-/// The six header figures, all taken from the engine's `TradeStatistics` of the filtered trades.
+/// The six header figures, all taken from the `TradeFigures` of the listed rows.
 struct TradeTiles: View {
     @Environment(\.gainStyle) private var gainStyle
     let model: TradeListModel
     let thresholdDays: Int
     let width: CGFloat
 
-    private var stats: TradeStatistics { model.statistics }
+    private var stats: TradeFigures { model.figures }
     private var isClosed: Bool { model.kind == .closed }
     private var isCompact: Bool { width < 960 }
     private var heroFont: Font { isCompact ? .system(size: 20, weight: .semibold, design: .rounded) : .kontorHero }
@@ -66,7 +66,7 @@ struct TradeTiles: View {
             ) {
                 Text(signedMoney(stats.totalGain))
                     .font(heroFont).numeric()
-                    .foregroundStyle(stats.count == 0 ? AnyShapeStyle(.primary) : AnyShapeStyle(gainStyle.color(forMinor: stats.totalGain)))
+                    .foregroundStyle(stats.valued == 0 ? AnyShapeStyle(.primary) : AnyShapeStyle(gainStyle.color(forMinor: stats.totalGain)))
             }
             MetricTile(label: isClosed ? "Avg. Win / Loss" : "Avg. Gain / Loss") {
                 VStack(alignment: .leading, spacing: 1) {
@@ -80,32 +80,36 @@ struct TradeTiles: View {
             MetricTile(label: isCompact ? "Avg. Holding" : "Avg. Holding Period", topic: .holdingPeriod, footnote: holdingFootnote) {
                 Text(stats.averageHoldingDays.map { Fmt.duration(days: Int($0.rounded())) } ?? Fmt.missing).font(heroFont).numeric()
             }
+            .help("Each trade counts with the average holding period of its lots, weighted by shares — not with the age of its oldest lot. The long-term part of the gain is measured lot by lot.")
         }
         .fixedSize(horizontal: false, vertical: true)
     }
 
     private var outcomeFootnote: String {
         guard stats.count > 0 else { return model.totalCount > 0 ? "no trades match" : isClosed ? "none in this period" : "nothing held" }
-        return isClosed
+        let outcome = isClosed
             ? "\(Fmt.integer(stats.winners)) won · \(Fmt.integer(stats.losers)) lost"
             : "\(Fmt.integer(stats.winners)) up · \(Fmt.integer(stats.losers)) down"
+        return stats.unvalued > 0 ? "\(outcome) · \(Fmt.integer(stats.unvalued)) \(isCompact ? "n/a" : "not valued")" : outcome
     }
 
     private var profitFootnote: String {
-        guard stats.count > 0 else { return "profit ÷ loss" }
+        guard stats.valued > 0 else { return "profit ÷ loss" }
         if stats.grossLoss == 0 { return isClosed ? "no losing trades" : "no positions at a loss" }
         return "\(Fmt.compactMoney(minor: stats.grossProfit, currency: model.currency)) ÷ \(Fmt.compactMoney(minor: stats.grossLoss, currency: model.currency))"
     }
 
     private var holdingFootnote: String {
-        guard stats.count > 0 else { return "long-term: > \(LongTermThreshold.title(days: thresholdDays))" }
-        let share = "\(Fmt.integer(model.longTermCount)) of \(Fmt.integer(stats.count))"
-        return isCompact ? "\(share) long-term" : "\(share) over \(LongTermThreshold.title(days: thresholdDays))"
+        guard stats.valued > 0 else { return "long-term: > \(LongTermThreshold.title(days: thresholdDays))" }
+        // The long-term part is measured per lot and in money: a savings plan sold at once is
+        // long-term only for the lots that were held long enough.
+        let gain = (stats.longTermGain > 0 ? "+" : "") + Fmt.compactMoney(minor: stats.longTermGain, currency: model.currency)
+        return isCompact ? "\(gain) long-term" : "\(gain) from lots held > \(LongTermThreshold.title(days: thresholdDays))"
     }
 
     /// Whole currency units in compact tiles, exact amounts otherwise.
     private func signedMoney(_ minor: Int64) -> String {
-        guard stats.count > 0 else { return Fmt.missing }
+        guard stats.valued > 0 else { return Fmt.missing }
         let money = Money(minor: minor, currency: model.currency)
         if isCompact || abs(minor) >= 100_000_000 {
             return (minor > 0 ? "+" : "") + Fmt.moneyRounded(money)
@@ -158,7 +162,8 @@ struct TradeFilterMenu: View {
             HStack(spacing: DS.Spacing.s) {
                 Menu(outcome.title(kind)) { outcomeItems }
                 Menu(holdingTitle) { holdingItems }
-                Menu(year.map { String($0) } ?? "All Years") { yearItems }
+                Menu(yearTitle) { yearItems }
+                    .help(kind == .closed ? "Trades closed in a calendar year" : "Shares bought in a calendar year (per lot)")
                 if depots.count > 1 {
                     Menu(depots.first { $0.id == depotID }?.name ?? "All Depots") { depotItems }
                 }
@@ -168,7 +173,7 @@ struct TradeFilterMenu: View {
             Menu {
                 Section("Result") { outcomeItems }
                 Section("Holding Period") { holdingItems }
-                Menu(kind == .closed ? "Closing Year" : "Opening Year") { yearItems }
+                Menu(kind == .closed ? "Closing Year" : "Purchase Year") { yearItems }
                 if depots.count > 1 {
                     Menu("Depot") { depotItems }
                 }
@@ -191,6 +196,12 @@ struct TradeFilterMenu: View {
         .controlSize(.regular)
     }
 
+    /// The year filter means something else on each tab; the pop-up says which.
+    private var yearTitle: String {
+        guard let year else { return "All Years" }
+        return "\(kind == .closed ? "Closed in" : "Bought in") \(String(year))"
+    }
+
     private var holdingTitle: String {
         switch holding {
         case .all: "Any Holding Period"
@@ -210,8 +221,8 @@ struct TradeFilterMenu: View {
     @ViewBuilder private var holdingItems: some View {
         Picker("Holding Period", selection: $holding) {
             Text("Any Holding Period").tag(HoldingFilter.all)
-            Text("Long-Term — held more than \(LongTermThreshold.title(days: thresholdDays))").tag(HoldingFilter.longTerm)
-            Text("Short-Term — held up to \(LongTermThreshold.title(days: thresholdDays))").tag(HoldingFilter.shortTerm)
+            Text("Long-Term — lots held more than \(LongTermThreshold.title(days: thresholdDays))").tag(HoldingFilter.longTerm)
+            Text("Short-Term — lots held up to \(LongTermThreshold.title(days: thresholdDays))").tag(HoldingFilter.shortTerm)
         }
         .pickerStyle(.inline)
         .labelsHidden()
@@ -250,10 +261,62 @@ struct TradeFilterMenu: View {
     }
 }
 
+// MARK: - Notices
+
+/// Data problems that change how far the figures can be trusted: positions without a valuation,
+/// prices derived from transactions, amounts without an exchange rate — and the note that a
+/// classification scope counts securities partially.
+struct TradeNoticeBar: View {
+    let notices: [TradeNotice]
+    /// Title of the scope if it counts securities partially.
+    let weightedScope: String?
+    let showSecurity: (UUID) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DS.Spacing.xs) {
+            ForEach(notices) { notice in
+                line(symbol: notice.isWarning ? "exclamationmark.triangle.fill" : "info.circle", isWarning: notice.isWarning, text: notice.message) {
+                    ForEach(notice.securities.prefix(3)) { security in
+                        Button(notice.securities.count == 1 ? "Show Security" : security.name) { showSecurity(security.id) }
+                            .buttonStyle(.link)
+                            .lineLimit(1)
+                            .help("Show \(security.name) in Securities")
+                    }
+                }
+            }
+            if let weightedScope {
+                line(symbol: "chart.pie", isWarning: false,
+                     text: "\(weightedScope) counts some securities only partly. Their shares, cost and value are shown at that weight.") {
+                    EmptyView()
+                }
+            }
+        }
+        .font(.callout)
+        .padding(.horizontal, DS.Spacing.m)
+        .padding(.vertical, DS.Spacing.s)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .cardBackground()
+    }
+
+    private func line(symbol: String, isWarning: Bool, text: String, @ViewBuilder links: () -> some View) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: DS.Spacing.s) {
+            Image(systemName: symbol)
+                .foregroundStyle(isWarning ? AnyShapeStyle(DS.Colors.warning) : AnyShapeStyle(.secondary))
+                .accessibilityLabel(isWarning ? "Warning" : "Note")
+            Text(text)
+                .foregroundStyle(isWarning ? .primary : .secondary)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+            links()
+            Spacer(minLength: 0)
+        }
+    }
+}
+
 // MARK: - Charts
 
 /// The charts of the trade lists (`--state chart=…`).
-enum TradeChartKind: String, Sendable, Hashable, CaseIterable, Identifiable {
+enum TradeChartKind: String, Sendable, Hashable, CaseIterable, Identifiable, Codable {
     case period, distribution, cumulative, holding
 
     var id: String { rawValue }
@@ -337,7 +400,7 @@ struct TradeChartStrip: View {
                 name: model.kind == .closed ? "Realized gain" : "Unrealized gain", format: .money(model.currency), title: kind.title(model))
                 .pinnedHover(pinsHover ? charts.byPeriod.categories.last?.id : nil)
                 .loading(isRefreshing)
-                .emptyMessage("No \(noun) match")
+                .emptyMessage(model.figures.valued > 0 ? "No gain or loss yet" : "No \(noun) with a valuation")
         case .distribution:
             DistributionChart(charts.returns, format: .percent(decimals: 0, signed: true, compounding: false), title: kind.title(model))
                 .markers(mean: false, median: true)
@@ -358,7 +421,7 @@ struct TradeChartStrip: View {
                 format: .percent(decimals: 1, signed: true, compounding: false), title: kind.title(model))
                 .pinnedHover(pinsHover ? pinnedHoldingBucket : nil)
                 .loading(isRefreshing)
-                .emptyMessage("No \(noun) match")
+                .emptyMessage(model.figures.valued > 0 ? "No gain or loss yet" : "No \(noun) with a valuation")
         }
     }
 

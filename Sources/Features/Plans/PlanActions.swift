@@ -25,11 +25,29 @@ enum PlanActions {
 
     static func pause(_ id: UUID, in store: PortfolioStore) {
         let today = store.today
+        var replacedEnd: Day?
+        var name = ""
         store.mutate("Pause Plan") { file in
             guard let index = file.plans.firstIndex(where: { $0.id == id }) else { return }
-            PlanGeneration.pause(&file.plans[index], today: today)
+            name = file.plans[index].name
+            replacedEnd = PlanGeneration.pause(&file.plans[index], today: today)
+        }
+        // The model has one end date and no pause state: pausing a plan that was set to end later
+        // overwrites that date. Say so instead of dropping it silently.
+        if let replacedEnd, replacedEnd > today {
+            store.toast(
+                "Paused “\(name)”",
+                message: "The plan was set to end on \(Fmt.day(replacedEnd, style: .medium)). Pausing replaced that date — enter it again after resuming, or undo with ⌘Z.",
+                style: .info)
         }
     }
+
+    static func canPause(_ plan: InvestmentPlan, today: Day) -> Bool {
+        PlanGeneration.canPause(plan, today: today)
+    }
+
+    static let pauseHelp = "Ends the plan today, so nothing new comes due. Resume it at any time."
+    static let cannotPauseHelp = "This plan has not run yet. Change its first execution in the editor, or delete it."
 
     static func resume(_ id: UUID, in store: PortfolioStore) {
         let today = store.today
@@ -54,14 +72,12 @@ enum PlanActions {
     }
 
     static func duplicate(_ id: UUID, in store: PortfolioStore) {
-        guard var copy = store.plan(id) else { return }
-        copy.id = UUID()
-        copy.name += " Copy"
-        copy.start = max(copy.start, store.today.startOfMonth.addingMonths(1))
-        copy.end = nil
-        copy.skippedDates = nil
+        guard let original = store.plan(id) else { return }
+        let copy = PlanGeneration.duplicate(original, today: store.today)
         store.mutate("Duplicate Plan") { $0.plans.append(copy) }
         store.navigate(to: .plan(copy.id))
+        // A copy is rarely wanted unchanged: open it so name, amount and dates can be adjusted.
+        store.present(.editPlan(copy.id))
     }
 
     /// Whether the plan's end date has passed (it is paused or finished).

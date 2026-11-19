@@ -36,6 +36,33 @@ struct StackedAreaData: Sendable, Equatable {
     func total(at index: Int) -> Double { series.reduce(0) { $0 + $1.values[index] } }
 }
 
+/// Places one floating label (a chart tooltip) at the top of the container, beside a vertical
+/// crosshair at `anchorX`: to its right, or to its left where the right side has no room, and
+/// never outside the container.
+struct TooltipPlacement: Layout {
+    var anchorX: CGFloat
+    var gap: CGFloat = 12
+
+    /// Leading edge of a label of `width` in a container of `container` width.
+    static func leading(anchorX: CGFloat, width: CGFloat, container: CGFloat, gap: CGFloat = 12) -> CGFloat {
+        var left = anchorX + gap
+        if left + width > container { left = anchorX - gap - width }
+        return min(max(0, left), max(0, container - width))
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        proposal.replacingUnspecifiedDimensions()
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            let left = Self.leading(anchorX: anchorX, width: size.width, container: bounds.width, gap: gap)
+            subview.place(at: CGPoint(x: bounds.minX + left, y: bounds.minY), anchor: .topLeading, proposal: .unspecified)
+        }
+    }
+}
+
 /// A stacked area chart over days: what each part contributes to a total over time.
 ///
 /// The shared chart kit has line and wash-area series but no stacking, so this one composition is
@@ -75,19 +102,14 @@ struct StackedAreaChart: View {
                 GeometryReader { proxy in
                     let geometry = Geometry(data, size: proxy.size, format: format)
                     let active = activeIndex
-                    let width = proxy.size.width
                     Canvas { context, _ in
                         draw(&context, geometry, active: active)
                     }
-                    .overlay(alignment: .topLeading) {
+                    .overlay {
                         if let active {
-                            tooltip(active)
-                                .alignmentGuide(.leading) { d in
-                                    let x = geometry.x(active)
-                                    var left = x + 12
-                                    if left + d.width > width { left = x - 12 - d.width }
-                                    return -min(max(0, left), max(0, width - d.width))
-                                }
+                            // Explicit placement: the tooltip sits beside the crosshair and flips to
+                            // its other side where it would leave the chart.
+                            TooltipPlacement(anchorX: geometry.x(active)) { tooltip(active) }
                                 .allowsHitTesting(false)
                         }
                     }

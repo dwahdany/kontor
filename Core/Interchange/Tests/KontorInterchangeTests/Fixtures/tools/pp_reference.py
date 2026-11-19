@@ -56,7 +56,7 @@ def analyze(path):
             for p in ps:
                 days[p.get('t')[:10]] = int(p.get('v')) * pf
         lat = child(s, 'latest')
-        if lat is not None and lat.get('t') and (not days or lat.get('t')[:10] > max(days)):
+        if lat is not None and lat.get('t') and (not days or lat.get('t')[:10] >= max(days)):
             days[lat.get('t')[:10]] = int(lat.get('v')) * pf
         prices[txt(s,'uuid') or txt(s,'name')] = [len(days), sum(days.values())]
     out['prices'] = prices

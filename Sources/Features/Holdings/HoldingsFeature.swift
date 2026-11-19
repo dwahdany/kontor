@@ -17,8 +17,9 @@ public enum HoldingsFeature {
         let state = HoldingsViewState.of(store)
         func show(_ change: @escaping @MainActor (HoldingsViewState) -> Void) -> @MainActor () -> Void {
             {
-                state.isSeeded = true
-                change(state)
+                // Not before the screen restored this window's stored view settings: `apply`
+                // queues the change until then (the screen seeds itself when it appears).
+                state.apply(change)
                 if store.route.screen != .holdings { store.navigate(to: .holdings) }
             }
         }

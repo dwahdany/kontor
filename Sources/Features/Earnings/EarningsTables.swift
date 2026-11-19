@@ -27,62 +27,23 @@ struct EarningsSecuritiesTable: View {
 
     var body: some View {
         Table(rows, selection: $selection, sortOrder: $sortOrder) {
-            TableColumn("Security", value: \.name) { row in
-                HStack(spacing: DS.Spacing.s) {
-                    Text(row.name)
-                        .foregroundStyle(row.securityID == nil || row.isRetired ? .secondary : .primary)
-                    Text(row.detail).font(.callout).foregroundStyle(.tertiary)
+            amountColumns
+            // A share of the total only while all parts have the same sign (decided for the whole
+            // table): refunds among taxes or costs among net income push the shares past 100 %.
+            if model.securitySharesAreMeaningful {
+                TableColumn("Share of Total", value: \.share) { row in
+                    ShareBar(share: row.share, color: model.kind.color)
                 }
-                .lineLimit(1)
+                .width(min: 110, ideal: 130)
             }
-            .width(min: 180, ideal: 300)
-            TableColumn(model.kind.title, value: \.amount) { row in
-                Text(Fmt.money(minor: row.amount, currency: model.currency))
-                    .numeric()
-                    .foregroundStyle(row.amount < 0 && model.kind == .net ? AnyShapeStyle(gainStyle.loss) : AnyShapeStyle(.primary))
+            // Payments, last dividend, per share and yield describe dividends: under Fees, Taxes,
+            // Interest or Net they would sit next to amounts they have nothing to do with.
+            if model.showsDividendColumns {
+                dividendColumns
             }
-            .width(min: 90, ideal: 120)
-            .alignment(.trailing)
-            TableColumn("Share of Total", value: \.share) { row in
-                ShareBar(share: row.share, color: model.kind.color)
-            }
-            .width(min: 110, ideal: 150)
-            TableColumn("Payments", value: \.count) { row in
-                Text(row.count == 0 ? Fmt.missing : Fmt.integer(row.count))
-                    .numeric()
-                    .foregroundStyle(row.count == 0 ? .tertiary : .primary)
-            }
-            .width(min: 60, ideal: 76)
-            .alignment(.trailing)
-            TableColumn("Last Payment", value: \.lastDaySortKey) { row in
-                if let day = row.lastDay {
-                    HStack(spacing: DS.Spacing.s) {
-                        Text(Fmt.money(minor: row.lastGross, currency: model.currency)).foregroundStyle(.secondary)
-                        Text(Fmt.day(day))
-                    }
-                    .numeric()
-                    .lineLimit(1)
-                } else {
-                    Text(Fmt.missing).foregroundStyle(.tertiary)
-                }
-            }
-            .width(min: 130, ideal: 170)
-            .alignment(.trailing)
-            TableColumn("Per Share", value: \.perShareSortKey) { row in
-                Text(EarningsFormat.perShare(row.perShare, currency: model.currency))
-                    .numeric()
-                    .foregroundStyle(row.perShare == nil ? .tertiary : .primary)
-            }
-            .width(min: 70, ideal: 90)
-            .alignment(.trailing)
-            TableColumn("Yield on Cost", value: \.yieldSortKey) { row in
-                Text(Fmt.percent(row.yieldOnCost))
-                    .numeric()
-                    .foregroundStyle(row.yieldOnCost == nil ? .tertiary : .primary)
-            }
-            .width(min: 80, ideal: 100)
-            .alignment(.trailing)
         }
+        // The column set depends on the figure: a new table instead of one restructured in place.
+        .id([model.showsDividendColumns, model.securitySharesAreMeaningful])
         .contextMenu(forSelectionType: Row.ID.self) { ids in
             let securityIDs = securityIDs(ids)
             Button("Show Security") { securityIDs.first.map { store.navigate(to: .security($0)) } }
@@ -103,7 +64,12 @@ struct EarningsSecuritiesTable: View {
             let securityIDs = securityIDs(ids)
             store.setFocus(securityIDs.count == 1 ? .security(securityIDs[0]) : nil)
         }
-        .onChange(of: model.securities) { _, new in rows = new.sorted(using: sortOrder) }
+        .onChange(of: model.securities) { _, new in
+            rows = new.sorted(using: sortOrder)
+            // A selection must not outlive its rows (another figure, period or scope).
+            let visible = EarningsRules.visible(selection, in: new.lazy.map(\.id))
+            if visible != selection { selection = visible }
+        }
         .onChange(of: store.route.securityID, initial: true) { _, id in
             // A deep link or the inspector's focus selects the row.
             if let id, selection != [id], model.securities.contains(where: { $0.id == id }) { selection = [id] }
@@ -118,14 +84,80 @@ struct EarningsSecuritiesTable: View {
         .safeAreaInset(edge: .bottom, spacing: 0) {
             TableFooter(count: rows.count, noun: "security", selected: selection.count) {
                 HStack(spacing: DS.Spacing.m) {
-                    HelpLabel("Yield on cost: last 12 months", topic: .yieldOnCost)
+                    if !model.securitySharesAreMeaningful, !rows.isEmpty {
+                        Text("No shares of the total: positive and negative amounts offset each other")
+                    }
+                    if model.showsDividendColumns {
+                        Text("Per share in \(model.currency) at the payment day's rate")
+                            .help("Dividends of securities in another currency are converted at the exchange rate of the day they were paid.")
+                        HelpLabel("Yield on cost: last 12 months", topic: .yieldOnCost)
+                    }
                     Text("Total \(Fmt.money(minor: model.totalValue, currency: model.currency))").numeric()
                 }
+                .lineLimit(1)
                 .font(.callout)
                 .foregroundStyle(.secondary)
             }
         }
         .tableChrome()
+    }
+
+    @TableColumnBuilder<Row, KeyPathComparator<Row>> private var amountColumns: some TableColumnContent<Row, KeyPathComparator<Row>> {
+        TableColumn("Security", value: \.name) { row in
+            HStack(spacing: DS.Spacing.s) {
+                Text(row.name)
+                    .foregroundStyle(row.securityID == nil || row.isRetired ? .secondary : .primary)
+                Text(row.detail).font(.callout).foregroundStyle(.tertiary)
+            }
+            .lineLimit(1)
+        }
+        .width(min: 180, ideal: 380)
+        TableColumn(model.kind.title, value: \.amount) { row in
+            Text(Fmt.money(minor: row.amount, currency: model.currency))
+                .numeric()
+                .foregroundStyle(row.amount < 0 && !model.kind.isCost ? AnyShapeStyle(gainStyle.loss) : AnyShapeStyle(.primary))
+                .help(row.amount < 0 && model.kind.isCost ? "More was refunded than charged" : "")
+        }
+        .width(min: 90, ideal: 120)
+        .alignment(.trailing)
+    }
+
+    @TableColumnBuilder<Row, KeyPathComparator<Row>> private var dividendColumns: some TableColumnContent<Row, KeyPathComparator<Row>> {
+        TableColumn("Dividend Payments", value: \.count) { row in
+            Text(row.count == 0 ? Fmt.missing : Fmt.integer(row.count))
+                .numeric()
+                .foregroundStyle(row.count == 0 ? .tertiary : .primary)
+        }
+        .width(min: 60, ideal: 110)
+        .alignment(.trailing)
+        TableColumn("Last Dividend", value: \.lastDaySortKey) { row in
+            if let day = row.lastDay {
+                HStack(spacing: DS.Spacing.s) {
+                    Text(Fmt.money(minor: row.lastGross, currency: model.currency)).foregroundStyle(.secondary)
+                    Text(Fmt.day(day))
+                }
+                .numeric()
+                .lineLimit(1)
+            } else {
+                Text(Fmt.missing).foregroundStyle(.tertiary)
+            }
+        }
+        .width(min: 130, ideal: 160)
+        .alignment(.trailing)
+        TableColumn("Dividend per Share", value: \.perShareSortKey) { row in
+            Text(EarningsFormat.perShare(row.perShare, currency: model.currency))
+                .numeric()
+                .foregroundStyle(row.perShare == nil ? .tertiary : .primary)
+        }
+        .width(min: 70, ideal: 112)
+        .alignment(.trailing)
+        TableColumn("Yield on Cost", value: \.yieldSortKey) { row in
+            Text(Fmt.percent(row.yieldOnCost))
+                .numeric()
+                .foregroundStyle(row.yieldOnCost == nil ? .tertiary : .primary)
+        }
+        .width(min: 80, ideal: 90)
+        .alignment(.trailing)
     }
 
     private func securityIDs(_ ids: Set<Row.ID>) -> [UUID] {
@@ -142,27 +174,29 @@ struct EarningsSecuritiesTable: View {
 struct ShareBar: View {
     let share: Double
     let color: Color
+    /// Decided once per table (`EarningsRules.sharesAreMeaningful`): costs can outweigh income
+    /// (Net) and refunds can outweigh taxes — then no row has "a share of the total".
+    var isMeaningful = true
 
-    /// Costs can outweigh income (Net): then "a share of the total" says nothing.
-    private var isMeaningful: Bool { share >= 0 && share <= 1 }
+    private var shows: Bool { isMeaningful && share >= 0 && share <= 1 }
 
     var body: some View {
         HStack(spacing: DS.Spacing.s) {
             GeometryReader { proxy in
                 ZStack(alignment: .leading) {
                     Capsule().fill(.quaternary.opacity(0.5))
-                    Capsule().fill(color).frame(width: (isMeaningful ? share : 0) * proxy.size.width)
+                    Capsule().fill(color).frame(width: (shows ? share : 0) * proxy.size.width)
                 }
             }
             .frame(height: 5)
-            Text(isMeaningful ? Fmt.percent(share, decimals: 1) : Fmt.missing)
+            Text(shows ? Fmt.percent(share, decimals: 1) : Fmt.missing)
                 .numeric()
-                .foregroundStyle(isMeaningful ? .secondary : .tertiary)
+                .foregroundStyle(shows ? .secondary : .tertiary)
                 .frame(width: 52, alignment: .trailing)
         }
         .accessibilityElement()
-        .accessibilityLabel(isMeaningful ? Fmt.percent(share, decimals: 1) : "No share")
-        .help(isMeaningful ? "" : "A share of the total only makes sense while all parts have the same sign.")
+        .accessibilityLabel(shows ? Fmt.percent(share, decimals: 1) : "No share")
+        .help(shows ? "" : "A share of the total only makes sense while all parts have the same sign.")
     }
 }
 
@@ -207,11 +241,14 @@ struct EarningsAccountsTable: View {
                 Text(Fmt.money(minor: row.net, currency: model.currency)).fontWeight(.medium).numeric()
             }
             .width(min: 80, ideal: 110).alignment(.trailing)
-            TableColumn("Share of \(model.kind.title)", value: \.share) { row in
-                ShareBar(share: row.share, color: model.kind.color)
+            if model.accountSharesAreMeaningful {
+                TableColumn("Share of \(model.kind.title)", value: \.share) { row in
+                    ShareBar(share: row.share, color: model.kind.color)
+                }
+                .width(min: 120, ideal: 160)
             }
-            .width(min: 120, ideal: 160)
         }
+        .id(model.accountSharesAreMeaningful)
         .contextMenu(forSelectionType: Row.ID.self) { ids in
             Button("Show Account") { ids.first.map { store.navigate(to: .account($0)) } }
                 .disabled(ids.count != 1)
@@ -226,7 +263,11 @@ struct EarningsAccountsTable: View {
         }
         .onCopyCommand { [NSItemProvider(object: tsv(selection) as NSString)] }
         .onChange(of: selection) { _, ids in store.setFocus(ids.count == 1 ? .account(ids.first!) : nil) }
-        .onChange(of: model.accounts) { _, new in rows = new.sorted(using: sortOrder) }
+        .onChange(of: model.accounts) { _, new in
+            rows = new.sorted(using: sortOrder)
+            let visible = EarningsRules.visible(selection, in: new.lazy.map(\.id))
+            if visible != selection { selection = visible }
+        }
         .onChange(of: sortOrder) { _, order in rows = model.accounts.sorted(using: order) }
         .overlay {
             if rows.isEmpty {
@@ -264,18 +305,35 @@ struct EarningsPaymentsView: View {
     @Environment(PortfolioStore.self) private var store
     let interval: DayInterval
     @Binding var filter: PaymentsFilter
+    /// Width of the screen's content area: narrow windows drop the secondary columns.
+    var width: CGFloat = 1200
 
     @State private var loaded = Loadable<PaymentsModel>()
     @State private var selection = Set<PaymentRow.ID>()
     @State private var sortOrder = [KeyPathComparator(\PaymentRow.day, order: .reverse)]
 
     private var rows: [PaymentRow] { loaded.value?.rows ?? [] }
+    /// Account, per share and yield give way so that Gross, Taxes and Net stay on screen.
+    private var isCompact: Bool { width < 1000 }
+
+    /// Only rows that are in the table can be acted on: a selection made before a filter hid
+    /// (or an edit removed) some of its rows must never reach them.
+    private func visible(_ ids: Set<PaymentRow.ID>) -> Set<PaymentRow.ID> {
+        EarningsRules.visible(ids, in: rows.lazy.map(\.id))
+    }
+
+    private func delete(_ ids: Set<PaymentRow.ID>) {
+        let ids = visible(ids)
+        guard !ids.isEmpty else { return }
+        store.deleteTransactions(ids)
+        selection.subtract(ids)
+    }
     private var currency: CurrencyCode { loaded.value?.currency ?? store.baseCurrency }
 
     var body: some View {
         let query = filter.query(sortOrder: sortOrder)
         VStack(spacing: 0) {
-            if filter.month != nil || filter.securityID != nil {
+            if filter.months != nil || filter.securityID != nil {
                 filterBar
             }
             if loaded.value != nil {
@@ -288,13 +346,19 @@ struct EarningsPaymentsView: View {
             PaymentsModel(analysis, query: query)
         }
         .toolbar { ToolbarItem { QuickFilterField(text: $filter.text, prompt: "Filter payments") } }
+        // The rows changed (filter, period, scope, an edit, undo): drop what is no longer listed.
+        .onChange(of: loaded.value?.rowsSignature) { _, _ in
+            guard loaded.value != nil else { return }
+            let visible = visible(selection)
+            if visible != selection { selection = visible }
+        }
     }
 
     private var filterBar: some View {
         HStack(spacing: DS.Spacing.s) {
             Text("Showing").foregroundStyle(.secondary)
-            if let month = filter.month {
-                chip(Fmt.month(year: month / 12, month: month % 12 + 1, long: true)) { filter.month = nil }
+            if let months = filter.months {
+                chip(EarningsRules.title(ofMonths: months)) { filter.months = nil }
             }
             if let id = filter.securityID {
                 chip(store.security(id)?.name ?? "Security") { filter.securityID = nil }
@@ -326,33 +390,38 @@ struct EarningsPaymentsView: View {
             TableColumn("Date", value: \.day) { Text(Fmt.day($0.day)).numeric() }
                 .width(min: 80, ideal: 96)
             TableColumn("Security", value: \.security) { Text($0.security).lineLimit(1) }
-                .width(min: 150, ideal: 260)
-            TableColumn("Account", value: \.account) { Text($0.account).lineLimit(1).foregroundStyle(.secondary) }
-                .width(min: 100, ideal: 150)
+                .width(min: 140, ideal: 220)
+            if !isCompact {
+                TableColumn("Account", value: \.account) { Text($0.account).lineLimit(1).foregroundStyle(.secondary) }
+                    .width(min: 90, ideal: 130)
+            }
             TableColumn("Shares", value: \.shares) { row in
                 Text(row.shares.isZero ? Fmt.missing : EarningsFormat.shares(row.shares)).numeric()
                     .help(Fmt.shares(row.shares))
             }
-            .width(min: 60, ideal: 80).alignment(.trailing)
-            TableColumn("Per Share", value: \.perShareSortKey) { row in
-                Text(EarningsFormat.perShare(row.perShare, currency: currency)).numeric()
+            .width(min: 56, ideal: 76).alignment(.trailing)
+            if !isCompact {
+                TableColumn("Per Share", value: \.perShareSortKey) { row in
+                    Text(row.isConverted ? EarningsFormat.perShare(row.perShare, currency: currency) : Fmt.missing).numeric()
+                }
+                .width(min: 70, ideal: 86).alignment(.trailing)
             }
-            .width(min: 70, ideal: 90).alignment(.trailing)
-            TableColumn("Gross", value: \.gross) { Text(Fmt.money(minor: $0.gross, currency: currency)).numeric() }
+            TableColumn("Gross", value: \.gross) { amount($0, \.gross) }
                 .width(min: 80, ideal: 100).alignment(.trailing)
-            TableColumn("Taxes", value: \.taxes) { cost($0.taxes) }
+            TableColumn("Taxes", value: \.taxes) { cost($0, \.taxes) }
                 .width(min: 70, ideal: 90).alignment(.trailing)
-            TableColumn("Fees", value: \.fees) { cost($0.fees) }
-                .width(min: 60, ideal: 80).alignment(.trailing)
-            TableColumn("Net", value: \.net) { row in
-                Text(Fmt.money(minor: row.net, currency: currency)).fontWeight(.medium).numeric()
+            TableColumn("Fees", value: \.fees) { cost($0, \.fees) }
+                .width(min: 56, ideal: 76).alignment(.trailing)
+            TableColumn("Net", value: \.net) { amount($0, \.net).fontWeight(.medium) }
+                .width(min: 80, ideal: 100).alignment(.trailing)
+            if !isCompact {
+                TableColumn("Yield", value: \.yieldSortKey) { row in
+                    Text(Fmt.percent(row.yield)).numeric().foregroundStyle(row.yield == nil ? .tertiary : .secondary)
+                }
+                .width(min: 56, ideal: 70).alignment(.trailing)
             }
-            .width(min: 80, ideal: 100).alignment(.trailing)
-            TableColumn("Yield", value: \.yieldSortKey) { row in
-                Text(Fmt.percent(row.yield)).numeric().foregroundStyle(row.yield == nil ? .tertiary : .secondary)
-            }
-            .width(min: 56, ideal: 70).alignment(.trailing)
         }
+        .id(isCompact)
         .contextMenu(forSelectionType: PaymentRow.ID.self) { ids in
             Button("Show in Transactions") { ids.first.map { store.navigate(to: .transaction($0)) } }
                 .disabled(ids.count != 1)
@@ -371,12 +440,12 @@ struct EarningsPaymentsView: View {
             Divider()
             Button("Copy") { Pasteboard.copy(tsv(ids)) }
             Divider()
-            Button("Delete", role: .destructive) { store.deleteTransactions(ids) }
+            Button("Delete", role: .destructive) { delete(ids) }
         } primaryAction: { ids in
             ids.first.map { store.navigate(to: .transaction($0)) }
         }
-        .onCopyCommand { [NSItemProvider(object: tsv(selection) as NSString)] }
-        .onDeleteCommand { store.deleteTransactions(selection) }
+        .onCopyCommand { [NSItemProvider(object: tsv(visible(selection)) as NSString)] }
+        .onDeleteCommand { delete(selection) }
         .onChange(of: selection) { _, ids in store.setFocus(ids.count == 1 ? .transaction(ids.first!) : nil) }
         .overlay {
             if let model = loaded.value, model.rows.isEmpty {
@@ -397,10 +466,16 @@ struct EarningsPaymentsView: View {
         }
         .loadingOverlay(loaded.isInitialLoad)
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            TableFooter(count: rows.count, noun: "dividend payment", selected: selection.count,
+            TableFooter(count: rows.count, noun: "dividend payment", selected: visible(selection).count,
                         filteredFrom: loaded.value.map(\.totalCount)) {
                 if let model = loaded.value, !model.rows.isEmpty {
                     HStack(spacing: DS.Spacing.m) {
+                        if !model.unconverted.isEmpty {
+                            Label("\(Fmt.integer(model.unconverted.count)) without exchange rate", systemImage: "exclamationmark.triangle.fill")
+                                .labelStyle(.titleAndIcon)
+                                .foregroundStyle(DS.Colors.warning)
+                                .help("These payments are in a currency without an exchange rate to \(model.currency). Their amounts are not part of the totals.")
+                        }
                         Text("Gross \(Fmt.money(minor: model.gross, currency: model.currency))")
                         Text("Taxes \(Fmt.money(minor: model.taxes, currency: model.currency))")
                         Text("Fees \(Fmt.money(minor: model.fees, currency: model.currency))")
@@ -416,10 +491,17 @@ struct EarningsPaymentsView: View {
         .tableChrome()
     }
 
-    private func cost(_ minor: Int64) -> some View {
-        Text(minor == 0 ? Fmt.missing : Fmt.money(minor: minor, currency: currency))
+    /// An amount in the reporting currency — unknown ("–") when the booking could not be converted.
+    private func amount(_ row: PaymentRow, _ value: KeyPath<PaymentRow, Int64>) -> Text {
+        guard row.isConverted else { return Text(Fmt.missing).foregroundStyle(.tertiary) }
+        return Text(Fmt.money(minor: row[keyPath: value], currency: currency)).monospacedDigit()
+    }
+
+    private func cost(_ row: PaymentRow, _ value: KeyPath<PaymentRow, Int64>) -> some View {
+        let minor = row[keyPath: value]
+        return Text(minor == 0 || !row.isConverted ? Fmt.missing : Fmt.money(minor: minor, currency: currency))
             .numeric()
-            .foregroundStyle(minor == 0 ? .tertiary : .secondary)
+            .foregroundStyle(minor == 0 || !row.isConverted ? .tertiary : .secondary)
     }
 
     private func tsv(_ ids: Set<PaymentRow.ID>) -> String {

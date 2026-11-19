@@ -77,19 +77,28 @@ struct AssignmentPool: View {
             if entries.held.isEmpty && entries.other.isEmpty {
                 emptyState
             } else {
-                List(selection: $selection) {
+                // A single-column `Table` rather than a `List`: with a few hundred securities a
+                // `List`'s lazy row-height estimation re-enters the table view's delegate (AppKit
+                // warns, and announces an assert). See `EditTab.tree`.
+                Table(of: Entry.self, selection: $selection) {
+                    TableColumn("Security / Account") { entry in
+                        row(entry)
+                    }
+                } rows: {
                     if !entries.held.isEmpty {
                         Section("Held") {
-                            ForEach(entries.held) { row($0) }
+                            ForEach(entries.held) { TableRow($0) }
                         }
                     }
                     if !entries.other.isEmpty {
                         Section(entries.held.isEmpty ? "Securities & Accounts" : "Not Held") {
-                            ForEach(entries.other) { row($0) }
+                            ForEach(entries.other) { TableRow($0) }
                         }
                     }
                 }
-                .listStyle(.inset)
+                .tableColumnHeaders(.hidden)
+                .alternatingRowBackgrounds(.disabled)
+                .scrollContentBackground(.hidden)
                 .contextMenu(forSelectionType: String.self) { ids in
                     menu(ids.compactMap(AllocationVehicle.init(token:)))
                 } primaryAction: { ids in

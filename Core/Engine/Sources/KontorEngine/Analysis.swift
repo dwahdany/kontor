@@ -119,7 +119,30 @@ public final class Analysis: @unchecked Sendable {
     public var returns: ReturnSeries { cached(\._returns) { daily.series.returns() } }
     /// True time-weighted rate of return over the interval.
     public var ttwror: Double { returns.total }
-    public var ttwrorAnnualized: Double? { returns.annualized }
+    /// The time-weighted return per year. Annualized over ``measuredInterval`` — the part of the
+    /// interval in which the portfolio existed — so that "five years" selected for a portfolio that
+    /// is two years old does not spread two years of return over five.
+    public var ttwrorAnnualized: Double? { Returns.annualize(total: returns.total, days: measuredInterval.dayCount) }
+    /// The money-weighted return of the measured interval itself — the annual ``irr`` taken back
+    /// to the interval's length, `(1 + irr)^(days / 365) − 1`. For intervals of less than a year
+    /// this is the honest figure: a month's result must not be shown as a yearly rate.
+    public var irrOfPeriod: Double? {
+        guard let irr, irr.isFinite else { return nil }
+        let days = measuredInterval.dayCount
+        guard days > 0 else { return nil }
+        guard irr > -1 else { return -1 }
+        let value = pow(1 + irr, Double(days) / 365) - 1
+        return value.isFinite ? value : nil
+    }
+    /// The interval the figures really cover: `interval`, starting no earlier than the day before
+    /// the ledger's first transaction (before that there was nothing to measure). Use its length
+    /// when deciding whether a figure may be shown "per year", and to turn the annual ``irr`` into
+    /// the return of the period. Equal to `interval` for a ledger without transactions.
+    public var measuredInterval: DayInterval {
+        guard let first = ledger.firstTransactionDay else { return interval }
+        let start = max(interval.start, first.advanced(by: -1))
+        return start < interval.end ? DayInterval(start: start, end: interval.end) : interval
+    }
     /// Internal rate of return (annual, money-weighted); nil if undefined.
     public var irr: Double? { cached(\._irr) { daily.series.irr() } }
     /// `final − initial − inflows + outflows`.

@@ -36,7 +36,7 @@ public enum SecuritiesFeature {
             },
         ]
         guard let id = store.route.securityID, let security = store.security(id) else { return commands }
-        let name = security.name
+        let name = security.displayName
         commands += [
             PaletteCommand(id: "securities.edit", title: "Edit “\(name)”…", symbol: "pencil", keywords: ["security", "master data"]) {
                 store.present(.editSecurity(id))

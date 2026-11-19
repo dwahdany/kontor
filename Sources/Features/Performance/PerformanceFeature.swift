@@ -81,7 +81,7 @@ public enum PerformanceFeature {
         Task {
             guard let model = try? await store.analyze("performance.securities", variant: query, { SecuritiesModel($0, query: query) })
             else { return }
-            Pasteboard.copy(SecuritiesModel.tsv(model.rows, currency: model.currency))
+            Pasteboard.copy(SecuritiesModel.tsv(model.rows, currency: model.currency, irrIsAnnualized: model.irrIsAnnualized))
             store.toast("Copied \(Fmt.integer(model.rows.count)) \(model.rows.count == 1 ? "security" : "securities")", style: .success)
         }
     }

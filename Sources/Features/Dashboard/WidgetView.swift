@@ -22,9 +22,26 @@ struct WidgetRequest {
     var periodLabel: String?
     var periodHelp: String?
     var isPeriodOverridden = false
+    /// The period the widget is fixed to (nil: it follows the window, or has no period).
+    var pinnedPeriod: ReportingPeriod?
     /// Set when the widget overrides the window's scope.
     var scopeLabel: String?
     var scopeSymbol = "square.stack.3d.up"
+    /// What the numbers cover: "Whole Portfolio", "Main Depot", … (the widget's own scope or the window's).
+    var scopeTitle: String
+    /// True when the widget lists the whole document although the window is narrowed to a part.
+    var ignoresWindowScope = false
+    /// The day a statement widget (net worth, allocation, holdings, cash, watchlist prices) is
+    /// valued on — set only when that is **not today**, i.e. when the period ends in the past.
+    var asOf: Day?
+    /// Configured references that no longer exist (deleted depot, taxonomy, benchmark, watchlist).
+    var warnings: [String] = []
+
+    var isPartialScope: Bool { scope != .portfolio }
+
+    /// How many days back "since the previous day" looks for the latest quote of a position
+    /// (weekends, holidays, quotes that have not arrived yet).
+    static let dayLookback = 7
 
     @MainActor
     init(_ widget: Dashboard.Widget, kind: WidgetKind, store: PortfolioStore) {
@@ -33,26 +50,34 @@ struct WidgetRequest {
         let file = store.file
         var query = WidgetQuery(kind: kind, today: today)
         if kind.usesCount { query.count = widget.count }
+        warnings = widget.danglingReferences(in: file)
 
         // Scope
+        scopeTitle = "Whole Portfolio"
         if kind.usesScope {
             if let override = widget.scopeOverride, let resolved = override.resolve(in: file) {
                 scope = resolved
                 scopeLabel = override.title(in: file)
                 scopeSymbol = override.symbol
+                scopeTitle = override.title(in: file)
             } else {
                 scope = store.scope
+                scopeTitle = store.scopeTitle
             }
         } else {
             scope = .portfolio
+            ignoresWindowScope = kind.alwaysShowsWholePortfolio && !store.isWholePortfolioScope
         }
 
         // Period
+        let dayInterval = DayInterval(start: today.advanced(by: -1), end: today)
         if kind.usesPeriod {
             if kind == .topMovers, widget.showsMoversOfTheDay {
-                interval = store.interval(for: .lastDays(1))
+                // The engine works out each position's latest quoted day within this window.
+                interval = DayInterval(start: today.advanced(by: -Self.dayLookback), end: today)
+                query.dayMode = true
                 periodLabel = "1D"
-                periodHelp = "Change since the previous day"
+                periodHelp = "Change of every position on its latest quoted day, against the day before"
                 isPeriodOverridden = true
             } else {
                 let period = widget.periodOverride ?? store.period
@@ -60,11 +85,23 @@ struct WidgetRequest {
                 periodLabel = period.shortTitle
                 periodHelp = "\(period.title) (\(Fmt.interval(interval)))"
                 isPeriodOverridden = widget.periodOverride != nil
+                pinnedPeriod = widget.periodOverride
+                // Net worth and watchlist prices are those of the period's last day — say so when that is not today.
+                if kind == .netWorth || kind == .watchlist, interval.end < today { asOf = interval.end }
             }
+        } else if kind.isSnapshot {
+            // Statements are valued on the last day of the window's period, so they agree with the
+            // net worth next to them. Every period that runs until today shares one interval, so
+            // switching between such periods never recomputes them.
+            let end = min(store.periodInterval.end, today)
+            interval = DayInterval(start: end.advanced(by: -1), end: end)
+            if end < today { asOf = end }
+        } else if kind == .monthlyReturns {
+            // Whole calendar years since the first transaction; `count` picks how many.
+            interval = store.interval(for: .allTime)
         } else {
-            // Snapshot and document widgets: independent of the reporting period, so switching the
-            // period never recomputes them.
-            interval = DayInterval(start: today.advanced(by: -1), end: today)
+            // Document widgets: independent of the reporting period, so switching it never recomputes them.
+            interval = dayInterval
             if kind == .earnings {
                 periodLabel = widget.groupsEarningsByYear ? "Yearly" : "12M"
                 periodHelp = widget.groupsEarningsByYear ? "Per calendar year" : "The last twelve calendar months"
@@ -95,6 +132,19 @@ struct WidgetRequest {
         }
         self.query = query
     }
+
+    /// Day mode of Top Movers: once the data is there, the chip names the day the changes are from.
+    func labelled(with data: WidgetData?, today: Day) -> WidgetRequest {
+        guard query.dayMode, case .movers(let movers)? = data, let first = movers.days.first else { return self }
+        var copy = self
+        if movers.days.count == 1 {
+            copy.periodLabel = first == today ? "Today" : Fmt.relativeDay(first, today: today)
+            copy.periodHelp = "Change on \(Fmt.day(first, style: .medium)) against the day before"
+        } else if let last = movers.days.last {
+            copy.periodHelp = "Change of every position on its latest quoted day (\(Fmt.day(first, style: .dayMonth)) – \(Fmt.day(last, style: .dayMonth))), against the day before"
+        }
+        return copy
+    }
 }
 
 /// One dashboard widget: resolves its request, keeps its data up to date through the store's
@@ -109,8 +159,9 @@ struct WidgetView: View {
 
     var body: some View {
         if let kind = widget.widgetKind {
-            let request = WidgetRequest(widget, kind: kind, store: store)
-            let query = request.query
+            let resolved = WidgetRequest(widget, kind: kind, store: store)
+            let query = resolved.query
+            let request = resolved.labelled(with: data.value, today: store.today)
             WidgetChrome(widget: widget, kind: kind, request: request, mode: mode, open: openAction(kind, request)) {
                 Group {
                     if let value = data.value {
@@ -228,7 +279,7 @@ struct WidgetChrome<Content: View>: View {
                     return true
                 } isTargeted: { isDropTarget = $0 }
                 .accessibilityElement(children: .combine)
-                .accessibilityLabel("\(widget.displayTitle), widget, \(widget.clampedSpan) columns wide")
+                .accessibilityLabel("\(widget.displayTitle(isPartialScope: request?.isPartialScope ?? false)), widget, \(widget.clampedSpan) columns wide")
                 .accessibilityHint("Option-arrow keys move it, plus and minus resize it, Delete removes it, Return opens its settings.")
         }
     }
@@ -268,7 +319,7 @@ struct WidgetChrome<Content: View>: View {
     }
 
     private var titleText: some View {
-        Text(widget.displayTitle)
+        Text(widget.displayTitle(isPartialScope: request?.isPartialScope ?? false))
             .font(isTile ? .subheadline.weight(.medium) : .headline)
             .foregroundStyle(isTile ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary))
             .lineLimit(1)
@@ -277,19 +328,55 @@ struct WidgetChrome<Content: View>: View {
 
     private var openHelp: String {
         switch kind {
-        case .consistency: "Open the consistency report"
-        case .some(let kind): kind.destination.map { "Open \($0.title)" } ?? ""
-        case nil: ""
+        case .consistency:
+            return "Open the consistency report"
+        case .some(let kind):
+            guard let destination = kind.destination else { return "" }
+            // The screen behind the tile shows the window's period and scope. A tile fixed to its
+            // own says so, so the number found there is not mistaken for the tile's.
+            var differences: [String] = []
+            if let pinned = request?.pinnedPeriod, pinned != store.period {
+                differences.append("period (\(store.period.shortTitle) instead of this widget's \(pinned.shortTitle))")
+            }
+            if let scope = request?.scopeLabel, request?.scope != store.scope {
+                differences.append("scope (\(store.scopeTitle) instead of \(scope))")
+            }
+            if differences.isEmpty { return "Open \(destination.title)" }
+            return "Open \(destination.title) — it shows the window's \(differences.joined(separator: " and "))"
+        case nil:
+            return ""
         }
     }
 
     @ViewBuilder
     private func chips(_ request: WidgetRequest) -> some View {
         HStack(spacing: DS.Spacing.xs) {
+            if !request.warnings.isEmpty {
+                // A reference of this widget is gone (deleted depot, taxonomy, benchmark …): say so
+                // instead of silently showing something else. The settings sheet repairs it.
+                Button { editWidget() } label: {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(DS.Colors.warning)
+                }
+                .buttonStyle(.plain)
+                .disabled(mode == .preview)
+                .help(request.warnings.joined(separator: "\n") + (mode == .preview ? "" : "\nClick to review the widget's settings."))
+                .accessibilityLabel("Warning: " + request.warnings.joined(separator: " "))
+            }
             if let scope = request.scopeLabel {
                 Chip(text: scope, symbol: request.scopeSymbol, isPinned: true)
                     .help("This widget always shows \(scope), whatever the window's scope is.")
                     .layoutPriority(-1)
+            } else if request.ignoresWindowScope {
+                Chip(text: "All", symbol: "square.stack.3d.up", isPinned: false)
+                    .help("This widget always covers the whole portfolio — it does not follow the window's scope (\(store.scopeTitle)).")
+                    .accessibilityLabel("Whole portfolio")
+            }
+            if let day = request.asOf {
+                Chip(text: Fmt.day(day, style: .medium), symbol: "calendar", isPinned: false)
+                    .help("Valued on \(Fmt.day(day, style: .long)), the last day of the period — not today.")
+                    .accessibilityLabel("As of \(Fmt.day(day, style: .long))")
             }
             if let period = request.periodLabel {
                 Chip(text: period, symbol: nil, isPinned: request.isPeriodOverridden)
@@ -358,8 +445,11 @@ struct WidgetChrome<Content: View>: View {
         }
         .pickerStyle(.menu)
         Divider()
+        let position = store.currentDashboard.widgets.firstIndex { $0.id == widget.id }
         Button("Move Earlier", systemImage: "arrow.left") { move(-1) }
+            .disabled(position == nil || position == 0)
         Button("Move Later", systemImage: "arrow.right") { move(1) }
+            .disabled(position == nil || position == store.currentDashboard.widgets.count - 1)
         Button("Duplicate", systemImage: "plus.square.on.square") { store.duplicateWidget(widget.id) }
         Divider()
         Button("Remove Widget", systemImage: "trash", role: .destructive) { remove() }

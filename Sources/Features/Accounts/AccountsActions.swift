@@ -52,6 +52,25 @@ enum AccountsActions {
         store.present(.newTransaction(TransactionPrefill(kind: kind, date: store.today, accountID: account, depotID: id)))
     }
 
+    // MARK: Hand-off to the Transactions screen
+
+    /// The Transactions screen, listing exactly this entity's entries (the routing contract's
+    /// "Show Transactions").
+    static func transactionsRoute(_ entity: AccountsEntity) -> Route {
+        Route(.transactions, focus: entity.focus)
+    }
+
+    static func showTransactions(_ entity: AccountsEntity, in store: PortfolioStore) {
+        store.navigate(to: transactionsRoute(entity))
+    }
+
+    static func exists(_ entity: AccountsEntity, in store: PortfolioStore) -> Bool {
+        switch entity {
+        case .account(let id): store.account(id) != nil
+        case .depot(let id): store.depot(id) != nil
+        }
+    }
+
     // MARK: Retire
 
     static func setRetired(_ retired: Bool, _ entity: AccountsEntity, in store: PortfolioStore) {
@@ -190,12 +209,25 @@ enum AccountsActions {
             case .depot(let id): store.present(.editDepot(id))
             }
         }
+        Button("Show in Transactions", systemImage: "list.bullet.rectangle") { showTransactions(entity, in: store) }
         if includesReorder {
             Divider()
-            Button("Move Up", systemImage: "arrow.up") { move(entity, by: -1, in: store) }
-                .disabled(!canMove(entity, by: -1, in: store.file))
-            Button("Move Down", systemImage: "arrow.down") { move(entity, by: 1, in: store) }
-                .disabled(!canMove(entity, by: 1, in: store.file))
+            // The list handles ⌥⌘↑ / ⌥⌘↓ for its highlighted row. The items only name the shortcut
+            // (as a subtitle): a real `.keyboardShortcut` here would exist once per row.
+            Button {
+                move(entity, by: -1, in: store)
+            } label: {
+                Label("Move Up", systemImage: "arrow.up")
+                Text("⌥⌘↑ on the highlighted row")
+            }
+            .disabled(!canMove(entity, by: -1, in: store.file))
+            Button {
+                move(entity, by: 1, in: store)
+            } label: {
+                Label("Move Down", systemImage: "arrow.down")
+                Text("⌥⌘↓ on the highlighted row")
+            }
+            .disabled(!canMove(entity, by: 1, in: store.file))
         }
         Divider()
         Button(retired ? "Reactivate" : "Retire", systemImage: retired ? "arrow.uturn.backward" : "archivebox") {
@@ -216,5 +248,88 @@ enum AccountsActions {
                 Button(kind.title + "…", systemImage: kind.symbol) { record(kind, depot: id, in: store) }
             }
         }
+    }
+}
+
+// MARK: - Rules that do not need the store
+
+/// Why the currency of an account can no longer be changed. Every amount booked on an account —
+/// and every amount an investment plan will book on it — is in the account's currency, so the
+/// currency is fixed as soon as either exists.
+enum AccountCurrencyLock: Equatable {
+    case open
+    case transactions(Int)
+    case plans(Int)
+
+    var isLocked: Bool { self != .open }
+
+    static func evaluate(account id: UUID, bookedTransactions: Int, plans: [InvestmentPlan]) -> AccountCurrencyLock {
+        if bookedTransactions > 0 { return .transactions(bookedTransactions) }
+        let count = plans.filter { $0.accountID == id }.count
+        return count > 0 ? .plans(count) : .open
+    }
+
+    func explanation(currency: CurrencyCode) -> String {
+        switch self {
+        case .open:
+            "Every transaction on this account is in this currency. It can be changed until the first transaction is recorded or an investment plan uses the account."
+        case .transactions(let n):
+            "The currency is fixed because \(Fmt.integer(n)) transaction\(n == 1 ? " is" : "s are") booked in \(currency). Changing it would turn every one of those amounts into a different sum of money. To switch currency, add a new account and transfer the balance."
+        case .plans(let n):
+            "The currency is fixed because \(Fmt.integer(n)) investment plan\(n == 1 ? " books" : "s book") \(currency) amounts on this account. Point the plan\(n == 1 ? "" : "s") to another account (or delete \(n == 1 ? "it" : "them")) to change the currency."
+        }
+    }
+}
+
+/// What else in the document refers to an account or depot — without walking the transactions
+/// (their count comes from the overview model).
+struct EntityReferences: Equatable, Sendable {
+    /// Depots that settle on the account.
+    var depots: [String] = []
+    var plans = 0
+    var classifications = 0
+
+    static func account(_ id: UUID, in file: PortfolioFile) -> EntityReferences {
+        var result = EntityReferences()
+        result.depots = file.depots.filter { $0.referenceAccountID == id }.map(\.name)
+        result.plans = file.plans.filter { $0.accountID == id }.count
+        func visit(_ nodes: [Classification]) {
+            for node in nodes {
+                if node.assignments.contains(where: { $0.accountID == id }) { result.classifications += 1 }
+                visit(node.children)
+            }
+        }
+        for taxonomy in file.taxonomies { visit(taxonomy.root) }
+        return result
+    }
+
+    static func depot(_ id: UUID, in file: PortfolioFile) -> EntityReferences {
+        EntityReferences(plans: file.plans.filter { $0.depotID == id }.count)
+    }
+}
+
+/// Keyboard navigation of the overview list: everything acts on the highlighted row only while
+/// that row is listed.
+enum OverviewNavigation {
+    /// The highlight, if its row is visible.
+    static func resolved(_ highlight: AccountsEntity?, visible: [AccountsEntity]) -> AccountsEntity? {
+        guard let highlight, visible.contains(highlight) else { return nil }
+        return highlight
+    }
+
+    /// The row an arrow key moves to (`offset` −1 = up, +1 = down); nil if nothing is listed.
+    static func moved(_ highlight: AccountsEntity?, by offset: Int, visible: [AccountsEntity]) -> AccountsEntity? {
+        guard !visible.isEmpty else { return nil }
+        guard let highlight, let index = visible.firstIndex(of: highlight) else { return offset > 0 ? visible.first : visible.last }
+        return visible[min(max(0, index + offset), visible.count - 1)]
+    }
+}
+
+/// Whether a detail page has room for its charts above a usable table. When it does not, the
+/// charts step aside so that the table and its footer stay inside the window instead of the whole
+/// page turning into a scroll view with the table's own scroller nested in it.
+enum DetailLayout {
+    static func showsCharts(available: CGFloat, fixed: CGFloat, charts: CGFloat, minTable: CGFloat) -> Bool {
+        available - fixed - charts >= minTable
     }
 }

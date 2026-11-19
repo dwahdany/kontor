@@ -25,6 +25,19 @@ public struct TransactionPrefill: Hashable, Sendable {
     public var note: String?
     /// `Transaction.source` of the new entry, e.g. a plan's `sourceTag`.
     public var source: String?
+    /// Foreign-currency trades: the gross value in the security's currency (with `amount`, this
+    /// fixes the exchange rate of the booking instead of taking today's).
+    public var securityGross: Money?
+    /// Cross-currency cash transfers: the amount that arrived on the target account.
+    public var counterAmount: Money?
+    /// Dividends: the ex-dividend day.
+    public var exDate: Day?
+    /// Time of day in minutes after midnight.
+    public var minuteOfDay: Int?
+    /// "New Security…" from inside the transaction editor: the editor is requested again behind
+    /// the security sheet with what was typed so far, and — if the file then holds more securities
+    /// than this number — starts with the security that was just added.
+    public var securityCountBeforeNewSecurity: Int?
 
     public init(
         kind: Transaction.Kind? = nil, date: Day? = nil, securityID: UUID? = nil, accountID: UUID? = nil,
@@ -54,6 +67,14 @@ public struct TransactionPrefill: Hashable, Sendable {
             counterDepotID: transaction.counterDepotID, shares: transaction.shares.isZero ? nil : transaction.shares,
             amount: transaction.amount, fees: transaction.fees == 0 ? nil : transaction.fees,
             taxes: transaction.taxes == 0 ? nil : transaction.taxes, note: transaction.note.isEmpty ? nil : transaction.note)
+        // What the booking itself fixed: a copy must not re-derive it from today's exchange rate.
+        securityGross = transaction.securityGross
+        counterAmount = transaction.counterAmount
+        // A copy dated like the original keeps its ex-date and time; one moved to another day does not.
+        if date == nil || date == transaction.date {
+            exDate = transaction.exDate
+            minuteOfDay = transaction.minuteOfDay
+        }
     }
 }
 
@@ -386,6 +407,10 @@ public struct BackgroundActivity: Equatable, Sendable {
 public struct PortfolioServices {
     /// Lets the user choose a file to import, then issues `.importFile(url)`.
     public var chooseImportFile: (@MainActor (PortfolioStore) -> Void)?
+    /// Closes this store's document window without asking. For a document that only existed to
+    /// host an import which then opened as a portfolio of its own — call it for untouched
+    /// documents only.
+    public var closeDocument: (@MainActor () -> Void)?
 
     public init() {}
 }

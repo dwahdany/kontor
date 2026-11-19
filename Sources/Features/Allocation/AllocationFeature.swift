@@ -24,6 +24,8 @@ public enum AllocationFeature {
         func open(_ tab: AllocationSession.Tab, taxonomy: UUID? = nil) {
             if let taxonomy { session.taxonomyID = taxonomy }
             session.tab = tab
+            // The screen is (re)created by the navigation below; its restored tab must not win.
+            session.hasExplicitTab = true
             if let id = taxonomy ?? session.taxonomy(in: store.file)?.id {
                 store.navigate(to: .taxonomy(id))
             } else {
@@ -62,8 +64,9 @@ public enum AllocationFeature {
                 keywords: ["export", "clipboard", "spreadsheet"]
             ) {
                 Task { @MainActor in
-                    guard let model = try? await store.analyze("allocation.model", variant: taxonomy.id, { analysis in
-                        AllocationModel(analysis, taxonomy: taxonomy)
+                    let key = store.allocationKey(for: taxonomy)
+                    guard let model = try? await store.analyze("allocation.model", variant: key, { analysis in
+                        AllocationModel(analysis, taxonomy: taxonomy, scopeRoot: key.scopeRoot)
                     }) else { return }
                     Pasteboard.copy(model.tsv())
                     store.toast("Copied the allocation of “\(taxonomy.name)”", style: .success)

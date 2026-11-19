@@ -34,6 +34,8 @@ final class ShellContext {
     }
 
     func windowDisappeared(_ store: PortfolioStore) {
+        // Downloads for a window that is gone would run to the end for nothing.
+        store.shutdown()
         openStores[ObjectIdentifier(store)] = nil
         if frontStore === store { frontStore = openStores.values.compactMap(\.store).first }
     }
@@ -91,7 +93,7 @@ final class ShellContext {
     /// only reports through toasts, and does nothing if no security has an automatic feed.
     func autoUpdateQuotesIfEnabled(_ store: PortfolioStore) {
         let enabled = UserDefaults.standard.object(forKey: AppPreferences.Key.autoUpdateQuotes) as? Bool ?? true
-        guard enabled, !store.isUpdatingQuotes, store.hasAutomaticQuoteFeeds else { return }
+        guard enabled, !store.isUpdatingQuotes, store.hasAutomaticQuoteFeeds || store.needsExchangeRates else { return }
         store.updateQuotes(interactive: false)
     }
 
@@ -122,7 +124,30 @@ final class ShellContext {
 /// Application delegate: handles files that are *import sources* rather than documents, and keeps
 /// AppKit from opening an untitled document at launch (the welcome window is shown instead).
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    private var defaultsObserver: NSObjectProtocol?
+
     func applicationShouldOpenUntitledFile(_ sender: NSApplication) -> Bool { false }
+
+    /// The appearance preference is applied here, for the whole life of the process — not by a
+    /// window that may never be shown (welcome window switched off) or that closes when the first
+    /// document opens.
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        Self.applyAppearance()
+        defaultsObserver = NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification, object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated { Self.applyAppearance() }
+        }
+        DocumentSelfTest.startIfRequested()
+    }
+
+    @MainActor private static func applyAppearance() {
+        let raw = UserDefaults.standard.string(forKey: AppPreferences.Key.appearance) ?? AppearanceMode.system.rawValue
+        let wanted: NSAppearance? = switch AppearanceMode(rawValue: raw) ?? .system {
+        case .system: nil
+        case .light: NSAppearance(named: .aqua)
+        case .dark: NSAppearance(named: .darkAqua)
+        }
+        if NSApp.appearance?.name != wanted?.name { NSApp.appearance = wanted }
+    }
 
     func application(_ application: NSApplication, open urls: [URL]) {
         for url in urls {

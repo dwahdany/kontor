@@ -17,6 +17,8 @@ import KontorUI
 /// | `retired` | `shown` | expands the retired accounts and depots on the overview |
 /// | `hover` | `last`, `mid`, or `YYYY-MM-DD` | pins the chart tooltips (overview and detail) to that day |
 /// | `filter` | text | quick filter of the statement / transactions / positions table on a detail page |
+/// | `range` | `period` (default), `all` | whether the statement / depot transactions list the reporting period or everything |
+/// | `highlight` | `first`, `last`, or an account / depot name | keyboard highlight on the overview (scrolled into view) |
 ///
 /// Entity focus also works through `--route account:<uuid>` / `--route depot:<uuid>`; the period
 /// comes from `--period`.
@@ -79,6 +81,8 @@ struct AccountsOverviewView: View {
     /// `--state retired=shown`: expanded regardless of what the window remembers.
     @State private var forcesRetired = false
     @FocusState private var listFocused: Bool
+    /// `--state highlight=…`: the highlight is drawn although the screenshot window never has focus.
+    @State private var pinsHighlight = false
     /// Width of the scroll area; narrow windows drop the least important columns.
     @State private var width: CGFloat = 1_000
 
@@ -113,6 +117,20 @@ struct AccountsOverviewView: View {
         .onAppear {
             forcesRetired = store.launchValue("retired") == "shown"
             pinnedDay = AccountsScreen.launchHover(store.launchState, interval: store.periodInterval)
+            if let value = store.launchValue("highlight") {
+                highlight = Self.launchHighlight(value, in: store.file)
+                pinsHighlight = highlight != nil
+            }
+        }
+    }
+
+    /// `highlight=first|last|<name>` → the row to highlight.
+    static func launchHighlight(_ value: String, in file: PortfolioFile) -> AccountsEntity? {
+        let all = file.accounts.map { (AccountsEntity.account($0.id), $0.name) } + file.depots.map { (AccountsEntity.depot($0.id), $0.name) }
+        switch value.lowercased() {
+        case "first": return all.first?.0
+        case "last": return all.last?.0
+        default: return all.first { $0.1.compare(value, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame }?.0
         }
     }
 
@@ -129,14 +147,20 @@ struct AccountsOverviewView: View {
     }
 
     private func content(_ overview: AccountsOverview) -> some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: DS.Spacing.xl) {
-                summary(overview)
-                accountsSection(overview)
-                depotsSection(overview)
+        ScrollViewReader { scroller in
+            ScrollView {
+                VStack(alignment: .leading, spacing: DS.Spacing.xl) {
+                    summary(overview)
+                    accountsSection(overview)
+                    depotsSection(overview)
+                }
+                .screenPadding()
+                .opacity(model.isRefreshing ? 0.6 : 1)
             }
-            .screenPadding()
-            .opacity(model.isRefreshing ? 0.6 : 1)
+            // The keyboard highlight is always on screen: arrow keys scroll just far enough.
+            .onChange(of: highlight, initial: true) { _, entity in
+                if let entity { scroller.scrollTo(entity) }
+            }
         }
         .focusable()
         .focusEffectDisabled()
@@ -158,9 +182,12 @@ struct AccountsOverviewView: View {
         }
         return HStack(alignment: .top, spacing: DS.Spacing.l) {
             VStack(spacing: DS.Spacing.m) {
-                FigureTile("Net Worth", value: Fmt.money(overview.netWorth), footnote: "as of \(Fmt.day(overview.today, style: .medium))")
-                FigureTile("Cash", value: Fmt.money(overview.cashTotal), footnote: share(overview.cashTotal))
-                FigureTile("Securities", value: Fmt.money(overview.depotTotal), footnote: share(overview.depotTotal))
+                // A total that leaves out what cannot be valued says so instead of looking complete.
+                FigureTile("Net Worth", value: Fmt.money(overview.netWorth), footnote: "as of \(Fmt.day(overview.today, style: .medium))",
+                           warning: overview.gaps.note)
+                FigureTile("Cash", value: Fmt.money(overview.cashTotal), footnote: share(overview.cashTotal), warning: overview.gaps.cashNote)
+                FigureTile("Securities", value: Fmt.money(overview.depotTotal), footnote: share(overview.depotTotal),
+                           warning: overview.gaps.securitiesNote)
             }
             .frame(width: 250)
             Card("Net Worth by Account", symbol: "chart.bar.xaxis") {
@@ -216,7 +243,9 @@ struct AccountsOverviewView: View {
                         }
                     }
                     Divider()
-                    totalRow("Total cash", value: overview.cashTotal, trailingBlank: 0)
+                    totalRow("Total cash", value: overview.cashTotal, warning: overview.gaps.cashNote.map {
+                        "\($0.prefix(1).uppercased() + $0.dropFirst()). Exchange rates are downloaded together with the quotes (Update Quotes, ⌘R)."
+                    })
                 }
                 .cardBackground()
             }
@@ -296,7 +325,9 @@ struct AccountsOverviewView: View {
                         }
                     }
                     Divider()
-                    totalRow("Total securities", value: overview.depotTotal, trailingBlank: 0)
+                    totalRow("Total securities", value: overview.depotTotal, warning: overview.gaps.securitiesNote.map {
+                        "\($0.prefix(1).uppercased() + $0.dropFirst()). Open the depot to see which positions are affected."
+                    })
                 }
                 .cardBackground()
             }
@@ -319,8 +350,16 @@ struct AccountsOverviewView: View {
                 }
             }
             .frame(width: Column.performance, alignment: .trailing)
-            Text(Fmt.money(row.value))
-                .frame(width: Column.money, alignment: .trailing)
+            HStack(spacing: DS.Spacing.xs) {
+                if row.unvaluedPositions > 0 {
+                    Image(systemName: "exclamationmark.triangle")
+                        .foregroundStyle(DS.Colors.warning)
+                        .help("\(Fmt.integer(row.unvaluedPositions)) position\(row.unvaluedPositions == 1 ? "" : "s") without a price or exchange rate count\(row.unvaluedPositions == 1 ? "s" : "") as zero.")
+                        .accessibilityLabel("Incomplete")
+                }
+                Text(Fmt.money(row.value))
+            }
+            .frame(width: Column.money, alignment: .trailing)
         }
         .accessibilityLabel("\(row.name), market value \(Fmt.money(row.value))\(row.isRetired ? ", retired" : "")")
     }
@@ -361,7 +400,7 @@ struct AccountsOverviewView: View {
     }
 
     private func rowChrome<Content: View>(_ entity: AccountsEntity, isRetired: Bool, @ViewBuilder _ content: () -> Content) -> some View {
-        let isHighlighted = highlight == entity && listFocused
+        let isHighlighted = highlight == entity && (listFocused || pinsHighlight)
         return Button {
             open(entity)
         } label: {
@@ -398,6 +437,7 @@ struct AccountsOverviewView: View {
             AccountsActions.manageMenu(entity, store: store, includesReorder: true)
         }
         .accessibilityHint("Opens the details")
+        .id(entity)
     }
 
     private func retiredToggle(count: Int, isExpanded: Binding<Bool>) -> some View {
@@ -423,9 +463,16 @@ struct AccountsOverviewView: View {
         .accessibilityLabel("\(count) retired, \(isExpanded.wrappedValue ? "shown" : "hidden")")
     }
 
-    private func totalRow(_ title: String, value: Money, trailingBlank: CGFloat) -> some View {
+    private func totalRow(_ title: String, value: Money, warning: String?) -> some View {
         HStack(spacing: DS.Spacing.l) {
             Text(title).foregroundStyle(.secondary)
+            if let warning {
+                Label(warning, systemImage: "exclamationmark.triangle.fill")
+                    .font(.callout)
+                    .foregroundStyle(DS.Colors.warning)
+                    .lineLimit(2)
+                    .help(warning)
+            }
             Spacer()
             Text(Fmt.money(value)).fontWeight(.semibold).numeric()
             Color.clear.frame(width: Column.chevron, height: 1)
@@ -458,6 +505,8 @@ struct AccountsOverviewView: View {
                 showsRetiredDepots = true
             }
             stored.wrappedValue = expanded
+            // A highlight inside a group that just collapsed would be invisible: drop it.
+            if !expanded, let highlight, AccountsActions.isRetired(highlight, in: store) { self.highlight = nil }
         }
     }
 
@@ -477,26 +526,27 @@ struct AccountsOverviewView: View {
     private func handleKey(_ press: KeyPress, _ overview: AccountsOverview) -> KeyPress.Result {
         let entities = visibleEntities(overview)
         guard !entities.isEmpty else { return .ignored }
-        let index = highlight.flatMap { entities.firstIndex(of: $0) }
+        // Everything acts on the highlighted row only while it is listed: a row hidden in a
+        // collapsed "Retired" group (or deleted meanwhile) is neither opened, moved nor deleted.
+        let current = OverviewNavigation.resolved(highlight, visible: entities)
+        if current == nil, highlight != nil { highlight = nil }
         switch press.key {
         case .upArrow, .downArrow:
             let offset = press.key == .upArrow ? -1 : 1
             if press.modifiers.contains([.command, .option]) {
-                guard let highlight else { return .ignored }
-                AccountsActions.move(highlight, by: offset, in: store)
-            } else if let index {
-                highlight = entities[min(max(0, index + offset), entities.count - 1)]
+                guard let current else { return .ignored }
+                AccountsActions.move(current, by: offset, in: store)
             } else {
-                highlight = offset > 0 ? entities.first : entities.last
+                highlight = OverviewNavigation.moved(current, by: offset, visible: entities)
             }
             return .handled
         case .return:
-            guard let highlight else { return .ignored }
-            open(highlight)
+            guard let current else { return .ignored }
+            open(current)
             return .handled
         case .delete, .deleteForward:
-            guard let highlight else { return .ignored }
-            AccountsActions.delete(highlight, in: store)
+            guard let current else { return .ignored }
+            AccountsActions.delete(current, in: store)
             return .handled
         default:
             return .ignored
@@ -531,13 +581,16 @@ struct FigureTile: View {
     private let footnote: String
     private let topic: HelpTopic?
     private let trend: Trend?
+    /// Replaces the footnote: the figure is incomplete or not what it seems, and why.
+    private let warning: String?
 
-    init(_ label: String, value: String, footnote: String = "", topic: HelpTopic? = nil, trend: Trend? = nil) {
+    init(_ label: String, value: String, footnote: String = "", topic: HelpTopic? = nil, trend: Trend? = nil, warning: String? = nil) {
         self.label = label
         self.value = value
         self.footnote = footnote
         self.topic = topic
         self.trend = trend
+        self.warning = warning
     }
 
     var body: some View {
@@ -552,12 +605,22 @@ struct FigureTile: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.6)
                 .contentTransition(.numericText())
-            Text(footnote.isEmpty ? " " : footnote)
+            if let warning {
+                HStack(alignment: .firstTextBaseline, spacing: DS.Spacing.xs) {
+                    Image(systemName: "exclamationmark.triangle.fill").accessibilityLabel("Warning")
+                    Text(warning).numeric().lineLimit(1).minimumScaleFactor(0.7)
+                }
                 .font(.callout)
-                .foregroundStyle(.tertiary)
-                .numeric()
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
+                .foregroundStyle(DS.Colors.warning)
+                .help(footnote.isEmpty ? warning : "\(warning) — \(footnote)")
+            } else {
+                Text(footnote.isEmpty ? " " : footnote)
+                    .font(.callout)
+                    .foregroundStyle(.tertiary)
+                    .numeric()
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+            }
         }
         .padding(.horizontal, DS.Spacing.l)
         .padding(.vertical, DS.Spacing.m)

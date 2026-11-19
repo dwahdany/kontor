@@ -13,6 +13,30 @@ struct HoldingsTable: View {
     @Binding var columns: TableColumnCustomization<HoldingRow>
 
     var body: some View {
+        // The reader lets a selection made outside the table (route, chart click) scroll into view.
+        ScrollViewReader { proxy in
+            table
+                .onChange(of: state.revealTarget, initial: true) { _, id in scroll(to: id, with: proxy) }
+        }
+    }
+
+    private func scroll(to id: String?, with proxy: ScrollViewProxy) {
+        guard let id else { return }
+        Task { @MainActor in
+            // First after the table has taken in the rows of a group that was just expanded; then
+            // again, because a far jump lands by estimated row heights and the rows on the way are
+            // only measured once they have been on screen.
+            for delay in [60, 120, 120] {
+                try? await Task.sleep(for: .milliseconds(delay))
+                guard state.revealTarget == id else { return }
+                // No anchor: the least scrolling that shows the row — none if it is visible already.
+                proxy.scrollTo(id)
+            }
+            if state.revealTarget == id { state.revealTarget = nil }
+        }
+    }
+
+    private var table: some View {
         Table(of: HoldingRow.self, selection: $state.selection, sortOrder: $state.options.sortOrder, columnCustomization: $columns) {
             identityColumns
             valueColumns
@@ -21,7 +45,7 @@ struct HoldingsTable: View {
         } rows: {
             // Subtotal lines are ordinary rows and collapsing simply leaves a group's rows out. (An
             // outline — DisclosureTableRow — re-enters the table update when large groups arrive.)
-            ForEach(visibleLines) { row in
+            ForEach(state.visibleLines) { row in
                 TableRow(row)
             }
         }
@@ -47,10 +71,6 @@ struct HoldingsTable: View {
         display.lines.filter { ids.contains($0.id) }
     }
 
-    private var visibleLines: [HoldingRow] {
-        state.collapsed.isEmpty ? display.lines : display.lines.filter { row in row.groupID.map { !state.collapsed.contains($0) } ?? true }
-    }
-
     private func toggle(_ id: String) {
         if state.collapsed.contains(id) { state.collapsed.remove(id) } else { state.collapsed.insert(id) }
     }
@@ -72,19 +92,22 @@ struct HoldingsTable: View {
             HoldingNameCell(row: row, isCollapsed: state.collapsed.contains(row.id)) { toggle(row.id) }
                 .frame(height: 32)
         }
-        .width(min: 186, ideal: 190)
+        .width(min: 186, ideal: 204)
         .customizationID("name")
         .disabledCustomizationBehavior(.visibility)
 
         TableColumn("Shares", value: \.sharesSort) { row in
             if let shares = row.shares {
+                // Never an ellipsis in a number: large counts drop decimals instead (all of them
+                // are in the tooltip), and the text does not truncate.
                 OneLineCell {
-                    NumberText(Fmt.shares(shares, maxDecimals: 4), row: row)
+                    NumberText(Fmt.shares(shares, maxDecimals: HoldingsFormat.shareDecimals(shares)), row: row)
+                        .fixedSize()
                 }
-                .help("\(Fmt.shares(shares)) shares")
+                .help(row.assignedWeight.map { "\(Fmt.shares(shares)) shares — \(Fmt.percent(basisPoints: $0)) of the position" } ?? "\(Fmt.shares(shares)) shares")
             }
         }
-        .width(min: 56, ideal: 66)
+        .width(min: 76, ideal: 84)
         .alignment(.trailing)
         .customizationID("shares")
 
@@ -98,13 +121,14 @@ struct HoldingsTable: View {
         TableColumn("Day", value: \.dayChangeSort) { row in
             if let change = row.dayChange {
                 TwoLineCell {
-                    GainText(percent: change).fontWeight(row.isSummary ? .semibold : .regular)
+                    ReturnText(value: change, isEmphasized: row.isSummary)
                 } secondary: {
-                    Text(row.dayChangeAmount.map { Fmt.money(minor: $0, currency: reportingCurrency, signed: true) } ?? " ")
+                    Text(row.dayChangeAmount.map { HoldingsFormat.money($0, currency: reportingCurrency, signed: true) } ?? " ")
                 }
+                .help(HoldingsFormat.dayChangeHelp(row, reportingCurrency: reportingCurrency))
             }
         }
-        .width(min: 64, ideal: 72)
+        .width(min: 68, ideal: 72)
         .alignment(.trailing)
         .customizationID("day")
     }
@@ -115,24 +139,30 @@ struct HoldingsTable: View {
             if row.kind != .closed, row.id != HoldingsBase.closedGroupID {
                 TwoLineCell {
                     if row.isValued {
-                        NumberText(Fmt.money(minor: row.value, currency: reportingCurrency), row: row)
+                        NumberText(HoldingsFormat.money(row.value, currency: reportingCurrency), row: row)
+                            .help(HoldingsFormat.exact(row.value, currency: reportingCurrency))
                     } else {
-                        Label("No price", systemImage: "exclamationmark.triangle.fill")
-                            .labelStyle(.titleAndIcon)
-                            .foregroundStyle(DS.Colors.warning)
-                            .help("This position cannot be valued: a price or an exchange rate is missing. It counts as zero.")
+                        // Says what is missing — a price or an exchange rate — and never truncates.
+                        HStack(spacing: 3) {
+                            Image(systemName: "exclamationmark.triangle.fill").imageScale(.small)
+                            Text(HoldingsFormat.issueTitle(row))
+                        }
+                        .fixedSize()
+                        .foregroundStyle(DS.Colors.warning)
+                        .help(HoldingsFormat.issueHelp(row, reportingCurrency: reportingCurrency))
+                        .accessibilityElement(children: .combine)
                     }
                 } secondary: {
                     // The value in the security's own currency, where that differs.
                     if let local = row.localValue, row.currency != reportingCurrency {
-                        Text(Fmt.money(minor: local, currency: row.currency))
+                        Text(HoldingsFormat.money(local, currency: row.currency))
                     } else {
                         Text(" ")
                     }
                 }
             }
         }
-        .width(min: 88, ideal: 106)
+        .width(min: 88, ideal: 98)
         .alignment(.trailing)
         .customizationID("value")
 
@@ -146,26 +176,29 @@ struct HoldingsTable: View {
         TableColumn("Cost Basis", value: \.costSort) { row in
             if let cost = row.costBasis {
                 TwoLineCell {
-                    NumberText(Fmt.money(minor: cost, currency: reportingCurrency), row: row)
+                    NumberText(HoldingsFormat.money(cost, currency: reportingCurrency), row: row)
+                        .help(HoldingsFormat.exact(cost, currency: reportingCurrency))
                 } secondary: {
                     Text(row.purchasePrice.map { "@ " + Fmt.price($0, currency: reportingCurrency) } ?? " ")
                 }
             }
         }
-        .width(min: 88, ideal: 106)
+        .width(min: 88, ideal: 98)
         .alignment(.trailing)
         .customizationID("cost")
 
         TableColumn("Unrealized Gain", value: \.gainSort) { row in
             if let gain = row.gain, row.costBasis != nil {
                 TwoLineCell {
-                    GainText(money: Money(minor: gain, currency: reportingCurrency)).fontWeight(row.isSummary ? .semibold : .regular)
+                    GainText(HoldingsFormat.money(gain, currency: reportingCurrency, signed: true), trend: Trend(minor: gain))
+                        .fontWeight(row.isSummary ? .semibold : .regular)
+                        .help(HoldingsFormat.exact(gain, currency: reportingCurrency, signed: true))
                 } secondary: {
                     Text(row.gainFraction.map { Fmt.percent($0, signed: true) } ?? " ")
                 }
             }
         }
-        .width(min: 92, ideal: 100)
+        .width(min: 92, ideal: 96)
         .alignment(.trailing)
         .customizationID("gain")
     }
@@ -173,32 +206,33 @@ struct HoldingsTable: View {
     @TableColumnBuilder<HoldingRow, Sort> private var performanceColumns: some TableColumnContent<HoldingRow, Sort> {
         TableColumn("TTWROR", value: \.ttwrorSort) { row in
             if let value = row.ttwror {
-                OneLineCell { GainText(percent: value).fontWeight(row.isSummary ? .semibold : .regular) }
+                OneLineCell { ReturnText(value: value, isEmphasized: row.isSummary) }
             }
         }
-        .width(min: 62, ideal: 68)
+        .width(min: 66, ideal: 68)
         .alignment(.trailing)
         .customizationID("ttwror")
 
         TableColumn("IRR", value: \.irrSort) { row in
             if let value = row.irr {
-                OneLineCell { GainText(percent: value).fontWeight(row.isSummary ? .semibold : .regular) }
+                OneLineCell { ReturnText(value: value, isEmphasized: row.isSummary) }
             }
         }
-        .width(min: 62, ideal: 68)
+        .width(min: 66, ideal: 68)
         .alignment(.trailing)
         .customizationID("irr")
 
         TableColumn("Dividends", value: \.dividendsSort) { row in
             if let dividends = row.dividends, dividends != 0 {
-                TwoLineCell {
-                    NumberText(Fmt.money(minor: dividends, currency: reportingCurrency), row: row)
-                } secondary: {
-                    Text(row.yieldOnCost.map { Fmt.percent($0) + " on cost" } ?? " ")
+                // The period's dividends only. (A yield next to it would have to be annual — see
+                // the "Yield on Cost" column — and would not belong to this sum.)
+                OneLineCell {
+                    NumberText(HoldingsFormat.money(dividends, currency: reportingCurrency), row: row)
                 }
+                .help("Dividends received in the reporting period (gross). \(HoldingsFormat.exact(dividends, currency: reportingCurrency))")
             }
         }
-        .width(min: 80, ideal: 86)
+        .width(min: 72, ideal: 78)
         .alignment(.trailing)
         .customizationID("dividends")
 
@@ -218,7 +252,10 @@ struct HoldingsTable: View {
     @TableColumnBuilder<HoldingRow, Sort> private var optionalColumns: some TableColumnContent<HoldingRow, Sort> {
         TableColumn("Value (Local)", value: \.localValueSort) { row in
             if let local = row.localValue {
-                OneLineCell { NumberText(Fmt.money(minor: local, currency: row.currency), row: row) }
+                OneLineCell {
+                    NumberText(HoldingsFormat.money(local, currency: row.currency), row: row)
+                        .help(HoldingsFormat.exact(local, currency: row.currency))
+                }
             }
         }
         .width(min: 90, ideal: 112)
@@ -247,7 +284,7 @@ struct HoldingsTable: View {
 
         TableColumn("Gain %", value: \.gainFractionSort) { row in
             if let value = row.gainFraction {
-                OneLineCell { GainText(percent: value).fontWeight(row.isSummary ? .semibold : .regular) }
+                OneLineCell { ReturnText(value: value, isEmphasized: row.isSummary) }
             }
         }
         .width(min: 64, ideal: 78)
@@ -256,8 +293,13 @@ struct HoldingsTable: View {
         .defaultVisibility(.hidden)
 
         TableColumn("Yield on Cost", value: \.yieldSort) { row in
+            // Annual by construction: the dividends of the twelve months before the statement
+            // day over the cost basis — the same whatever reporting period the window shows.
             if let value = row.yieldOnCost {
                 OneLineCell { NumberText(Fmt.percent(value), row: row) }
+                    .help(row.trailingDividends.map {
+                        "Dividends of the last 12 months (\(Fmt.money(minor: $0, currency: reportingCurrency))) ÷ cost basis. Independent of the reporting period."
+                    } ?? "Dividends of the last 12 months ÷ cost basis.")
             }
         }
         .width(min: 70, ideal: 90)
@@ -267,7 +309,11 @@ struct HoldingsTable: View {
 
         TableColumn("Realized Gain", value: \.realizedSort) { row in
             if let realized = row.realized, realized != 0 || row.kind == .closed {
-                OneLineCell { GainText(money: Money(minor: realized, currency: reportingCurrency)).fontWeight(row.isSummary ? .semibold : .regular) }
+                OneLineCell {
+                    GainText(HoldingsFormat.money(realized, currency: reportingCurrency, signed: true), trend: Trend(minor: realized))
+                        .fontWeight(row.isSummary ? .semibold : .regular)
+                        .help(HoldingsFormat.exact(realized, currency: reportingCurrency, signed: true))
+                }
             }
         }
         .width(min: 90, ideal: 108)
@@ -278,6 +324,89 @@ struct HoldingsTable: View {
 }
 
 // MARK: - Cells
+
+/// Texts of the table that depend on a row's figures — pure, so tests can pin them down.
+enum HoldingsFormat {
+    /// Decimals of a share count that fit the column without an ellipsis: four for ordinary
+    /// holdings, fewer for very large counts. The tooltip always has the full precision.
+    static func shareDecimals(_ shares: Shares) -> Int {
+        let magnitude = abs(shares.doubleValue)
+        return magnitude < 10_000 ? 4 : magnitude < 1_000_000 ? 2 : 0
+    }
+
+    /// A return that fits its column: two decimals up to ±1 000 %, none up to ±10 000 %, beyond
+    /// that only "more than" (such figures come from tiny bases or very short periods).
+    static func compactReturn(_ value: Double) -> String {
+        guard value.isFinite else { return Fmt.missing }
+        let magnitude = abs(value)
+        if magnitude < 10 { return Fmt.percent(value, signed: true) }
+        if magnitude < 100 { return Fmt.percent(value, decimals: 0, signed: true) }
+        return (value > 0 ? "> " : "< ") + Fmt.percent(value > 0 ? 99.99 : -99.99, decimals: 0, signed: true)
+    }
+
+    /// Amounts of a million and more are shown without cents so they never end in an ellipsis
+    /// (the cell's tooltip has the exact figure).
+    static func isCompact(_ minor: Int64) -> Bool { minor.magnitude >= 100_000_000 }
+
+    static func money(_ minor: Int64, currency: CurrencyCode, signed: Bool = false) -> String {
+        isCompact(minor)
+            ? Fmt.moneyRounded(Money(minor: minor, currency: currency), signed: signed)
+            : Fmt.money(minor: minor, currency: currency, signed: signed)
+    }
+
+    /// The exact amount for the tooltip of a compacted cell; empty (no tooltip) otherwise.
+    static func exact(_ minor: Int64?, currency: CurrencyCode, signed: Bool = false) -> String {
+        guard let minor, isCompact(minor) else { return "" }
+        return Fmt.money(minor: minor, currency: currency, signed: signed)
+    }
+
+    static func issueTitle(_ row: HoldingRow) -> String {
+        switch row.valuationIssue {
+        case .noExchangeRate: "No \(row.currency) rate"
+        case .noPrice, nil: "No price"
+        }
+    }
+
+    static func issueHelp(_ row: HoldingRow, reportingCurrency: CurrencyCode) -> String {
+        switch row.valuationIssue {
+        case .noExchangeRate:
+            "No exchange rate from \(row.currency) to \(reportingCurrency) is known, so this \(row.kind == .cash ? "balance" : "position") cannot be valued and counts as zero. Add \(row.currency) rates (Update Quotes fetches them), or see Portfolio ▸ Check Consistency."
+        case .noPrice, nil:
+            "This position has no price and counts as zero. Add a quote for the security."
+        }
+    }
+
+    static func dayChangeHelp(_ row: HoldingRow, reportingCurrency: CurrencyCode) -> String {
+        let since = row.dayChangeSince.map { Fmt.day($0, style: .medium) }
+        if row.isSummary {
+            return "Change in value of these lines since the previous quotes\(since.map { " (earliest: \($0))" } ?? ""), exchange-rate moves included, relative to the value of all of them."
+        }
+        if row.kind == .cash {
+            return "Exchange-rate move of the \(row.currency) balance\(since.map { " since \($0)" } ?? ""), in \(reportingCurrency)."
+        }
+        var text = "Change in value in \(reportingCurrency)\(since.map { " since the quote of \($0)" } ?? ""), shares unchanged."
+        if row.currency != reportingCurrency, let quote = row.quoteChange {
+            text += " The quote moved \(Fmt.percent(quote, signed: true)) in \(row.currency); the rest is the exchange rate."
+        }
+        return text
+    }
+}
+
+/// A signed, colored return that never truncates (see `HoldingsFormat.compactReturn`).
+struct ReturnText: View {
+    let value: Double
+    var isEmphasized = false
+
+    var body: some View {
+        if abs(value) < 10 {
+            GainText(percent: value).fontWeight(isEmphasized ? .semibold : .regular)
+        } else {
+            GainText(HoldingsFormat.compactReturn(value), trend: value.isFinite ? Trend(value) : .flat)
+                .fontWeight(isEmphasized ? .semibold : .regular)
+                .help(Fmt.percent(value, signed: true))
+        }
+    }
+}
 
 /// A number in tabular digits; summary lines are emphasized.
 private struct NumberText: View {
@@ -357,7 +486,7 @@ private struct HoldingNameCell: View {
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(row.name).fontWeight(.semibold)
-                    Text(row.detail.isEmpty ? "\(Fmt.integer(row.count)) \(row.count == 1 ? "holding" : "holdings")" : "\(row.detail) · \(Fmt.integer(row.count))")
+                    Text(row.detail.isEmpty ? HoldingsDisplay.holdings(row.count) : "\(row.detail) · \(HoldingsDisplay.holdings(row.count))")
                         .font(.caption)
                         .numeric()
                         .foregroundStyle(.secondary)
@@ -388,11 +517,14 @@ private struct HoldingNameCell: View {
         }
     }
 
+    /// The cue for a partial position comes first: it must survive truncation, the identifiers
+    /// need not.
     private var secondary: String {
-        var text = row.detail
-        if row.kind == .closed { text += " · closed in period" }
-        if let weight = row.assignedWeight { text += " · \(Fmt.percent(basisPoints: weight)) of the position" }
-        return text
+        var parts: [String] = []
+        if let weight = row.assignedWeight { parts.append("\(Fmt.percent(basisPoints: weight, decimals: weight % 100 == 0 ? 0 : 2)) of the position") }
+        parts.append(row.detail)
+        if row.kind == .closed { parts.append("closed in period") }
+        return parts.joined(separator: " · ")
     }
 }
 
@@ -469,16 +601,16 @@ struct HoldingsRowMenu: View {
         if let row = entities.first, entities.count == 1 {
             if row.securityID != nil {
                 Button("Buy…", systemImage: "plus.circle") { HoldingsActions.buy(row, in: store) }
-                    .keyboardShortcut("b", modifiers: [.command, .control])
+                    .keyboardShortcut(HoldingsShortcut.buy.key, modifiers: HoldingsShortcut.buy.modifiers)
                 Button("Sell…", systemImage: "minus.circle") { HoldingsActions.sell(row, in: store) }
-                    .keyboardShortcut("s", modifiers: [.command, .control])
+                    .keyboardShortcut(HoldingsShortcut.sell.key, modifiers: HoldingsShortcut.sell.modifiers)
                     .disabled(row.kind != .position)
                 Button("Record Dividend…", systemImage: "banknote") { HoldingsActions.recordDividend(row, in: store) }
-                    .keyboardShortcut("d", modifiers: [.command, .control])
+                    .keyboardShortcut(HoldingsShortcut.dividend.key, modifiers: HoldingsShortcut.dividend.modifiers)
                 Divider()
                 Button("Open Security", systemImage: "building.columns") { HoldingsActions.open(row, in: store) }
                 Button("Show Transactions", systemImage: "list.bullet.rectangle") { HoldingsActions.showTransactions(row, in: store) }
-                    .keyboardShortcut("t", modifiers: [.command, .control])
+                    .keyboardShortcut(HoldingsShortcut.transactions.key, modifiers: HoldingsShortcut.transactions.modifiers)
                 Button("Show Performance", systemImage: "chart.xyaxis.line") { HoldingsActions.showPerformance(row, in: store) }
                 Button("Edit Security…", systemImage: "pencil") { HoldingsActions.edit(row, in: store) }
             } else {
@@ -487,7 +619,7 @@ struct HoldingsRowMenu: View {
                 Divider()
                 Button("Open Account", systemImage: "creditcard") { HoldingsActions.open(row, in: store) }
                 Button("Show Transactions", systemImage: "list.bullet.rectangle") { HoldingsActions.showTransactions(row, in: store) }
-                    .keyboardShortcut("t", modifiers: [.command, .control])
+                    .keyboardShortcut(HoldingsShortcut.transactions.key, modifiers: HoldingsShortcut.transactions.modifiers)
                 Button("Edit Account…", systemImage: "pencil") { HoldingsActions.edit(row, in: store) }
             }
             Divider()

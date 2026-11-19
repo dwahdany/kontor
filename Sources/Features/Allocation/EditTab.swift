@@ -51,6 +51,10 @@ struct EditTab: View {
         case assignment(classification: UUID, vehicle: AllocationVehicle, name: String, weight: Int, total: Int, depth: Int)
         case status(parent: UUID?, status: TargetGroupStatus, depth: Int)
 
+        var isStatus: Bool {
+            if case .status = self { true } else { false }
+        }
+
         var id: String {
             switch self {
             case .node(let c, _, _, _): c.id.uuidString
@@ -66,7 +70,9 @@ struct EditTab: View {
         func visit(_ nodes: [Classification], parent: UUID?, depth: Int, parentTarget: Double?) {
             // Validation of this sibling group, right under its parent where it cannot be missed.
             let status = taxonomy.targetStatus(ofParent: parent, overrides: draftTargets)
-            if !nodes.isEmpty, !status.isComplete {
+            // Only when the targets do not add up: a sibling without a target is a valid choice
+            // (rebalancing leaves it untouched) and gets no warning.
+            if !nodes.isEmpty, !status.isValid {
                 result.append(.status(parent: parent, status: status, depth: depth))
             }
             for node in nodes {
@@ -136,7 +142,10 @@ struct EditTab: View {
                 .frame(minWidth: 240, idealWidth: 310, maxWidth: 310)
         }
         .onAppear {
-            if let id = session.editSelection, taxonomy.contains(id) {
+            if store.launchValue("pool") == "all" { showsAssigned = true }
+            // "Edit Classification" from elsewhere, or the classification this window has in focus
+            // (coming back to the screen keeps the selection).
+            if let id = session.editSelection ?? store.route.classificationID, taxonomy.contains(id) {
                 selection = [id.uuidString]
                 session.editSelection = nil
             } else if let name = store.launchValue("select"),
@@ -150,9 +159,9 @@ struct EditTab: View {
         }
         .onChange(of: selection) { _, _ in
             if let id = selectedNode {
-                store.setFocus(.classification(taxonomy: taxonomy.id, id: id))
+                session.setFocus(.classification(taxonomy: taxonomy.id, id: id), in: store)
             } else {
-                store.setFocus(.taxonomy(taxonomy.id))
+                session.setFocus(.taxonomy(taxonomy.id), in: store)
             }
         }
     }
@@ -218,8 +227,11 @@ struct EditTab: View {
         return Menu {
             Section("Targets \(groupName)") {
                 Button("Normalize to 100%") { store.editTaxonomy(taxonomy.id, "Normalize Targets") { $0.normalizeTargets(ofParent: parent) } }
+                    .help("Scale the existing targets so they add up to 100%. Classifications without a target stay without one.")
                 Button("Distribute Remainder") { store.editTaxonomy(taxonomy.id, "Distribute Remainder") { $0.distributeRemainder(ofParent: parent) } }
+                    .help("Give what is missing to 100% to the classifications without a target")
                 Button("Equal Weights") { store.editTaxonomy(taxonomy.id, "Set Equal Targets") { $0.equalizeTargets(ofParent: parent) } }
+                    .help("Give every classification of the group the same target — including those without one")
                 Divider()
                 Button("Clear Targets") { store.editTaxonomy(taxonomy.id, "Clear Targets") { $0.clearTargets(ofParent: parent) } }
             }
@@ -250,15 +262,23 @@ struct EditTab: View {
 
     // MARK: Tree
 
+    /// A single-column `Table`, not a `List`: a `List` measures row heights lazily, and AppKit's
+    /// height estimation re-enters the table view's delegate once there are more than a screenful
+    /// or two of rows ("reentrant operation in its NSTableView delegate" with ~200 assignments).
+    /// Table rows have a known height, so large taxonomies lay out cleanly.
     private var tree: some View {
-        List(selection: $selection) {
-            ForEach(rows) { row in
+        Table(of: Row.self, selection: $selection) {
+            TableColumn("Classification") { row in
                 rowView(row)
-                    .listRowInsets(EdgeInsets(top: 2, leading: DS.Spacing.s, bottom: 2, trailing: DS.Spacing.s))
+            }
+        } rows: {
+            ForEach(rows) { row in
+                TableRow(row)
+                    .selectionDisabled(row.isStatus)
             }
         }
-        .listStyle(.inset)
-        .environment(\.defaultMinListRowHeight, 30)
+        .tableColumnHeaders(.hidden)
+        .alternatingRowBackgrounds(.disabled)
         .onDeleteCommand(perform: deleteSelection)
         .contextMenu(forSelectionType: String.self) { ids in
             treeMenu(ids)
@@ -318,7 +338,6 @@ struct EditTab: View {
                 status: status, depth: depth,
                 distribute: { store.editTaxonomy(taxonomy.id, "Distribute Remainder") { $0.distributeRemainder(ofParent: parent) } },
                 normalize: { store.editTaxonomy(taxonomy.id, "Normalize Targets") { $0.normalizeTargets(ofParent: parent) } })
-                .selectionDisabled()
         }
     }
 
@@ -597,7 +616,9 @@ private struct TargetStatusRow: View {
                     ? "Give the missing \(Fmt.percent(basisPoints: status.remainder)) to the classifications without a target (or spread it evenly)"
                     : "Take the excess away in proportion to the targets")
             Button("Normalize", action: normalize)
-                .help("Scale all targets of this group proportionally so they add up to 100%")
+                .help(status.targeted < status.count
+                    ? "Scale the existing targets proportionally so they add up to 100%. Classifications without a target stay without one — rebalancing leaves them untouched."
+                    : "Scale all targets of this group proportionally so they add up to 100%")
         }
         .fixedSize()
     }
@@ -608,10 +629,8 @@ private struct TargetStatusRow: View {
             let open = status.count - status.targeted
             return "Targets add up to \(sum) — \(Fmt.percent(basisPoints: status.remainder)) missing"
                 + (open > 0 ? " (\(open) without target)" : "")
-        } else if status.remainder < 0 {
-            return "Targets add up to \(sum) — \(Fmt.percent(basisPoints: -status.remainder)) too much"
         }
-        return "Targets add up to 100%, but \(status.count - status.targeted) \(status.count - status.targeted == 1 ? "classification has" : "classifications have") no target"
+        return "Targets add up to \(sum) — \(Fmt.percent(basisPoints: -status.remainder)) too much"
     }
 }
 

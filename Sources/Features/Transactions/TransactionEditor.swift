@@ -12,8 +12,9 @@ import KontorUI
 /// missing as after a save attempt).
 ///
 /// Keyboard: Tab walks date → security → depot → account → numbers → note; the choosers open with
-/// Space, ↓ or by typing a name; ⌃K opens the type list and ⌃B/S/D/P/W/I/F/X/C/T/L/O pick a type
-/// directly; ⌘↩ saves, ⇧⌘↩ saves and starts the next entry, Esc cancels.
+/// Space, ↓ or by typing a name; ⌃⌥K opens the type list and ⌃⌥B/S/D/P/W/I/F/X/C/T/L/O pick a type
+/// directly (Control alone would shadow the text-editing keys ⌃K, ⌃D, ⌃F … of the focused field);
+/// ⌘↩ saves, ⇧⌘↩ saves and starts the next entry, Esc cancels.
 struct TransactionEditor: View {
     enum Mode: Hashable {
         case new(TransactionPrefill)
@@ -59,7 +60,11 @@ struct TransactionEditor: View {
             guard initial == nil else { return }
             switch mode {
             case .new(let prefill):
-                let prefill = Self.applyingLaunchKind(prefill, store: store)
+                var prefill = Self.applyingLaunchKind(prefill, store: store)
+                // Back from "New Security…": start with the security that was just added.
+                if prefill.securityID == nil, let before = prefill.securityCountBeforeNewSecurity, store.file.securities.count > before {
+                    prefill.securityID = store.file.securities.last?.id
+                }
                 let kind = prefill.kind ?? .buy
                 // "Last used": where the latest entry of this kind was booked, else the latest entry at all.
                 let entries = store.file.transactions
@@ -90,6 +95,10 @@ struct TransactionEditor: View {
         var account: UUID?
         if kind.requiresDepot {
             depot = history.last { $0.depotID != nil }?.depotID
+            if store.depot(depot)?.isRetired != false { depot = nil }
+        } else if kind.attributesToDepot {
+            // The depot the last dividend (fee, tax) of this security was booked for.
+            depot = history.last { $0.kind == kind && $0.depotID != nil }?.depotID
             if store.depot(depot)?.isRetired != false { depot = nil }
         }
         if kind.requiresAccount {
@@ -181,6 +190,8 @@ private struct EditorForm: View {
     @State private var showsAllIssues = false
     @State private var addedCount = 0
     @State private var opensSecurityList = false
+    /// Number fields whose text is not a number or calculation right now.
+    @State private var invalidFields = Set<EditorFocus>()
     @FocusState private var focus: EditorFocus?
 
     private let labelWidth: CGFloat = 96
@@ -234,15 +245,17 @@ private struct EditorForm: View {
         .padding(.vertical, DS.Spacing.m)
     }
 
-    /// ⌃K opens the kind list, ⌃B / ⌃S / ⌃D … pick a kind directly.
+    /// ⌃⌥K opens the kind list, ⌃⌥B / ⌃⌥S / ⌃⌥D … pick a kind directly. Not Control alone: key
+    /// equivalents win over the focused text field, and ⌃K, ⌃D, ⌃F, ⌃B, ⌃P, ⌃T, ⌃O are the
+    /// system's text-editing keys (kill line, delete forward, move, transpose …).
     private var kindShortcuts: some View {
         ZStack {
             Button("Choose Type") { isKindPickerOpen = true }
-                .keyboardShortcut("k", modifiers: .control)
+                .keyboardShortcut("k", modifiers: [.control, .option])
             ForEach(Transaction.Kind.allCases, id: \.self) { kind in
                 if let key = kind.shortcutKey {
                     Button(kind.title) { setKind(kind) }
-                        .keyboardShortcut(KeyEquivalent(key), modifiers: .control)
+                        .keyboardShortcut(KeyEquivalent(key), modifiers: [.control, .option])
                 }
             }
         }
@@ -286,7 +299,8 @@ private struct EditorForm: View {
                             title: "Security", selection: $draft.securityID, items: securityItems,
                             placeholder: draft.needsSecurity ? "Choose Security…" : "None (optional)",
                             allowsNone: !draft.needsSecurity, isInvalid: isFlagged(.security), focus: $focus, target: .security,
-                            startsOpen: opensSecurityList)
+                            startsOpen: opensSecurityList,
+                            create: draft.isNew ? ("New Security", { name in createSecurity(named: name) }) : nil)
                         if let caption = quoteCaption {
                             Text(caption).font(.caption).foregroundStyle(.secondary).numeric()
                         }
@@ -299,6 +313,15 @@ private struct EditorForm: View {
                     ComboField(
                         title: "Depot", selection: depotChoice, items: depotItems(selected: draft.depotID), placeholder: "Choose Depot…",
                         isInvalid: isFlagged(.depot), focus: $focus, target: .depot)
+                }
+            } else if draft.showsOptionalDepot {
+                // Dividends, fees and taxes on a security: the depot they belong to. Without one, a
+                // security held in several depots would count in full for each of them.
+                GridRow {
+                    label("Depot")
+                    ComboField(
+                        title: "Depot", selection: depotChoice, items: depotItems(selected: draft.depotID), placeholder: "Not assigned",
+                        allowsNone: true, focus: $focus, target: .depot)
                 }
             }
             if draft.kind == .securityTransfer {
@@ -411,7 +434,7 @@ private struct EditorForm: View {
                         CalcField(
                             title: "Exchange rate", value: FixedMath.saturatingInt64(draft.rate * 1e8), scaleDigits: 8,
                             format: { Fmt.number(Double($0) / 1e8, decimals: 4) }, isCalculated: !draft.ratePinned,
-                            focus: $focus, target: .rate
+                            focus: $focus, target: .rate, onValidity: { setInvalid(.rate, $0) }
                         ) { draft.editRate(Double($0) / 1e8) }
                         .frame(width: fieldWidth)
                         Text("\(currency) per \(securityCurrency)").foregroundStyle(.secondary).fixedSize()
@@ -445,7 +468,7 @@ private struct EditorForm: View {
                         CalcField(
                             title: "Exchange rate", value: FixedMath.saturatingInt64(draft.counterRate * 1e8), scaleDigits: 8,
                             format: { Fmt.number(Double($0) / 1e8, decimals: 4) }, isCalculated: !draft.counterRatePinned,
-                            focus: $focus, target: .counterRate
+                            focus: $focus, target: .counterRate, onValidity: { setInvalid(.counterRate, $0) }
                         ) { draft.editCounterRate(Double($0) / 1e8) }
                         .frame(width: fieldWidth)
                         Text("\(counterCurrency) per \(currency)").foregroundStyle(.secondary).fixedSize()
@@ -508,7 +531,7 @@ private struct EditorForm: View {
             HStack(spacing: DS.Spacing.s) {
                 CalcField(
                     title: title, value: value, scaleDigits: digits, format: format, isCalculated: calculated,
-                    focus: $focus, target: focusTarget(field)
+                    isFlagged: isFlagged(field), focus: $focus, target: focusTarget(field), onValidity: { setInvalid(focusTarget(field), $0) }
                 ) { draft.edit(field, $0) }
                 .frame(width: fieldWidth)
                 if let unit { Text(unit).foregroundStyle(.secondary).frame(width: 34, alignment: .leading) }
@@ -526,7 +549,8 @@ private struct EditorForm: View {
             HStack(spacing: DS.Spacing.s) {
                 CalcField(
                     title: title, value: value, scaleDigits: 2, format: { Fmt.money(minor: $0) }, isCalculated: calculated,
-                    isEmphasized: emphasized, focus: $focus, target: focusTarget(field)
+                    isEmphasized: emphasized, isFlagged: isFlagged(field), focus: $focus, target: focusTarget(field),
+                    onValidity: { setInvalid(focusTarget(field), $0) }
                 ) { draft.edit(field, $0) }
                 .frame(width: fieldWidth)
                 Text(unit).foregroundStyle(.secondary).frame(width: 34, alignment: .leading)
@@ -595,11 +619,40 @@ private struct EditorForm: View {
         showsAllIssues && issues.contains { $0.severity == .error && $0.field == field }
     }
 
+    /// The number field takes part in an error (same red border as the choosers).
+    private func isFlagged(_ field: TransactionDraft.Field) -> Bool {
+        switch field {
+        case .shares: isFlagged(EditorIssue.Field.shares)
+        case .price: isFlagged(EditorIssue.Field.price) || (draft.price == 0 && isFlagged(EditorIssue.Field.amount))
+        case .total: isFlagged(EditorIssue.Field.amount)
+        case .gross: !draft.kind.usesPrice && draft.kind.chargeSign != 0 && isFlagged(EditorIssue.Field.amount)
+        case .fees, .taxes: isFlagged(EditorIssue.Field.charges)
+        case .counterAmount: isFlagged(EditorIssue.Field.counterAmount)
+        case .securityGross: false
+        }
+    }
+
+    private func setInvalid(_ field: EditorFocus, _ invalid: Bool) {
+        if invalid { invalidFields.insert(field) } else { invalidFields.remove(field) }
+    }
+
+    /// Tab order of the number fields — the first unreadable one gets the focus when saving is refused.
+    private static let numberFields: [EditorFocus] = [.shares, .price, .securityGross, .rate, .gross, .fees, .taxes, .total, .counterRate, .counterAmount]
+
     @ViewBuilder private var feedback: some View {
         let visible = visibleIssues
         let preview = previewText
-        if !visible.isEmpty || preview != nil || noAccountsHint != nil {
+        let unreadable = showsAllIssues && !invalidFields.isEmpty
+        if !visible.isEmpty || preview != nil || noAccountsHint != nil || unreadable {
             VStack(alignment: .leading, spacing: DS.Spacing.xs) {
+                if unreadable {
+                    HStack(alignment: .firstTextBaseline, spacing: DS.Spacing.s) {
+                        Image(systemName: "xmark.octagon.fill").foregroundStyle(Color.red).imageScale(.small).accessibilityLabel("Error")
+                        Text("The field marked red is not a number or a finished calculation. Correct it or clear it.")
+                            .font(.callout)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
                 ForEach(visible) { issue in
                     HStack(alignment: .firstTextBaseline, spacing: DS.Spacing.s) {
                         Image(systemName: issue.severity == .error ? "xmark.octagon.fill" : "exclamationmark.triangle.fill")
@@ -617,8 +670,12 @@ private struct EditorForm: View {
                         Image(systemName: "info.circle").foregroundStyle(.secondary).imageScale(.small).accessibilityHidden(true)
                         Text(hint.text).font(.callout).fixedSize(horizontal: false, vertical: true)
                         Button(hint.action) {
-                            store.dismissSheet()
-                            store.present(hint.request)
+                            if case .newSecurity = hint.request, draft.isNew {
+                                createSecurity(named: "")
+                            } else {
+                                store.dismissSheet()
+                                store.present(hint.request)
+                            }
                         }
                         .buttonStyle(.link)
                         .font(.callout)
@@ -758,7 +815,7 @@ private struct EditorForm: View {
         Binding(get: { draft.depotID }, set: { id in
             draft.depotID = id
             keepsDepot = true
-            if draft.isNew, !keepsAccount, let reference = store.depot(id)?.referenceAccountID, store.account(reference) != nil {
+            if draft.isNew, draft.kind.requiresDepot, !keepsAccount, let reference = store.depot(id)?.referenceAccountID, store.account(reference) != nil {
                 draft.accountID = reference
             }
         })
@@ -771,6 +828,23 @@ private struct EditorForm: View {
         })
     }
 
+    /// "New Security…" from the chooser: the security editor opens, and this editor comes back
+    /// behind it with everything entered so far and the new security selected.
+    private func createSecurity(named name: String) {
+        var prefill = TransactionPrefill(
+            kind: draft.kind, date: draft.date, accountID: draft.accountID, depotID: draft.depotID,
+            counterAccountID: draft.counterAccountID, counterDepotID: draft.counterDepotID,
+            shares: draft.shares > 0 ? Shares(raw: draft.shares) : nil,
+            amount: draft.total > 0 && !draft.kind.usesPrice ? Money(minor: draft.total, currency: draft.currency) : nil,
+            fees: draft.fees > 0 ? draft.fees : nil, taxes: draft.taxes > 0 ? draft.taxes : nil,
+            note: draft.note.isEmpty ? nil : draft.note, source: draft.source)
+        prefill.minuteOfDay = draft.minuteOfDay
+        prefill.securityCountBeforeNewSecurity = store.file.securities.count
+        store.dismissSheet()
+        store.present(.newSecurity(SecurityPrefill(name: name.isEmpty ? nil : name)))
+        store.present(.newTransaction(prefill))
+    }
+
     private func followHabits(for securityID: UUID?) {
         guard draft.isNew, let securityID else { return }
         let habits = TransactionEditor.habits(for: securityID, kind: draft.kind, store: store)
@@ -781,11 +855,20 @@ private struct EditorForm: View {
     private func setKind(_ kind: Transaction.Kind) {
         guard kind != draft.kind else { return }
         draft.setKind(kind)
+        followHabits(for: draft.securityID)
         draft.resolve(ledger, changed: [.kind])
         if focus == nil || focus == .kind { focusFirstField() }
     }
 
     private func save(andNew: Bool) {
+        // Text the form cannot read ("100+", "1e5") is on screen while the draft still holds the
+        // last value it understood: never save that silently.
+        if let unreadable = Self.numberFields.first(where: invalidFields.contains) {
+            showsAllIssues = true
+            focus = unreadable
+            NSSound.beep()
+            return
+        }
         let errors = issues.filter { $0.severity == .error }
         guard errors.isEmpty else {
             showsAllIssues = true
@@ -793,16 +876,12 @@ private struct EditorForm: View {
             NSSound.beep()
             return
         }
-        let transaction = draft.makeTransaction()
-        let isNew = draft.isNew
-        store.mutate("\(isNew ? "Add" : "Edit") \(draft.kind.title)") { file in
-            if let index = file.transactions.firstIndex(where: { $0.id == transaction.id }) {
-                file.transactions[index] = transaction
-            } else {
-                file.transactions.append(transaction)
-            }
+        let transaction = TransactionEditor.commit(draft, in: store)
+        if store.route.screen == .transactions {
+            // The ledger selects the entry if its filters show it — and keeps them if they do not.
+            SavedTransactions.note(transaction.id, in: store)
+            store.setFocus(.transaction(transaction.id))
         }
-        if store.route.screen == .transactions { store.setFocus(.transaction(transaction.id)) }
         guard andNew else {
             store.dismissSheet()
             return
@@ -850,8 +929,8 @@ private struct EditorForm: View {
     private var contextKey: ContextKey {
         ContextKey(
             revision: store.revision, day: draft.date,
-            securityID: draft.kind.sharesSign != 0 || draft.kind == .dividend ? draft.securityID : nil,
-            depotID: draft.kind.requiresDepot ? draft.depotID : nil,
+            securityID: draft.kind.sharesSign != 0 || draft.showsOptionalDepot ? draft.securityID : nil,
+            depotID: draft.kind.requiresDepot || draft.showsOptionalDepot ? draft.depotID : nil,
             counterDepotID: draft.kind == .securityTransfer ? draft.counterDepotID : nil,
             accountID: draft.kind.requiresAccount ? draft.accountID : nil,
             counterAccountID: draft.kind == .cashTransfer ? draft.counterAccountID : nil,
@@ -869,10 +948,9 @@ private struct EditorForm: View {
         }
         guard let result, !Task.isCancelled else { return }
         context = result
-        // A dividend is paid on what was held: offer that share count unless one was entered.
-        if draft.kind == .dividend, draft.isNew, !draft.pinned.contains(.shares), let held = result.sharesHeld {
-            draft.shares = max(0, held)
-        }
+        // A new dividend (fee, tax) belongs to the depot that holds the security, and a dividend is
+        // paid on what is held there: offer both unless the depot / share count was entered.
+        draft.adopt(result, choosesDepot: !keepsDepot)
     }
 
     // MARK: Picker items
@@ -896,5 +974,23 @@ private struct EditorForm: View {
             .filter { !$0.isRetired || $0.id == selected }
             .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
             .map { PickerItem(id: $0.id, title: $0.name) }
+    }
+}
+
+extension TransactionEditor {
+    /// Writes the draft to the document as one undo step ("Add Buy" / "Edit Buy") — what Save does
+    /// once the draft has no errors. Also driven by the app's self-test.
+    @discardableResult
+    static func commit(_ draft: TransactionDraft, in store: PortfolioStore) -> Transaction {
+        let transaction = draft.makeTransaction()
+        let isNew = draft.isNew
+        store.mutate("\(isNew ? "Add" : "Edit") \(draft.kind.title)") { file in
+            if let index = file.transactions.firstIndex(where: { $0.id == transaction.id }) {
+                file.transactions[index] = transaction
+            } else {
+                file.transactions.append(transaction)
+            }
+        }
+        return transaction
     }
 }

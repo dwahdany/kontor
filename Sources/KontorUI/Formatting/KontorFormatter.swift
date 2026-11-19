@@ -129,13 +129,13 @@ public struct KontorFormatter: Sendable {
     ///
     /// `maxDecimals` caps the fraction digits (never below 2) — for engine-derived values such as a
     /// dividend per share or an average purchase price in a table cell.
-    public func price(_ price: Price, currency: CurrencyCode? = nil, maxDecimals: Int? = nil) -> String {
+    public func price(_ price: Price, currency: CurrencyCode? = nil, maxDecimals: Int? = nil, signed: Bool = false) -> String {
         var out = [UInt8]()
         var magnitude = price.raw.magnitude
         var maxFraction = magnitude >= UInt64(Scale.price) ? 4 : 8
         if let maxDecimals { maxFraction = min(maxFraction, max(2, maxDecimals)) }
         magnitude = Self.rounded(magnitude, toDecimals: maxFraction)
-        appendSign(price.raw < 0 && magnitude != 0, positive: false, &out)
+        appendSign(price.raw < 0 && magnitude != 0, positive: signed && price.raw > 0 && magnitude != 0, &out)
         wrapCurrency(currency, &out) { out in
             self.appendFixed(magnitude, scaleDigits: 8, minFraction: 2, maxFraction: maxFraction, grouping: true, &out)
         }
@@ -224,11 +224,15 @@ public struct KontorFormatter: Sendable {
     public func parseFixed(_ text: String, scaleDigits: Int) -> Int64? {
         var negative = false
         var sawDigit = false
+        var letterAfterDigit = false
         var chars = [UInt8]()
         chars.reserveCapacity(text.utf8.count)
         for scalar in text.unicodeScalars {
             switch scalar {
             case "0"..."9":
+                // Letters between digits ("1e5", "12x3") are not a number; reading them as "15"
+                // or "123" would silently book something the user never typed.
+                if letterAfterDigit { return nil }
                 sawDigit = true
                 chars.append(UInt8(scalar.value))
             case ".", ",":
@@ -238,6 +242,7 @@ public struct KontorFormatter: Sendable {
             case "(":
                 if !sawDigit { negative = true }
             default:
+                if sawDigit, scalar.properties.isAlphabetic { letterAfterDigit = true }
                 continue
             }
         }
@@ -255,7 +260,10 @@ public struct KontorFormatter: Sendable {
             let index = max(lastDot, lastComma)
             let char = chars[index]
             let digitsAfter = chars.count - index - 1
-            let looksLikeGrouping = digitsAfter == 3 && index >= 1 && index <= 3
+            // "1.234" may be one thousand two hundred thirty-four; "0.125" cannot be a grouped
+            // number (nobody writes a leading zero group), so there the separator is the decimal one.
+            let integerPartIsZero = chars[..<index].allSatisfy { $0 == 0x30 }
+            let looksLikeGrouping = digitsAfter == 3 && index >= 1 && index <= 3 && !integerPartIsZero
             if char == spec.decimalByte || !(looksLikeGrouping && char == spec.groupingByte) {
                 decimalIndex = index
             }

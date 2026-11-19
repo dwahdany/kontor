@@ -68,10 +68,20 @@ store.mutate("Rebalance") { file in
     file.taxonomies[0].root[1].targetWeight = 2_500
 }
 
-// Changes that should dirty the document but not appear in the undo stack (rare):
+// Background changes (an automatic quote update): the document becomes edited, but there is no
+// undo step and the redo stack stays intact.
 store.mutate("Refresh Derived Data", undoable: false) { file in … }
 store.updateSecurity(id, actionName: "Edit Security") { $0.note = "…" }      // in-place edit of one security
 ```
+
+After every change the route is validated: a focus whose entity was deleted is dropped. The undo
+stack is bounded (`PortfolioStore.undoLevels(for:)`: 100 steps, fewer for very large files, since a
+step keeps the collections it changed). `store.snapshot` (`FileSnapshot`) mirrors the current file
+behind a lock for readers off the main actor — the document saves from it.
+
+Opening and saving files goes through `DocumentIO` (`read`, `preflight`, `sanitize`, `write`): JSON
+that is not a portfolio is refused, unusable exchange rates are dropped, and a non-finite number
+never makes a file unsaveable.
 
 CRUD conveniences (each one undo step):
 
@@ -277,15 +287,17 @@ store.scope                    // engine Scope — what analysisTask/analyze use
 store.scopeTitle               // for headers: "Holdings — Main Depot"
 store.isWholePortfolioScope
 
-ScopePicker()                                              // toolbar menu bound to store.scopeSelection
-ScopePicker(accounts: false, classifications: true)        // leave out single cash accounts (securities-only screens)
-ScopePicker(selection: $localScope)                        // screen-local scope
+ScopePicker(store: store)                                  // toolbar menu bound to store.scopeSelection
+ScopePicker(store: store, accounts: false, classifications: true)   // leave out single cash accounts (securities-only screens)
+ScopePicker(selection: $localScope)                        // screen-local scope (inside the view tree)
 taxonomy.flattened                                         // [(classification, depth)] depth-first — for menus/outlines
 ```
 
-Put `ToolbarItem { ScopePicker() }` in your screen's `.toolbar` if the screen is scope-aware
+Put `ToolbarItem { ScopePicker(store: store) }` in your screen's `.toolbar` if the screen is scope-aware
 (Dashboard, Holdings, Performance, Earnings, Trades, Allocation typically are). Screens that list
 master data (Securities, Transactions, Accounts, Plans, Import) normally ignore the scope.
+Pass the store: toolbar items are hosted outside the screen's view tree. `ScopePicker` and
+`PeriodPicker` render nothing (instead of trapping) when they find no store at all.
 
 ---
 
@@ -373,7 +385,7 @@ store.services.chooseImportFile?(store)    // open panel → .importFile(url)
 
 | request | payload | owner |
 |---|---|---|
-| `.newTransaction(TransactionPrefill)`, `.editTransaction(UUID)` | `kind, date, securityID, accountID, depotID, counterAccountID, counterDepotID, shares, amount, fees, taxes, note, source` — all optional; `init(copying:date:)` | FeatureTransactions |
+| `.newTransaction(TransactionPrefill)`, `.editTransaction(UUID)` | `kind, date, securityID, accountID, depotID, counterAccountID, counterDepotID, shares, amount, fees, taxes, note, source, securityGross, counterAmount, exDate, minuteOfDay` — all optional; `init(copying:date:)` carries the foreign-currency value and the arrived transfer amount along | FeatureTransactions |
 | `.newSecurity(SecurityPrefill)`, `.editSecurity(UUID)` | `name, currency, isin, wkn, ticker, feed` | FeatureSecurities |
 | `.newAccount(AccountPrefill)`, `.editAccount(UUID)` | `name, currency` | FeatureAccounts |
 | `.newDepot(DepotPrefill)`, `.editDepot(UUID)` | `name, referenceAccountID` | FeatureAccounts |
@@ -446,9 +458,13 @@ struct QuoteUpdateReport: Equatable, Sendable {
 }
 ```
 
-Guarantees: results are applied through `store.mutate("Update Quotes")` as **one undoable step**;
-securities without a feed, with a `manual` feed and retired ones are never requested; a second call
-while an update runs does nothing. Do not make network calls of your own from a screen — to try a
+Guarantees: an `interactive` update is applied as **one undoable step** ("Update Quotes"); an
+automatic one (`interactive: false`) marks the document edited without an undo step and without
+clearing the redo stack; a run that brings nothing new leaves the file untouched (no revision bump).
+Securities without a feed, with a `manual` feed and retired ones are never requested; a second call
+while an update runs does nothing; `store.shutdown()` (window closed) cancels a running download.
+`store.needsExchangeRates` is true for a file with more than one currency: rates are worth fetching
+even without any quote feed (the shell and the importer do so). Do not make network calls of your own from a screen — to try a
 feed in an editor (FeatureSecurities), use KontorMarketData's providers directly inside
 `store.whileBusy`, and never when `store.quoteUpdater == nil`.
 
@@ -544,6 +560,7 @@ Fmt.shares(Shares(12.5))                                     // "12.5" (≤ 8 de
 Fmt.shares(shares, maxDecimals: 4)                           // "3.8524" — table cells; exact value in a tooltip
 Fmt.price(Price(101.5), currency: "EUR")                     // "€101.50" (2–4 decimals; up to 8 below 1)
 Fmt.price(price, currency: "EUR", maxDecimals: 4)            // engine-derived prices (dividend per share, averages)
+Fmt.price(change, currency: "EUR", signed: true)             // "+€1.25" — absolute price changes
 Fmt.time(minuteOfDay: 495)                                   // "08:15"
 Fmt.bytes(74_100_000)                                        // "74.1 MB"
 Fmt.number(1234.567, decimals: 1)                            // "1,234.6"
@@ -686,6 +703,7 @@ StatTile("Net Worth", value: Fmt.money(total),
          delta: DeltaLabel(fraction: 0.0124, amount: change), footnote: "today", symbol: "sum")
 
 DeltaLabel(fraction: 0.0124)                              // ▲ 1.24%
+DeltaLabel(fraction: 0.356, decimals: 1)                  // ▲ 35.6% — match the precision of the figures beside it
 DeltaLabel(fraction: -0.02, amount: Money(minor: -31_240, currency: "EUR"))   // ▼ 2.00% −€312.40
 
 GainText(money: gain)                                     // +$1,204.10 in gain/loss color
@@ -997,8 +1015,16 @@ struct LedgerTable: View {
 
 **Table traps on this SDK** (all hit during feature work):
 
-* Do not read `@Environment(PortfolioStore.self)` inside table cells or in
-  `contextMenu(forSelectionType:)` content — pass the store in.
+* Do not read `@Environment(PortfolioStore.self)` inside table cells, toolbar items or
+  `contextMenu(forSelectionType:)` content — pass the store in. They are built lazily outside your
+  view tree, where a missing environment object is a crash, not a compile error.
+* A `Table` that is on screen must not receive hundreds of new rows in one update (a cleared
+  filter): bump an `.id` on it when a result grows by more than a screenful, so it is replaced.
+  `List` with more than about 100 rows logs the same AppKit warning when first filled — use `Table`
+  or a `LazyVStack`.
+* A `.task(id:)` / `onChange(of:)` whose key combines two values that can both change in one frame
+  makes SwiftUI log "tried to update multiple times per frame" and drop an update: observe them
+  separately, and never change the key from inside its own action.
 * `TableRowBuilder` has no `if`/`else` (use a `ForEach` over a possibly empty array);
   `TableColumnBuilder` accepts `if`, but at most ~10 columns per builder block — split wide tables into
   `@TableColumnBuilder` computed properties. Column `min` widths are hard limits: when their sum
@@ -1059,3 +1085,24 @@ import KontorSampleData
 ```sh
 KONTOR_FEATURES=Holdings swift test --scratch-path .build-holdings --filter FeatureHoldingsTests
 ```
+
+### The self-test
+
+`Scripts/selftest.sh` (README ▸ Self-test) drives the built app end to end. A feature takes part by
+exposing what its sheets do as functions and a small public hook the shell calls:
+
+```swift
+// in the feature: what "Save" does, callable without the view
+extension TransactionEditor {
+    @discardableResult static func commit(_ draft: TransactionDraft, in store: PortfolioStore) -> Transaction { … }
+}
+
+// Sources/Features/<Name>/<Name>SelfTest.swift
+public enum TransactionsSelfTest {
+    @MainActor public static func record(_ entry: Entry, in store: PortfolioStore) async throws -> Transaction
+}
+```
+
+Hooks throw `SelfTestFailure("what went wrong")`. Screens, sub-views (`--state` keys), deep links
+and sheets are toured automatically; add new `--state` variants to `SelfTestRun.variants` and new
+custom sheet ids to `SelfTestRun.sheetRequests` in `Sources/Kontor/SelfTest.swift`.

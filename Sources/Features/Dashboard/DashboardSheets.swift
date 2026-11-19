@@ -199,7 +199,9 @@ struct WidgetEditorSheet: View {
                 .frame(width: 420, height: 240)
             }
         }
-        .onAppear { if draft == nil { draft = resolve() } }
+        // The draft starts from what the tile effectively shows: references to things that were
+        // deleted are dropped, so every picker has a real selection and "Done" cleans the file.
+        .onAppear { if draft == nil { draft = resolve()?.normalized(in: store.file) } }
         .onExitCommand { store.dismissSheet() }
     }
 
@@ -229,7 +231,7 @@ struct WidgetEditorSheet: View {
                     if kind.usesPeriod || kind.usesScope {
                         Section {
                             if kind.usesPeriod, !(kind == .topMovers && widget.wrappedValue.showsMoversOfTheDay) {
-                                overrideRow("Period", isOn: Binding(
+                                overrideRow("Period", maxControlWidth: nil, isOn: Binding(
                                     get: { widget.wrappedValue.periodOverride != nil },
                                     set: { widget.wrappedValue.periodOverride = $0 ? store.period : nil })
                                 ) {
@@ -239,7 +241,8 @@ struct WidgetEditorSheet: View {
                                 }
                             }
                             if kind.usesScope {
-                                overrideRow("Scope", isOn: Binding(
+                                // Long depot / account names truncate inside the row instead of pushing it apart.
+                                overrideRow("Scope", maxControlWidth: 200, isOn: Binding(
                                     get: { widget.wrappedValue.scopeOverride != nil },
                                     set: { widget.wrappedValue.scopeOverride = $0 ? store.scopeSelection : nil })
                                 ) {
@@ -294,10 +297,17 @@ struct WidgetEditorSheet: View {
         .frame(width: 803, height: 600)
     }
 
-    private func overrideRow<Control: View>(_ title: String, isOn: Binding<Bool>, @ViewBuilder control: () -> Control) -> some View {
+    private func overrideRow<Control: View>(_ title: String, maxControlWidth: CGFloat?, isOn: Binding<Bool>,
+                                            @ViewBuilder control: () -> Control) -> some View {
         LabeledContent(title) {
             HStack(spacing: DS.Spacing.s) {
-                if isOn.wrappedValue { control().fixedSize() }
+                if isOn.wrappedValue {
+                    if let maxControlWidth {
+                        control().lineLimit(1).truncationMode(.middle).frame(maxWidth: maxControlWidth, alignment: .trailing)
+                    } else {
+                        control().fixedSize()
+                    }
+                }
                 Picker(title, selection: isOn) {
                     Text("Window").tag(false)
                     Text("Fixed").tag(true)
@@ -438,7 +448,7 @@ struct DashboardInspector: View {
             HStack {
                 Button("Add Widget…", systemImage: "plus") { store.present(.custom(id: DashboardFeature.gallerySheetID)) }
                 Spacer()
-                Button(store.dashboardSession.isEditing ? "Done" : "Edit") { store.dashboardSession.isEditing.toggle() }
+                Button(store.dashboardSession.isEditing ? "Done" : "Edit") { store.toggleDashboardEditing() }
             }
             .padding(DS.Spacing.m)
         }

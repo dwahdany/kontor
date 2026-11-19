@@ -11,25 +11,24 @@ struct PerformanceChartCard: View {
     let model: Loadable<OverviewModel>
     @Binding var mode: PerformanceChartMode
     let pinnedHover: Day?
-    /// A range shown without a drag (launch state, "Show in Chart" of a drawdown).
-    @Binding var pinnedRange: DayInterval?
+    /// The selected sub-range: dragged here, or pinned by the screen (launch state, "Show in
+    /// Chart" of a drawdown). Owned by the screen so that either side can replace it.
+    @Binding var range: ChartRangeState
     let compare: [UUID]
     let addComparison: (UUID) -> Void
     let removeComparison: (UUID) -> Void
 
-    @State private var dragged: DayInterval?
     @State private var figures: RangeFigures?
-    @State private var chartGeneration = 0
     @State private var pickedSecurity: UUID?
 
-    private var activeRange: DayInterval? { dragged ?? pinnedRange }
+    private var activeRange: DayInterval? { range.active }
 
     var body: some View {
         Card {
             VStack(alignment: .leading, spacing: DS.Spacing.m) {
                 header
                 chart
-                    .id(chartGeneration)
+                    .id(range.generation)
                     .frame(height: 300)
                 if let range = activeRange {
                     RangeStrip(range: range, figures: figures?.interval == range ? figures : nil,
@@ -98,21 +97,34 @@ struct PerformanceChartCard: View {
         }
     }
 
-    /// The ad-hoc comparisons, removable. (Benchmarks from the settings are toggled in the legend.)
+    /// The ad-hoc comparisons, removable — every one that was asked for, also those the chart
+    /// cannot draw. (Benchmarks from the settings are toggled in the legend.)
     @ViewBuilder private var comparisonMenu: some View {
-        let adHoc = (model.value?.comparisons ?? []).filter { !$0.isBenchmark }
+        let drawn = Dictionary(uniqueKeysWithValues: (model.value?.comparisons ?? []).map { ($0.id, $0) })
+        let benchmarks = Set(store.file.settings.benchmarkSecurityIDs)
+        let adHoc = compare.filter { !benchmarks.contains($0) }
         if !adHoc.isEmpty {
             Menu {
-                ForEach(adHoc) { item in
-                    Menu("\(item.name)  \(Fmt.percent(item.total, signed: true))") {
-                        Button("Remove from Chart") { removeComparison(item.id) }
-                        Button("Keep as Benchmark") { keepAsBenchmark(item) }
-                        Divider()
-                        Button("Open Security") { store.navigate(to: .security(item.id)) }
+                ForEach(adHoc, id: \.self) { id in
+                    let name = store.security(id)?.name ?? "Unknown Security"
+                    if let item = drawn[id] {
+                        Menu("\(name)  \(Fmt.percent(item.total, signed: true))") {
+                            Button("Remove from Chart") { removeComparison(id) }
+                            Button("Keep as Benchmark") { keepAsBenchmark(item) }
+                            Divider()
+                            Button("Open Security") { store.navigate(to: .security(id)) }
+                        }
+                    } else {
+                        // Asked for, but not in the chart: no prices, or the model is still loading.
+                        Menu(model.isLoading ? name : "\(name)  (cannot be drawn)") {
+                            Button("Remove from Chart") { removeComparison(id) }
+                            Divider()
+                            Button("Open Security") { store.navigate(to: .security(id)) }
+                        }
                     }
                 }
                 Divider()
-                Button("Remove All Comparisons") { adHoc.forEach { removeComparison($0.id) } }
+                Button("Remove All Comparisons") { adHoc.forEach(removeComparison) }
             } label: {
                 Text("Comparing \(adHoc.count)")
             }
@@ -122,11 +134,14 @@ struct PerformanceChartCard: View {
         }
     }
 
+    /// Securities that can be added: not shown yet, and with prices the chart can draw.
     private var pickerItems: [PickerItem<UUID>] {
         let benchmarks = Set(store.file.settings.benchmarkSecurityIDs)
         let shown = Set(compare).union(benchmarks)
+        let ledger = store.ledger
+        let day = store.periodInterval.start
         return store.file.securities
-            .filter { !shown.contains($0.id) }
+            .filter { !shown.contains($0.id) && ComparisonRules.canDraw($0.id, ledger: ledger, on: day) }
             .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
             .map { PickerItem(id: $0.id, title: $0.name, detail: $0.ticker.isEmpty ? $0.isin : $0.ticker,
                               keywords: [$0.isin, $0.wkn, $0.ticker], isDimmed: $0.isRetired) }
@@ -160,20 +175,16 @@ struct PerformanceChartCard: View {
         return base
             .timeDomain(m?.interval)
             .rangeSelection { selection in
-                dragged = selection?.interval
-                if selection != nil { pinnedRange = nil }
+                range.drag(selection?.interval)
             }
             .pinnedHover(activeRange == nil ? pinnedHover : nil)
-            .pinnedRange(dragged == nil ? pinnedRange : nil)
+            .pinnedRange(range.dragged == nil ? range.pinned : nil)
             .loading(model.isLoading)
             .emptyMessage("Nothing to chart in this period")
     }
 
     private func clearRange() {
-        guard activeRange != nil else { return }
-        dragged = nil
-        pinnedRange = nil
-        chartGeneration += 1      // drops the chart's own selection
+        range.clear()      // a new chart identity drops the chart's own selection
     }
 
     private func usePeriod(_ range: DayInterval) {
@@ -191,16 +202,19 @@ private struct RangeStrip: View {
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: DS.Spacing.l) {
             VStack(alignment: .leading, spacing: DS.Spacing.xxs) {
-                // Like the chart's own tooltip: from the close of the first day to the last.
-                Text("\(Fmt.day(range.start, style: .medium)) – \(Fmt.day(range.end, style: .medium))")
+                // The days the figures cover, like the screen's heading: the range's first day is
+                // the baseline (its close opens the measurement), so the label starts the day after.
+                Text(Fmt.interval(range))
                     .font(.callout.weight(.medium))
                     .numeric()
-                Text(Fmt.duration(days: range.dayCount))
+                Text("\(Fmt.duration(days: range.dayCount)) · from the close of \(Fmt.day(range.start, style: .medium))")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
             figure("TTWROR") { SignedPercent(value: figures?.ttwror) }
-            figure("IRR per year") { SignedPercent(value: figures?.irr) }
+            figure((figures?.isAnnualized ?? ReturnHorizon.isAnnualized(days: range.dayCount)) ? "IRR per year" : "IRR, not annualized") {
+                SignedPercent(value: figures?.moneyWeightedReturn)
+            }
             figure("Gain") {
                 if let figures {
                     GainText(money: Money(minor: figures.absolutePerformance, currency: figures.currency))

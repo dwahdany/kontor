@@ -21,6 +21,24 @@ struct ProjectionInput: Hashable, Sendable {
     var months: Int { max(years, 0) * 12 }
     var pessimisticReturn: Double { annualReturn - abs(spread) }
     var optimisticReturn: Double { annualReturn + abs(spread) }
+
+    /// What the panel accepts as expected return and as spread — the limits of its steppers. Typed
+    /// values, launch state and restored window state are clamped to these (`clampedReturn`,
+    /// `clampedSpread`), so that a typo such as 500 % cannot produce absurd numbers.
+    static let returnRange = -0.5...0.5
+    static let spreadRange = 0.0...0.25
+
+    static func clampedReturn(_ value: Double) -> Double {
+        value.isFinite ? min(max(value, returnRange.lowerBound), returnRange.upperBound) : 0
+    }
+
+    static func clampedSpread(_ value: Double) -> Double {
+        value.isFinite ? min(max(abs(value), spreadRange.lowerBound), spreadRange.upperBound) : 0
+    }
+
+    /// Nothing to draw: no money at the start and none ever paid in (withdrawals from nothing
+    /// stay at zero).
+    var isEmpty: Bool { startValue <= 0 && flows.allSatisfy { $0 <= 0 } }
 }
 
 /// Monthly series, index 0 = today, index `m` = after `m` months. `count == months + 1`.
@@ -132,13 +150,14 @@ struct ProjectionBase: Sendable {
             let status = ledger.planStatus(plan, through: today)
             let converted = ledger.converter.convert(
                 minor: plan.amount.minor, from: plan.amount.currency, to: ledger.reportingCurrency, on: today)
-            let sign: Int64 = plan.kind == .withdrawal ? -1 : 1
+            // Withdrawals count negative (`max` keeps the negation of a damaged amount from trapping).
+            let signed = converted.map { plan.kind == .withdrawal ? -max($0, -Int64.max) : $0 }
             var flows = [Int64](repeating: 0, count: Self.maximumYears * 12)
             var isActive = false
-            if status.problem == nil, status.nextDue != nil, let converted {
+            if status.problem == nil, status.nextDue != nil, let signed {
                 for due in plan.dueDates(through: horizon) where due > today {
                     guard let month = PlanProjection.monthIndex(of: due, today: today), month <= flows.count else { continue }
-                    flows[month - 1] += sign * converted
+                    flows[month - 1] = Self.saturatingSum(flows[month - 1], signed)
                     isActive = true
                 }
             }
@@ -147,7 +166,7 @@ struct ProjectionBase: Sendable {
             case .deposit, .withdrawal: plan.accountID.flatMap { ledger.account($0)?.name } ?? ""
             }
             return ProjectionPlan(
-                id: plan.id, name: plan.name, kind: plan.kind, detail: target, amount: converted.map { sign * $0 },
+                id: plan.id, name: plan.name, kind: plan.kind, detail: target, amount: signed,
                 intervalMonths: plan.intervalMonths, flows: flows,
                 isInternal: plan.kind == .purchase && plan.accountID != nil, isActive: isActive)
         }
@@ -167,8 +186,14 @@ struct ProjectionBase: Sendable {
     func flows(including selection: Set<UUID>, years: Int) -> [Int64] {
         var total = [Int64](repeating: 0, count: max(min(years, Self.maximumYears), 0) * 12)
         for plan in plans where selection.contains(plan.id) {
-            for index in total.indices { total[index] += plan.flows[index] }
+            for index in total.indices { total[index] = Self.saturatingSum(total[index], plan.flows[index]) }
         }
         return total
+    }
+
+    /// `a + b`, clamped to the `Int64` range: absurd amounts in a damaged file must not trap.
+    static func saturatingSum(_ a: Int64, _ b: Int64) -> Int64 {
+        let (sum, overflow) = a.addingReportingOverflow(b)
+        return overflow ? (b < 0 ? .min : .max) : sum
     }
 }

@@ -75,6 +75,8 @@ struct AccountEditor: View {
 
     @State private var draft = Account(name: "", currency: "EUR")
     @State private var isLoaded = false
+    /// Evaluated once when the sheet opens (the document cannot change underneath a modal sheet).
+    @State private var currencyLock = AccountCurrencyLock.open
     @FocusState private var nameFocused: Bool
 
     init(prefill: AccountPrefill) {
@@ -88,7 +90,6 @@ struct AccountEditor: View {
     }
 
     private var trimmedName: String { draft.name.trimmingCharacters(in: .whitespacesAndNewlines) }
-    private var bookedTransactions: Int { editingID.map { store.transactions(forAccount: $0).count } ?? 0 }
     private var nameIsTaken: Bool {
         !trimmedName.isEmpty && store.file.accounts.contains { $0.id != draft.id && $0.name.compare(trimmedName, options: .caseInsensitive) == .orderedSame }
     }
@@ -106,7 +107,7 @@ struct AccountEditor: View {
                 if nameIsTaken {
                     Explanation(symbol: "exclamationmark.triangle.fill", text: "Another account is already called “\(trimmedName)”. That works, but the two are hard to tell apart in pickers.", tint: DS.Colors.warning)
                 }
-                if bookedTransactions > 0 {
+                if currencyLock.isLocked {
                     LabeledContent("Currency") {
                         HStack(spacing: DS.Spacing.xs) {
                             Image(systemName: "lock.fill").imageScale(.small).foregroundStyle(.tertiary)
@@ -115,13 +116,12 @@ struct AccountEditor: View {
                         .accessibilityElement(children: .combine)
                         .accessibilityLabel("\(Currencies.name(draft.currency)), locked")
                     }
-                    Explanation(symbol: "info.circle", text: "The currency is fixed because \(Fmt.integer(bookedTransactions)) transaction\(bookedTransactions == 1 ? " is" : "s are") booked in \(draft.currency). Changing it would turn every one of those amounts into a different sum of money. To switch currency, add a new account and transfer the balance.")
                 } else {
                     LabeledContent("Currency") {
                         CurrencyPicker(selection: $draft.currency, preferred: store.file.currencies).frame(width: 220)
                     }
-                    Explanation(symbol: "info.circle", text: "Every transaction on this account is in this currency. It can be changed until the first transaction is recorded.")
                 }
+                Explanation(symbol: "info.circle", text: currencyLock.explanation(currency: draft.currency))
             }
             Section {
                 TextField("Note", text: $draft.note, prompt: Text("Bank, IBAN, purpose…"), axis: .vertical)
@@ -137,12 +137,17 @@ struct AccountEditor: View {
         .onAppear(perform: load)
     }
 
+    static func currencyLock(_ id: UUID, in store: PortfolioStore) -> AccountCurrencyLock {
+        AccountCurrencyLock.evaluate(account: id, bookedTransactions: store.transactions(forAccount: id).count, plans: store.file.plans)
+    }
+
     private func load() {
         guard !isLoaded else { return }
         isLoaded = true
         if let editingID {
             guard let account = store.account(editingID) else { return store.dismissSheet() }
             draft = account
+            currencyLock = Self.currencyLock(editingID, in: store)
         } else {
             draft = Account(name: prefill.name ?? "", currency: prefill.currency ?? store.baseCurrency)
             nameFocused = true
@@ -150,17 +155,22 @@ struct AccountEditor: View {
     }
 
     private func save() {
+        Self.commit(draft, isNew: editingID == nil, in: store)
+        store.dismissSheet()
+    }
+
+    /// What "Save" does with the draft (also driven by the app's self-test).
+    static func commit(_ draft: Account, isNew: Bool, in store: PortfolioStore) {
         var account = draft
-        account.name = trimmedName
+        account.name = account.name.trimmingCharacters(in: .whitespacesAndNewlines)
         account.note = account.note.trimmingCharacters(in: .whitespacesAndNewlines)
-        if editingID == nil {
+        if isNew {
             store.addAccount(account)
         } else {
-            // The currency of an account with bookings never changes, whatever the draft says.
-            if bookedTransactions > 0, let current = store.account(account.id) { account.currency = current.currency }
+            // The currency of an account with bookings or plans never changes, whatever the draft says.
+            if Self.currencyLock(account.id, in: store).isLocked, let current = store.account(account.id) { account.currency = current.currency }
             store.updateAccount(account)
         }
-        store.dismissSheet()
     }
 }
 
@@ -243,10 +253,15 @@ struct DepotEditor: View {
     }
 
     private func save() {
-        var depot = draft
-        depot.name = trimmedName
-        depot.note = depot.note.trimmingCharacters(in: .whitespacesAndNewlines)
-        if editingID == nil { store.addDepot(depot) } else { store.updateDepot(depot) }
+        Self.commit(draft, isNew: editingID == nil, in: store)
         store.dismissSheet()
+    }
+
+    /// What "Save" does with the draft (also driven by the app's self-test).
+    static func commit(_ draft: Depot, isNew: Bool, in store: PortfolioStore) {
+        var depot = draft
+        depot.name = depot.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        depot.note = depot.note.trimmingCharacters(in: .whitespacesAndNewlines)
+        if isNew { store.addDepot(depot) } else { store.updateDepot(depot) }
     }
 }

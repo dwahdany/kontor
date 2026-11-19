@@ -205,20 +205,28 @@ public struct DistributionChart: View {
         let edges = histogram.bins.map(\.lower) + [m.upper]
         let labels = format.axisLabels(edges)
         let widest = labels.map { context.textSize($0).width }.max() ?? 0
-        var every = max(1, Int(((widest + 12) / m.binWidth).rounded(.up)))
-        // Prefer a stride that keeps the zero edge labelled.
-        if let zero = edges.firstIndex(of: 0) {
-            while every > 1, zero % every != 0, every < edges.count { every += 1 }
-        }
-        var lastEnd = -CGFloat.infinity
-        for i in stride(from: 0, to: edges.count, by: every) {
+        let every = max(1, Int(((widest + 12) / m.binWidth).rounded(.up)))
+        // Labels are placed by priority and skipped where they would touch one already placed:
+        // the zero edge first, then both ends of the range, then every n-th edge counted from zero
+        // (or from the first edge). An outlier that stretches the range can therefore never leave
+        // the axis with a single label.
+        let zero = edges.firstIndex(of: 0)
+        let anchor = zero ?? 0
+        var order: [Int] = []
+        if let zero { order.append(zero) }
+        order += [0, edges.count - 1]
+        order += edges.indices.filter { ($0 - anchor) % every == 0 }
+        var placed: [ClosedRange<CGFloat>] = []
+        var seen = Set<Int>()
+        for i in order where seen.insert(i).inserted {
             let x = m.x(edges[i])
-            context.vline(x: x, from: m.plot.maxY, to: m.plot.maxY + 3, color: chrome.baseline)
             let width = context.textSize(labels[i]).width
             let left = (x - width / 2).clamped(0, max(0, m.plot.maxX - width))
-            guard left > lastEnd + 10 else { continue }
+            let frame = (left - 10)...(left + width + 10)
+            guard !placed.contains(where: { $0.overlaps(frame) }) else { continue }
+            placed.append(left...(left + width))
+            context.vline(x: x, from: m.plot.maxY, to: m.plot.maxY + 3, color: chrome.baseline)
             context.label(labels[i], at: CGPoint(x: left, y: m.plot.maxY + 5), anchor: .topLeading, color: edges[i] == 0 ? Color.primary : chrome.axisLabel)
-            lastEnd = left + width
         }
 
         // Mean / median markers, labelled at the top: the left one's label hangs to the left of

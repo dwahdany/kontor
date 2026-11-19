@@ -93,9 +93,16 @@ public struct ChartValueFormat: Sendable {
     public static func percent(decimals: Int = 2, signed: Bool = false, compounding: Bool = true) -> ChartValueFormat {
         ChartValueFormat(
             axisLabels: { ticks in
-                let step = ticks.count > 1 ? abs(ticks[1] - ticks[0]) * 100 : 1
-                let d = step >= 0.999 ? 0 : step >= 0.0999 ? 1 : 2
-                return ticks.map { Fmt.percent($0, decimals: d) }
+                // The fewest decimals that print every tick exactly — "12,5 %" for a 2.5 % step,
+                // "-0,005 %" for a nearly flat series — so that no two ticks share a label and no
+                // label is rounded away from its grid line.
+                for digits in 0...4 {
+                    let scale = 100 * pow(10, Double(digits))
+                    if ticks.allSatisfy({ abs($0 * scale - ($0 * scale).rounded()) < 1e-6 }) {
+                        return ticks.map { Fmt.percent($0, decimals: digits) }
+                    }
+                }
+                return ticks.map { Fmt.percent($0, decimals: 4) }
             },
             value: { Fmt.percent($0, decimals: decimals, signed: signed) },
             change: { from, to in

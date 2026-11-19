@@ -52,7 +52,7 @@ struct EarningsCalendarView: View {
                     Text("≈ \(Fmt.money(minor: calendar.expectedTotal, currency: model.currency))")
                         .font(.kontorValue)
                         .numeric()
-                    Text("gross, \(Fmt.interval(calendar.interval, style: .shortMonthYear))")
+                    Text("gross, \(Fmt.interval(calendar.interval, style: .medium))")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                         .numeric()
@@ -66,7 +66,7 @@ struct EarningsCalendarView: View {
                     .pinnedHover(pinnedMonth)
                     .emptyMessage("Nothing to project: no dividends in the last twelve months for shares you still hold")
                     .frame(height: 190)
-                Text("An estimate, not a forecast: each dividend paid in the last 12 months (\(Fmt.interval(calendar.basisInterval, style: .shortMonthYear))) is assumed to be paid again a year later, at the same amount per share, for the shares held today. Before fees and taxes; dividend changes, special dividends and future trades are not considered.")
+                Text("An estimate, not a forecast: each dividend paid in the last 12 months (\(Fmt.interval(calendar.basisInterval, style: .medium))) is assumed to be paid again a year later, at the same amount per share, for the shares held today\(model.isAccountScope ? " in the whole portfolio" : ""). Before fees and taxes; dividend changes, special dividends and future trades are not considered.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -108,7 +108,7 @@ struct EarningsCalendarView: View {
                             .help("Months with a dividend in the last twelve months")
                         Text("Shares")
                             .frame(width: sharesWidth, alignment: .trailing)
-                            .help("Shares held today")
+                            .help(model.isAccountScope ? "Shares held today in the whole portfolio" : "Shares held today (a classification counts its part of the expected amount, not of the shares)")
                         HStack(spacing: DS.Spacing.xs) {
                             Text("Expected")
                             EstimateBadge(compact: true)
@@ -168,13 +168,13 @@ struct EarningsCalendarView: View {
                     HStack(spacing: 0) {
                         Text("Expected per month").fontWeight(.medium).frame(maxWidth: .infinity, alignment: .leading)
                         ForEach(0..<12, id: \.self) { month in
-                            // Columns are calendar months; the projection starts after the current one.
-                            let slot = (month + 12 - (calendar.interval.firstDay.month - 1)) % 12
-                            Text(calendar.expected[slot] == 0 ? Fmt.missing : Fmt.moneyRounded(Money(minor: calendar.expected[slot], currency: model.currency), symbol: false))
+                            // Columns are calendar months; the projection covers the twelve months after today.
+                            let value = calendar.expectedByCalendarMonth[month]
+                            Text(value == 0 ? Fmt.missing : Fmt.moneyRounded(Money(minor: value, currency: model.currency), symbol: false))
                                 .font(.callout)
-                                .foregroundStyle(calendar.expected[slot] == 0 ? .tertiary : .secondary)
+                                .foregroundStyle(value == 0 ? .tertiary : .secondary)
                                 .frame(width: dotWidth)
-                                .help("\(calendar.months[slot].detail): \(Fmt.money(minor: calendar.expected[slot], currency: model.currency)) expected")
+                                .help("\(ChartLabels.shortMonth(month + 1)), within \(Fmt.interval(calendar.interval, style: .medium)): \(Fmt.money(minor: value, currency: model.currency)) expected")
                         }
                         Color.clear.frame(width: perYearWidth + sharesWidth, height: 1)
                         Text(Fmt.money(minor: calendar.expectedTotal, currency: model.currency))

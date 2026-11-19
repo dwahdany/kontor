@@ -31,6 +31,10 @@ public enum TradesFeature {
                            keywords: ["tax", "csv", "save", "capital gains", "dividends"]) {
                 center.send(.exportYears, to: store)
             },
+            PaletteCommand(id: "trades.export-trades", title: "Export Trades as CSV…", subtitle: "The listed trades, one line per lot",
+                           symbol: "square.and.arrow.up", keywords: ["tax", "csv", "save", "lots", "sales", "realized"]) {
+                center.send(.exportTrades, to: store)
+            },
             PaletteCommand(id: "trades.copy-years", title: "Copy Tax Year Summary", symbol: "doc.on.doc",
                            keywords: ["tax", "clipboard", "tsv", "capital gains"]) {
                 Task {

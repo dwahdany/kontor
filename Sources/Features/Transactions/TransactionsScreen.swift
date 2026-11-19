@@ -33,7 +33,15 @@ public struct TransactionsScreen: View {
     @State private var sortOrder = [KeyPathComparator(\LedgerRow.order, order: .reverse)]
     @State private var content = Loadable<LedgerContent>()
     @State private var pendingReveal: UUID?
+    /// The pending entry was just saved in the editor (not navigated to): never drop the filters for it.
+    @State private var revealKeepsFilters = false
     @State private var scrollTarget: UUID?
+    /// Identity of the table. Bumped when a new result adds many rows at once (a filter was
+    /// cleared): the table is then replaced instead of receiving hundreds of row insertions, which
+    /// makes AppKit log "reentrant operation in its NSTableView delegate".
+    @State private var tableGeneration = 0
+    /// Columns hidden while only transfers are listed.
+    @State private var hiddenForTransfers = Set<String>()
     @State private var launchSelection = 0
     @State private var didReadLaunchState = false
 
@@ -84,6 +92,7 @@ public struct TransactionsScreen: View {
         .onChange(of: store.route.transactionID, initial: true) { _, id in
             guard let id, selection != [id] else { return }
             pendingReveal = id
+            revealKeepsFilters = SavedTransactions.take(id, from: store)
             reveal()
         }
         // "Show Transactions" from other screens: Route(.transactions, focus: .security / .account /
@@ -96,6 +105,7 @@ public struct TransactionsScreen: View {
         .onChange(of: filter.issuesOnly) { _, issuesOnly in
             columns[visibility: "issue"] = issuesOnly ? .visible : .hidden
         }
+        .onChange(of: filter.showsOnlyTransfers) { _, transfers in showTransferColumns(transfers) }
         .onChange(of: columns) { _, columns in storedColumns = columns }
         .onChange(of: search) { _, search in storedSearch = search }
     }
@@ -121,6 +131,7 @@ public struct TransactionsScreen: View {
             }
             .onCopyCommand { [NSItemProvider(object: LedgerExport.tsv(selectedRows(selection)) as NSString)] }
             .onDeleteCommand { delete(selection) }
+            .id(tableGeneration)
             .opacity(content.isRefreshing && content.revision != store.revision ? 0.6 : 1)
             .overlay {
                 if content.value != nil, rows.isEmpty {
@@ -153,79 +164,120 @@ public struct TransactionsScreen: View {
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             TableFooter(count: rows.count, noun: "transaction", selected: selection.count, filteredFrom: content.value?.totalCount ?? store.file.transactions.count) {
-                if let totals = content.value?.totals, !rows.isEmpty {
-                    LedgerSums(totals: totals)
+                if let content = content.value, !rows.isEmpty {
+                    // Several rows selected: their sums — the way to add up a handful of bookings.
+                    if selection.count > 1 {
+                        LedgerSums(totals: content.totals(of: selection), isSelection: true)
+                    } else {
+                        LedgerSums(totals: content.totals, isSelection: false)
+                    }
                 }
             }
         }
     }
 
+    // Column widths: the ideals of the twelve columns of an account's statement (the default eleven
+    // plus Balance) add up to what the default 1440-pt window offers, so nothing scrolls out of
+    // view; with fewer columns the table hands the spare width out. Money columns are wide enough
+    // for a foreign-currency figure ("+4.516,34 US$"); names give way first and truncate in the middle.
     @TableColumnBuilder<LedgerRow, KeyPathComparator<LedgerRow>>
     private var descriptionColumns: some TableColumnContent<LedgerRow, KeyPathComparator<LedgerRow>> {
         TableColumn("Date", value: \.order) { DateCell(row: $0) }
-            .width(min: 116, ideal: 116)
+            .width(min: 112, ideal: 112)
             .customizationID("date")
         TableColumn("Type", value: \.kindRank) { KindCell(row: $0) }
-            .width(min: 112, ideal: 116)
+            .width(min: 110, ideal: 126)
             .customizationID("type")
         TableColumn("Issue", value: \.issue) { IssueCell(text: $0.issue) }
             .width(min: 120, ideal: 300)
             .defaultVisibility(.hidden)
             .customizationID("issue")
-        TableColumn("Security", value: \.securityRank) { TextCell(text: $0.security) }
-            .width(min: 100, ideal: 130)
+        TableColumn("Security", value: \.securityRank) { TextCell(text: $0.security, truncation: .middle) }
+            .width(min: 90, ideal: 126)
             .customizationID("security")
         TableColumn("Shares", value: \.sharesKey) { SharesCell(row: $0) }
-            .width(min: 96, ideal: 96)
+            .width(min: 54, ideal: 60)
             .alignment(.trailing)
             .customizationID("shares")
         TableColumn("Price", value: \.price) { PriceCell(row: $0, reporting: content.value?.totals.currency) }
-            .width(min: 64, ideal: 70)
+            .width(min: 66, ideal: 74)
             .alignment(.trailing)
             .customizationID("price")
     }
 
     @TableColumnBuilder<LedgerRow, KeyPathComparator<LedgerRow>>
     private var moneyColumns: some TableColumnContent<LedgerRow, KeyPathComparator<LedgerRow>> {
-        TableColumn("Amount", value: \.cash) { AmountCell(row: $0) }
-            .width(min: 90, ideal: 96)
+        TableColumn("Amount", value: \.cash) { AmountCell(row: $0, showsCurrency: !isAccountView) }
+            .width(min: 96, ideal: 104)
             .alignment(.trailing)
             .customizationID("amount")
         TableColumn("Balance", value: \.balanceKey) { BalanceCell(row: $0) }
-            .width(min: 90, ideal: 116)
+            .width(min: 100, ideal: 110)
             .alignment(.trailing)
             .defaultVisibility(.hidden)
             .customizationID("balance")
-        TableColumn("Fees", value: \.fees) { ChargeCell(minor: $0.fees, currency: $0.currency) }
-            .width(min: 58, ideal: 58)
+        TableColumn("Fees", value: \.fees) { ChargeCell(minor: $0.fees, currency: isAccountView ? nil : $0.currency) }
+            .width(min: 50, ideal: 58)
             .alignment(.trailing)
             .customizationID("fees")
-        TableColumn("Taxes", value: \.taxes) { ChargeCell(minor: $0.taxes, currency: $0.currency) }
-            .width(min: 62, ideal: 62)
+        TableColumn("Taxes", value: \.taxes) { ChargeCell(minor: $0.taxes, currency: isAccountView ? nil : $0.currency) }
+            .width(min: 58, ideal: 70)
             .alignment(.trailing)
             .customizationID("taxes")
     }
 
     @TableColumnBuilder<LedgerRow, KeyPathComparator<LedgerRow>>
     private var partyColumns: some TableColumnContent<LedgerRow, KeyPathComparator<LedgerRow>> {
-        TableColumn("Account", value: \.accountRank) { PartyCell(name: $0.account, target: $0.kind == .cashTransfer ? $0.counter : "") }
-            .width(min: 80, ideal: 108)
+        TableColumn("Account", value: \.accountRank) { row in
+            let viewed = content.value?.balanceAccount
+            PartyCell(name: row.account, target: row.kind == .cashTransfer ? row.counter : "", showsTarget: !showsTargetColumn,
+                      isTargetView: viewed != nil && row.counterAccountID == viewed && row.accountID != viewed,
+                      isSourceView: viewed != nil && row.accountID == viewed)
+        }
+            .width(min: 70, ideal: 122)
             .customizationID("account")
-        TableColumn("Depot", value: \.depotRank) { PartyCell(name: $0.depot, target: $0.kind == .securityTransfer ? $0.counter : "") }
-            .width(min: 80, ideal: 84)
+        TableColumn("Depot", value: \.depotRank) { row in
+            let viewed = filter.depotID
+            PartyCell(name: row.depot, target: row.kind == .securityTransfer ? row.counter : "", showsTarget: !showsTargetColumn,
+                      isTargetView: viewed != nil && row.counterDepotID == viewed && row.depotID != viewed,
+                      isSourceView: viewed != nil && row.depotID == viewed)
+        }
+            .width(min: 60, ideal: 86)
             .customizationID("depot")
-        TableColumn("To", value: \.counterRank) { TextCell(text: $0.counter) }
-            .width(min: 80, ideal: 130)
+        TableColumn("To", value: \.counterRank) { CounterCell(row: $0) }
+            .width(min: 110, ideal: 190)
             .defaultVisibility(.hidden)
             .customizationID("counter")
         TableColumn("Note", value: \.note) { TextCell(text: $0.note, isSecondary: true) }
-            .width(min: 50, ideal: 60)
+            .width(min: 44, ideal: 50)
             .customizationID("note")
         TableColumn("Source", value: \.source) { TextCell(text: $0.source, isSecondary: true) }
             .width(min: 60, ideal: 100)
             .defaultVisibility(.hidden)
             .customizationID("source")
     }
+
+    /// A list of transfers is about where things went: the target gets its own column, in place of
+    /// the Fees and Taxes columns (transfers have neither). Leaving the filter restores them.
+    private func showTransferColumns(_ transfers: Bool) {
+        columns[visibility: "counter"] = transfers ? .visible : .hidden
+        if transfers {
+            for id in ["fees", "taxes"] where columns[visibility: id] != .hidden {
+                hiddenForTransfers.insert(id)
+                columns[visibility: id] = .hidden
+            }
+        } else {
+            for id in hiddenForTransfers { columns[visibility: id] = .automatic }
+            hiddenForTransfers = []
+        }
+    }
+
+    /// The list is one account's statement: every amount is in that account's currency, which the
+    /// Balance column and the footer name — the other money columns then show bare numbers.
+    private var isAccountView: Bool { content.value?.balanceAccount != nil }
+
+    /// The "To" column is showing, so the Account / Depot cells need not repeat the target.
+    private var showsTargetColumn: Bool { columns[visibility: "counter"] == .visible }
 
     private var onboarding: some View {
         EmptyState("No Transactions Yet", symbol: "list.bullet.rectangle",
@@ -248,6 +300,7 @@ public struct TransactionsScreen: View {
             guard let base = try? await store.compute(LedgerBaseKey(today: today), { ledger in LedgerBase(ledger, today: today) }) else { return }
             let result = await LedgerContent.make(base: base, query: query)
             guard !Task.isCancelled else { return }
+            if let shown = content.value?.rows.count, result.rows.count - shown > 50 { tableGeneration += 1 }
             content.value = result
             content.revision = revision
             content.isLoading = false
@@ -263,7 +316,9 @@ public struct TransactionsScreen: View {
         }
     }
 
-    /// Selects and scrolls to the entry a deep link asked for, clearing filters that hide it.
+    /// Selects and scrolls to the entry a deep link asked for, clearing filters that hide it. An
+    /// entry the user just saved in the editor is selected only if the current filters show it:
+    /// entering data must never throw away the search and the filters.
     private func reveal() {
         guard let id = pendingReveal, let content = content.value, content.totalCount == store.file.transactions.count else { return }
         guard store.transaction(id) != nil else {
@@ -272,10 +327,14 @@ public struct TransactionsScreen: View {
         }
         if content.rows.contains(where: { $0.id == id }) {
             pendingReveal = nil
+            revealKeepsFilters = false
             selection = [id]
-            // One turn later: the table may only just have been created with these rows.
+            // A frame later: the table may only just have been created with these rows, or have
+            // received them (cleared filters). Scrolling an NSTableView in the middle of that
+            // update makes AppKit log a delegate re-entrancy warning.
             Task { @MainActor in
                 await store.whileBusy {
+                    try? await Task.sleep(for: .milliseconds(50))
                     scrollTarget = id
                     // And once more when the row heights are known (a far-away row lands short otherwise).
                     try? await Task.sleep(for: .milliseconds(80))
@@ -283,7 +342,13 @@ public struct TransactionsScreen: View {
                 }
             }
         } else if query.isFiltering {
-            clearFilters()
+            if revealKeepsFilters {
+                pendingReveal = nil
+                revealKeepsFilters = false
+                store.toast("Saved — not in this list", message: "The current search and filters hide the entry. Clear them to see it.", style: .info)
+            } else {
+                clearFilters()
+            }
         }
     }
 
@@ -303,6 +368,7 @@ public struct TransactionsScreen: View {
         filter.depotID = route.depotID
         columns[visibility: "balance"] = filter.accountID == nil ? .hidden : .visible
         columns[visibility: "issue"] = .hidden
+        showTransferColumns(false)
     }
 
     private func readLaunchState() {
@@ -343,6 +409,7 @@ public struct TransactionsScreen: View {
         launchSelection = store.launchValue("selection").flatMap { Int($0) } ?? 0
         columns[visibility: "balance"] = filter.accountID == nil ? .hidden : .visible
         columns[visibility: "issue"] = filter.issuesOnly ? .visible : .hidden
+        showTransferColumns(filter.showsOnlyTransfers)
     }
 
     private static func comparator(_ column: String, order: SortOrder) -> KeyPathComparator<LedgerRow>? {
@@ -468,7 +535,10 @@ public struct TransactionsScreen: View {
         store.mutate(ids.count == 1 ? "Move Transaction to \(depot.name)" : "Move \(ids.count) Transactions to \(depot.name)") { file in
             for index in file.transactions.indices where ids.contains(file.transactions[index].id) {
                 let t = file.transactions[index]
-                guard t.kind.requiresDepot, t.counterDepotID != depot.id else {
+                // Trades and transfers move with their shares; dividends, fees and taxes on a
+                // security follow, so the income stays with the position it was paid on.
+                let belongsToDepot = t.kind.requiresDepot || (t.kind.attributesToDepot && t.securityID != nil)
+                guard belongsToDepot, t.counterDepotID != depot.id else {
                     skipped += 1
                     continue
                 }
@@ -478,7 +548,7 @@ public struct TransactionsScreen: View {
                 }
             }
         }
-        report(moved: moved, skipped: skipped, target: depot.name, reason: "they do not move shares")
+        report(moved: moved, skipped: skipped, target: depot.name, reason: "they do not belong to a depot")
     }
 
     private func report(moved: Int, skipped: Int, target: String, reason: String) {
@@ -502,16 +572,32 @@ struct LedgerBaseKey: Hashable, Sendable {
 private struct LedgerSums: View {
     @Environment(\.gainStyle) private var gainStyle
     let totals: LedgerContent.Totals
+    /// The sums cover the selected rows, not the whole list.
+    let isSelection: Bool
 
     var body: some View {
         HStack(spacing: DS.Spacing.l) {
-            item("In", Fmt.money(minor: totals.inflows, currency: totals.currency, signed: totals.inflows != 0), color: totals.inflows > 0 ? gainStyle.gain : nil)
-            item("Out", Fmt.money(minor: totals.outflows, currency: totals.currency), color: nil)
-            item("Fees", Fmt.money(minor: totals.fees, currency: totals.currency), color: nil)
-            item("Taxes", Fmt.money(minor: totals.taxes, currency: totals.currency), color: nil)
+            HStack(spacing: DS.Spacing.l) {
+                if isSelection {
+                    Text("Selection").foregroundStyle(.secondary)
+                }
+                item("In", Fmt.money(minor: totals.inflows, currency: totals.currency, signed: totals.inflows != 0), color: totals.inflows > 0 ? gainStyle.gain : nil)
+                item("Out", Fmt.money(minor: totals.outflows, currency: totals.currency), color: nil)
+                item("Fees", Fmt.money(minor: totals.fees, currency: totals.currency), color: nil)
+                item("Taxes", Fmt.money(minor: totals.taxes, currency: totals.currency), color: nil)
+            }
+            .accessibilityElement(children: .combine)
+            .help("Sums of the \(isSelection ? "selected" : "listed") transactions, in \(totals.currency). Fees and taxes: those inside trades, dividends and interest plus Fee and Tax entries, less refunds. Transfers between your own accounts count only when the list is filtered to one account.")
+            if totals.unconverted > 0 {
+                // Amounts without an exchange rate are missing from the sums: say so instead of showing totals that look complete.
+                Label("\(Fmt.integer(totals.unconverted)) not converted", systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(DS.Colors.warning)
+                    .lineLimit(1)
+                    .fixedSize()
+                    .help("\(Fmt.integer(totals.unconverted)) \(totals.unconverted == 1 ? "transaction is" : "transactions are") missing from these sums: no exchange rate to \(totals.currency) is on file for \(totals.unconverted == 1 ? "its" : "their") date. Add the rates (Securities ▸ exchange rates or Update Quotes), or filter to one account to see sums in its own currency.")
+                    .accessibilityLabel("\(Fmt.integer(totals.unconverted)) transactions without exchange rate are missing from the sums")
+            }
         }
-        .accessibilityElement(children: .combine)
-        .help("Sums of the listed transactions, in \(totals.currency). Transfers between your own accounts count only when the list is filtered to one account.")
     }
 
     private func item(_ title: String, _ value: String, color: Color?) -> some View {
@@ -521,6 +607,33 @@ private struct LedgerSums: View {
         }
         .lineLimit(1)
         .fixedSize()
+    }
+}
+
+/// Entries the editor saved a moment ago, per window's store. The ledger asks for them when the
+/// route starts to focus a transaction: a deep link may clear filters that hide its target, the
+/// user's own data entry may not.
+@MainActor
+enum SavedTransactions {
+    private static var latest = [ObjectIdentifier: UUID]()
+
+    static func note(_ id: UUID, in store: PortfolioStore) {
+        latest[ObjectIdentifier(store)] = id
+    }
+
+    /// True (once) if `id` is the entry the editor saved last in `store`.
+    static func take(_ id: UUID, from store: PortfolioStore) -> Bool {
+        guard latest[ObjectIdentifier(store)] == id else { return false }
+        latest[ObjectIdentifier(store)] = nil
+        return true
+    }
+}
+
+/// Money and share figures: one line, never cut off with an ellipsis — a narrow column tightens
+/// and then shrinks the digits instead (a truncated number is a wrong number).
+private extension View {
+    func figure() -> some View {
+        numeric().lineLimit(1).allowsTightening(true).minimumScaleFactor(0.7)
     }
 }
 
@@ -547,7 +660,7 @@ private struct KindCell: View {
     var body: some View {
         HStack(spacing: DS.Spacing.s) {
             KindIcon(kind: row.kind).frame(width: 18)
-            Text(row.kind.title).lineLimit(1)
+            Text(row.kind.title).lineLimit(1).allowsTightening(true).help(row.kind.title)
             if !row.issue.isEmpty {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .foregroundStyle(DS.Colors.warning)
@@ -562,13 +675,15 @@ private struct KindCell: View {
 private struct TextCell: View {
     let text: String
     var isSecondary = false
+    /// Names that share long beginnings ("iShares Core MSCI …") stay apart with `.middle`.
+    var truncation = Text.TruncationMode.tail
 
     var body: some View {
         Text(text)
             .foregroundStyle(isSecondary ? .secondary : .primary)
             .lineLimit(1)
-            .truncationMode(.tail)
-            .help(text.count > 24 ? text : "")
+            .truncationMode(truncation)
+            .help(text.count > 12 ? text : "")
     }
 }
 
@@ -586,18 +701,57 @@ private struct IssueCell: View {
     }
 }
 
-/// "Giro → Savings" for transfers, the plain name otherwise.
+/// "Giro → Savings" for transfers, the plain name otherwise. In a list filtered to one account or
+/// depot the cell names the *other* side: "→ Savings" (went there) or "← Giro" (came from there).
 private struct PartyCell: View {
     let name: String
     let target: String
+    /// False while the "To" column shows the target.
+    var showsTarget = true
+    /// The list is filtered to the transfer's target.
+    var isTargetView = false
+    /// The list is filtered to the transfer's source.
+    var isSourceView = false
 
     var body: some View {
         if target.isEmpty {
-            Text(name).lineLimit(1)
-        } else {
+            Text(name).lineLimit(1).help(name.count > 12 ? name : "")
+        } else if isTargetView {
+            Text("\(Text("←  ").foregroundStyle(.tertiary))\(name)")
+                .lineLimit(1)
+                .help("From \(name) to \(target)")
+                .accessibilityLabel("from \(name)")
+        } else if isSourceView {
+            Text("\(Text("→  ").foregroundStyle(.tertiary))\(target)")
+                .lineLimit(1)
+                .help("From \(name) to \(target)")
+                .accessibilityLabel("to \(target)")
+        } else if showsTarget {
             Text("\(name)\(Text("  →  ").foregroundStyle(.tertiary))\(target)")
                 .lineLimit(1)
+                .help("From \(name) to \(target)")
                 .accessibilityLabel("\(name) to \(target)")
+        } else {
+            Text(name).lineLimit(1).help("From \(name) to \(target)")
+        }
+    }
+}
+
+/// The "To" column: the target of a transfer and, between currencies, what arrived there.
+private struct CounterCell: View {
+    let row: LedgerRow
+
+    var body: some View {
+        if !row.counter.isEmpty {
+            let arrived = row.kind == .cashTransfer && row.counterCurrency != row.currency
+                ? Fmt.money(minor: row.counterAmount, currency: row.counterCurrency, signed: true) : nil
+            HStack(spacing: DS.Spacing.s) {
+                Text(row.counter).lineLimit(1)
+                if let arrived {
+                    Text(arrived).foregroundStyle(.secondary).figure().layoutPriority(1)
+                }
+            }
+            .help(arrived.map { "\(row.counter) received \($0)" } ?? row.counter)
         }
     }
 }
@@ -607,10 +761,10 @@ private struct SharesCell: View {
 
     var body: some View {
         if row.shares != 0 {
-            Text(Fmt.shares(Shares(raw: row.shares), signed: true, maxDecimals: 4)).numeric().lineLimit(1)
+            Text(Fmt.shares(Shares(raw: row.shares), signed: true, maxDecimals: 4)).figure()
                 .help(Fmt.shares(Shares(raw: row.shares), signed: true))
         } else if row.infoShares != 0 {
-            Text(Fmt.shares(Shares(raw: row.infoShares), maxDecimals: 4)).numeric().foregroundStyle(.secondary).lineLimit(1)
+            Text(Fmt.shares(Shares(raw: row.infoShares), maxDecimals: 4)).figure().foregroundStyle(.secondary)
         }
     }
 }
@@ -622,10 +776,9 @@ private struct PriceCell: View {
     var body: some View {
         if row.price != 0 {
             Text(Fmt.price(Price(raw: row.price), currency: row.currency == reporting ? nil : row.currency, maxDecimals: 4))
-                .numeric()
+                .figure()
                 .help(Fmt.price(Price(raw: row.price), currency: row.currency))
                 .foregroundStyle(row.shares == 0 ? .secondary : .primary)
-                .lineLimit(1)
         }
     }
 }
@@ -633,30 +786,33 @@ private struct PriceCell: View {
 private struct AmountCell: View {
     @Environment(\.gainStyle) private var gainStyle
     let row: LedgerRow
+    /// False in an account's statement, where every amount is in the account's currency.
+    var showsCurrency = true
 
     var body: some View {
         if row.movesCash {
-            Text(Fmt.money(minor: row.cash, currency: row.cashCurrency, signed: true))
-                .numeric()
+            Text(Fmt.money(minor: row.cash, currency: showsCurrency ? row.cashCurrency : nil, signed: true))
+                .figure()
                 .foregroundStyle(row.cash > 0 ? AnyShapeStyle(gainStyle.gain) : AnyShapeStyle(.primary))
-                .lineLimit(1)
+                .help(Fmt.money(minor: row.cash, currency: row.cashCurrency, signed: true))
         } else {
             // No cash effect on the portfolio (deliveries, internal transfers): the value, neutral.
-            Text(Fmt.money(minor: row.cash, currency: row.cashCurrency))
-                .numeric()
+            Text(Fmt.money(minor: row.cash, currency: showsCurrency ? row.cashCurrency : nil))
+                .figure()
                 .foregroundStyle(.secondary)
-                .lineLimit(1)
+                .help(Fmt.money(minor: row.cash, currency: row.cashCurrency))
         }
     }
 }
 
 private struct ChargeCell: View {
     let minor: Int64
-    let currency: CurrencyCode
+    /// nil: a bare number (the list is in one currency).
+    let currency: CurrencyCode?
 
     var body: some View {
         if minor != 0 {
-            Text(Fmt.money(minor: minor, currency: currency)).numeric().foregroundStyle(.secondary).lineLimit(1)
+            Text(Fmt.money(minor: minor, currency: currency)).figure().foregroundStyle(.secondary)
         }
     }
 }
@@ -668,9 +824,8 @@ private struct BalanceCell: View {
     var body: some View {
         if let balance = row.balance {
             Text(Fmt.money(minor: balance, currency: row.cashCurrency))
-                .numeric()
+                .figure()
                 .foregroundStyle(balance < 0 ? AnyShapeStyle(gainStyle.loss) : AnyShapeStyle(.primary))
-                .lineLimit(1)
         }
     }
 }

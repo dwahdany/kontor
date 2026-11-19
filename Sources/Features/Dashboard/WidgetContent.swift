@@ -53,6 +53,7 @@ struct WidgetContent: View {
                     .minimumScaleFactor(0.6)
                     .contentTransition(.numericText())
                     .layoutPriority(1)
+                if d.hasData { GapBadge(gaps: d.gaps) }
                 Spacer(minLength: 0)
                 if d.sparkline.count >= 2, d.hasData {
                     Sparkline(d.sparkline)
@@ -64,8 +65,11 @@ struct WidgetContent: View {
             if d.hasData {
                 HStack(alignment: .firstTextBaseline, spacing: DS.Spacing.xs) {
                     DeltaLabel(fraction: d.dayFraction, amount: d.dayChange)
-                    Text(Fmt.relativeDay(d.changeDay, today: store.today).lowercased())
-                        .foregroundStyle(.tertiary)
+                    // The header already carries the date when the tile is a statement of that very day.
+                    if d.changeDay != request.asOf {
+                        Text(WidgetText.changeDay(d.changeDay, today: store.today))
+                            .foregroundStyle(.tertiary)
+                    }
                 }
                 .font(.callout)
                 .lineLimit(1)
@@ -139,7 +143,8 @@ struct WidgetContent: View {
     }
 
     private func performance(_ d: WidgetData.PerformanceChart) -> some View {
-        var series = [TimeSeries("Portfolio", points: d.portfolio)]
+        // The line is named after what it measures: the portfolio, or the depot / account / classification.
+        var series = [TimeSeries(request.isPartialScope ? request.scopeTitle : "Portfolio", points: d.portfolio)]
         for (index, benchmark) in d.benchmarks.enumerated() {
             series.append(TimeSeries(id: benchmark.id.uuidString, benchmark.name, points: benchmark.points,
                                      color: index == 0 ? ChartColors.comparison : ChartColors.series(index), dashed: true))
@@ -166,16 +171,19 @@ struct WidgetContent: View {
     }
 
     private func allocation(_ d: WidgetData.Allocation) -> some View {
-        DonutChart(d.slices, format: .money(d.currency), centerTitle: store.isWholePortfolioScope && request.scopeLabel == nil ? "Net Worth" : "Total",
-                   title: d.taxonomyName.isEmpty ? "Allocation" : "Allocation by \(d.taxonomyName)")
-            .selection(nil) { id in
-                guard let id, let classification = UUID(uuidString: id) else { return }
-                store.navigate(to: .classification(taxonomy: d.taxonomyID, id: classification))
-            }
-            .pinnedHover(pinsHover ? d.slices.first?.id : nil)
-            .loading(isRefreshing)
-            .emptyMessage(d.taxonomyName.isEmpty ? "Create a taxonomy on the Allocation screen" : "Nothing to allocate yet")
-            .frame(minHeight: 180, idealHeight: 220, maxHeight: .infinity)
+        VStack(alignment: .leading, spacing: DS.Spacing.s) {
+            DonutChart(d.slices, format: .money(d.currency), centerTitle: request.isPartialScope ? "Total" : "Net Worth",
+                       title: d.taxonomyName.isEmpty ? "Allocation" : "Allocation by \(d.taxonomyName)")
+                .selection(nil) { id in
+                    guard let id, let classification = UUID(uuidString: id) else { return }
+                    store.navigate(to: .classification(taxonomy: d.taxonomyID, id: classification))
+                }
+                .pinnedHover(pinsHover ? d.slices.first?.id : nil)
+                .loading(isRefreshing)
+                .emptyMessage(d.taxonomyName.isEmpty ? "Create a taxonomy on the Allocation screen" : "Nothing to allocate yet")
+                .frame(minHeight: 180, idealHeight: 220, maxHeight: .infinity)
+            GapNote(gaps: d.gaps)
+        }
     }
 
     private func earnings(_ d: WidgetData.Earnings) -> some View {
@@ -203,12 +211,21 @@ struct WidgetContent: View {
     }
 
     private func heatmap(_ rows: [HeatmapRow]) -> some View {
+        // Tooltips show the exact signed value; cells the longest form that still fits a loss
+        // ("-0,8 %" is one glyph wider than "5,4 %" — and a loss is what one looks for here).
         var format = ChartValueFormat.percent(decimals: 2, signed: true)
-        format.compact = { Fmt.percent($0, decimals: abs($0) >= 0.0995 ? 0 : 1) }
+        let text = HeatmapCellText.best(forTileWidth: width, yearLabel: rows.first?.label ?? "2000")
+        format.compact = text.format
         return HeatmapGrid(rows: rows, columns: ChartLabels.shortMonths, format: format, totalTitle: "Year", title: "Monthly returns")
             .pinnedHover(row: pinsHover ? rows.first?.id ?? "" : "", column: 2)
             .loading(isRefreshing)
             .emptyMessage("No returns yet")
+            .overlay(alignment: .bottomTrailing) {
+                // Cells without a percent sign: name the unit once, next to the scale.
+                if text != .percent, !rows.isEmpty {
+                    Text("Returns in %").font(.caption2).foregroundStyle(.secondary).padding(.bottom, 5)
+                }
+            }
     }
 
     // MARK: Lists
@@ -216,7 +233,8 @@ struct WidgetContent: View {
     private func movers(_ d: WidgetData.Movers) -> some View {
         Group {
             if d.best.isEmpty && d.worst.isEmpty {
-                WidgetEmpty(d.positionCount == 0 ? "No positions in this period" : "Nothing moved in this period")
+                WidgetEmpty(d.positionCount == 0 ? (request.query.dayMode ? "No positions with a recent quote" : "No positions in this period")
+                            : (request.query.dayMode ? "No price changes on the latest quoted day" : "Nothing moved in this period"))
             } else if isCompact {
                 VStack(alignment: .leading, spacing: DS.Spacing.m) {
                     moverColumn("Best", d.best, empty: "No gainers")
@@ -271,11 +289,17 @@ struct WidgetContent: View {
                                         .frame(width: 64, height: 14)
                                         .accessibilityHidden(true)
                                 }
-                                Text(Fmt.percent(row.weight, decimals: 1)).numeric().foregroundStyle(.secondary)
+                                Text(row.isValued ? Fmt.percent(row.weight, decimals: 1) : Fmt.missing).numeric().foregroundStyle(.secondary)
                                     .frame(width: 50, alignment: .trailing)
                                 if !isCompact {
-                                    Text(Fmt.moneyRounded(row.value)).numeric()
-                                        .frame(width: 84, alignment: .trailing)
+                                    Group {
+                                        if row.isValued {
+                                            Text(Fmt.moneyRounded(row.value)).numeric()
+                                        } else {
+                                            UnvaluedMark(help: "\(row.name) has no price or exchange rate — its value is unknown and not part of any total.")
+                                        }
+                                    }
+                                    .frame(width: 84, alignment: .trailing)
                                 }
                                 Group {
                                     if let gain = row.gainFraction { GainText(percent: gain, decimals: 1) } else { Text(Fmt.missing).foregroundStyle(.tertiary) }
@@ -288,6 +312,7 @@ struct WidgetContent: View {
                         Text("and \(Fmt.integer(d.total - d.rows.count)) more")
                             .font(.caption).foregroundStyle(.tertiary).padding(.top, DS.Spacing.xs)
                     }
+                    GapNote(gaps: d.gaps).padding(.top, DS.Spacing.xs)
                 }
             }
         }
@@ -295,7 +320,10 @@ struct WidgetContent: View {
 
     private func cash(_ d: WidgetData.Cash) -> some View {
         VStack(alignment: .leading, spacing: DS.Spacing.s) {
-            Text(Fmt.money(d.total)).font(.kontorHero).lineLimit(1).minimumScaleFactor(0.6)
+            HStack(alignment: .center, spacing: DS.Spacing.s) {
+                Text(Fmt.money(d.total)).font(.kontorHero).lineLimit(1).minimumScaleFactor(0.6)
+                GapBadge(gaps: d.gaps)
+            }
             if d.rows.isEmpty {
                 Text("No cash accounts in this scope").font(.callout).foregroundStyle(.tertiary)
             } else {
@@ -305,6 +333,9 @@ struct WidgetContent: View {
                             HStack(alignment: .firstTextBaseline, spacing: DS.Spacing.s) {
                                 Text(row.name).lineLimit(1).foregroundStyle(.secondary)
                                 Spacer(minLength: DS.Spacing.s)
+                                if !row.isValued {
+                                    UnvaluedMark(help: "No \(row.balance.currency) → \(d.total.currency) exchange rate: this balance is not part of the total.")
+                                }
                                 Text(Fmt.money(row.balance)).numeric().layoutPriority(1)
                             }
                         }
@@ -420,7 +451,117 @@ struct WidgetContent: View {
     }
 }
 
+// MARK: - Text
+
+enum WidgetText {
+    /// The day a change refers to, for the middle of a sentence: "today", "yesterday", "3 days
+    /// ago" — or a date, which keeps its capitals ("Dec 31, 2024", "31. Dez. 2024").
+    static func changeDay(_ day: Day, today: Day) -> String {
+        let text = Fmt.relativeDay(day, today: today)
+        // Fmt falls back to a medium date beyond ±6 days; only the relative words are lower-cased.
+        return abs(today.distance(to: day)) <= 6 ? text.lowercased() : text
+    }
+}
+
+/// The text inside the cells of the monthly-returns grid, from most to least detailed. The grid
+/// drops a label that does not fit its cell, so the widget picks the first form whose widest
+/// realistic value — a two-digit loss — fits the cells it will get.
+enum HeatmapCellText: CaseIterable {
+    /// "5,4 %", "-0,8 %", "-12 %"
+    case percent
+    /// "5,4", "-0,8", "-12" — the unit is in the title and the tooltip.
+    case number
+    /// "5", "-1", "-12"
+    case rounded
+
+    var format: @Sendable (Double) -> String {
+        switch self {
+        case .percent: { Fmt.percent($0, decimals: abs($0) >= 0.0995 ? 0 : 1) }
+        case .number: { Fmt.number($0 * 100, decimals: abs($0) >= 0.0995 ? 0 : 1) }
+        case .rounded: { Fmt.number($0 * 100, decimals: 0) }
+        }
+    }
+
+    /// Width of the widest label this form produces for monthly returns (losses up to −99 %), in
+    /// the grid's cell font (10 pt, tabular digits).
+    @MainActor var widestLabel: CGFloat {
+        let font = NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .regular)
+        return [-0.088, -0.888].map { (format($0) as NSString).size(withAttributes: [.font: font]).width }.max() ?? 0
+    }
+
+    /// The width of a month cell of a `HeatmapGrid` with twelve columns and a total column that is
+    /// `gridWidth` wide (mirrors the grid's metrics: year label + 10, 8 pt before the total column,
+    /// which is 1.25 cells wide).
+    @MainActor static func cellWidth(gridWidth: CGFloat, yearLabel: String) -> CGFloat {
+        let font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium)
+        let label = (yearLabel as NSString).size(withAttributes: [.font: font]).width + 10
+        return max(4, (gridWidth - label - 8) / 13.25)
+    }
+
+    @MainActor static func best(forCellWidth cell: CGFloat) -> HeatmapCellText {
+        // The grid keeps 2 pt between cells and wants 4 pt of air around a label.
+        allCases.first { $0.widestLabel <= cell - 7 } ?? .rounded
+    }
+
+    @MainActor static func best(forTileWidth width: CGFloat, yearLabel: String) -> HeatmapCellText {
+        best(forCellWidth: cellWidth(gridWidth: width - 2 * DS.Spacing.l, yearLabel: yearLabel))
+    }
+}
+
 // MARK: - Building blocks
+
+/// A warning next to a total that leaves something out because it cannot be valued (missing
+/// exchange rate or price). The tooltip lists what is missing; a click opens the consistency report.
+struct GapBadge: View {
+    @Environment(PortfolioStore.self) private var store
+    let gaps: WidgetData.Gaps
+
+    var body: some View {
+        if !gaps.isEmpty {
+            Button { store.present(.consistencyReport) } label: {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.body)
+                    .foregroundStyle(DS.Colors.warning)
+            }
+            .buttonStyle(.plain)
+            .help(gaps.help + "\nClick to open the consistency report.")
+            .accessibilityLabel("Incomplete: \(gaps.summary)")
+        }
+    }
+}
+
+/// The same warning as a line of text below a chart or list.
+struct GapNote: View {
+    @Environment(PortfolioStore.self) private var store
+    let gaps: WidgetData.Gaps
+
+    var body: some View {
+        if !gaps.isEmpty {
+            Button { store.present(.consistencyReport) } label: {
+                Label(gaps.summary, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(DS.Colors.warning)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+            }
+            .buttonStyle(.plain)
+            .help(gaps.help + "\nClick to open the consistency report.")
+        }
+    }
+}
+
+/// Marks one row whose value is unknown.
+struct UnvaluedMark: View {
+    let help: String
+
+    var body: some View {
+        Image(systemName: "exclamationmark.triangle.fill")
+            .font(.caption)
+            .foregroundStyle(DS.Colors.warning)
+            .help(help)
+            .accessibilityLabel(help)
+    }
+}
 
 /// A quiet one-line empty state inside a widget, with an optional next action.
 struct WidgetEmpty<Actions: View>: View {

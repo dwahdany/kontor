@@ -230,9 +230,9 @@ private let defaultSort = [KeyPathComparator(\PlanRow.stateRank), KeyPathCompara
         #expect(status.missing == [items[2].due], "the date left for later is still due")
         #expect(status.skipped == [items[1].due])
 
-        // Applying the same proposal again changes nothing (ids are deterministic).
+        // Applying the same proposal again changes nothing (ids are deterministic) — and says why.
         var again = store.file
-        #expect(PlanGeneration.apply(items, choices: choices, to: &again) == GenerationOutcome())
+        #expect(PlanGeneration.apply(items, choices: choices, to: &again) == GenerationOutcome(alreadyBooked: 1))
         #expect(again == store.file)
     }
 

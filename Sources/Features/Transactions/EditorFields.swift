@@ -19,8 +19,13 @@ struct CalcField: View {
     let format: (Int64) -> String
     var isCalculated = false
     var isEmphasized = false
+    /// The form's validation complains about this field (after a save attempt).
+    var isFlagged = false
     var focus: FocusState<EditorFocus?>.Binding
     let target: EditorFocus
+    /// Tells the form that the text is (no longer) something it cannot read, so that Save can refuse
+    /// to store the last value it understood while different text is on screen.
+    var onValidity: (Bool) -> Void = { _ in }
     let onEdit: (Int64) -> Void
 
     @State private var text = ""
@@ -38,19 +43,28 @@ struct CalcField: View {
             .foregroundStyle(isCalculated && !isFocused ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary))
             .focused(focus, equals: target)
             .onSubmit { settle() }
+            .overlay {
+                if isInvalid || isFlagged {
+                    RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        .strokeBorder(Color.red.opacity(0.7), lineWidth: 1)
+                        .allowsHitTesting(false)
+                }
+            }
             .overlay(alignment: .leading) {
                 if isInvalid {
                     Image(systemName: "exclamationmark.circle.fill")
                         .foregroundStyle(.red)
                         .imageScale(.small)
                         .padding(.leading, 6)
-                        .help("Not a number or calculation")
+                        .help("Not a number or calculation — it is not saved like this")
                         .accessibilityLabel("Invalid number")
                 }
             }
             .accessibilityLabel(title)
             .accessibilityValue(isCalculated ? "\(text), calculated" : text)
             .onAppear { text = display(value) }
+            .onChange(of: isInvalid) { _, invalid in onValidity(invalid) }
+            .onDisappear { if isInvalid { onValidity(false) } }
             .onChange(of: value) { _, newValue in
                 // Follow the model unless the user is typing exactly this value right now.
                 if !isFocused || Arithmetic.evaluate(text, scaleDigits: scaleDigits) ?? 0 != newValue { text = display(newValue) }
@@ -99,6 +113,8 @@ struct ComboField: View {
     let target: EditorFocus
     /// Opens the list right away (screenshots).
     var startsOpen = false
+    /// Offers "New …" below the list (with the search text as the proposed name).
+    var create: (title: String, action: (String) -> Void)?
 
     @State private var isOpen = false
     @State private var initialQuery = ""
@@ -151,7 +167,13 @@ struct ComboField: View {
             }
         }
         .popover(isPresented: $isOpen, arrowEdge: .bottom) {
-            ComboList(title: title, items: items, selection: selection, allowsNone: allowsNone, initialQuery: initialQuery) { choice in
+            ComboList(
+                title: title, items: items, selection: selection, allowsNone: allowsNone, initialQuery: initialQuery,
+                create: create.map { create in (create.title, { name in
+                    isOpen = false
+                    create.action(name)
+                }) }
+            ) { choice in
                 selection = choice
                 isOpen = false
             }
@@ -176,6 +198,7 @@ private struct ComboList: View {
     let selection: UUID?
     let allowsNone: Bool
     let initialQuery: String
+    var create: (title: String, action: (String) -> Void)?
     let choose: (UUID?) -> Void
 
     @State private var query = ""
@@ -230,6 +253,27 @@ private struct ComboList: View {
                     .onChange(of: highlighted) { _, new in proxy.scrollTo(new) }
                 }
                 .frame(maxHeight: 264)
+            }
+            if let create {
+                // Something that is not in the list yet must never be a dead end.
+                Divider()
+                Button {
+                    create.action(query.trimmingCharacters(in: .whitespaces))
+                } label: {
+                    HStack(spacing: DS.Spacing.s) {
+                        Image(systemName: "plus.circle")
+                        Text(query.trimmingCharacters(in: .whitespaces).isEmpty ? "\(create.title)…" : "\(create.title) “\(query.trimmingCharacters(in: .whitespaces))”…")
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, DS.Spacing.m)
+                    .padding(.vertical, DS.Spacing.s)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(Color.accentColor)
+                .accessibilityHint("Opens the security editor; this transaction comes back afterwards with what you entered")
             }
         }
         .frame(width: 340)
@@ -306,7 +350,7 @@ struct KindIcon: View {
 }
 
 /// The editor's kind chooser: a prominent button that opens a grouped, searchable list of all
-/// fifteen kinds with their ⌃-shortcuts. ⌃K opens it from anywhere in the sheet.
+/// fifteen kinds with their ⌃⌥-shortcuts. ⌃⌥K opens it from anywhere in the sheet.
 struct KindPicker: View {
     let kind: Transaction.Kind
     var focus: FocusState<EditorFocus?>.Binding
@@ -345,7 +389,7 @@ struct KindPicker: View {
                 choose(choice)
             }
         }
-        .help("Change the type (⌃K)")
+        .help("Change the type (⌃⌥K)")
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Type")
         .accessibilityValue(kind.title)
@@ -450,7 +494,7 @@ private struct KindList: View {
                 .truncationMode(.tail)
             Spacer(minLength: DS.Spacing.xs)
             if let key = kind.shortcutKey {
-                Text("⌃\(String(key).uppercased())")
+                Text("⌃⌥\(String(key).uppercased())")
                     .font(.callout)
                     .numeric()
                     .foregroundStyle(isHighlighted ? AnyShapeStyle(.white.opacity(0.8)) : AnyShapeStyle(.tertiary))

@@ -28,7 +28,7 @@ import KontorMarketData
 /// | `watchlist` | `new` — opens the new-watchlist bar · `rename` — renames the filtered watchlist |
 ///
 /// Sheets: `--sheet new-security` (add `--state editor=manual` or `editor=search`, `query=<text>`),
-/// `--sheet edit-security:first`, `--sheet "custom:securities.split?security=<uuid>&ratio=2:1&day=YYYY-MM-DD"`.
+/// `--sheet edit-security:first`, `--sheet "custom:securities.split?security=<uuid>&ratio=2:1&day=YYYY-MM-DD&adjust=quotes|shares|both|none"`.
 public struct SecuritiesScreen: View {
     @Environment(PortfolioStore.self) private var store
 
@@ -40,6 +40,10 @@ public struct SecuritiesScreen: View {
     @State private var didAutoSelect = false
     @State private var watchlistEdit: WatchlistNameEdit?
     @State private var scrollTarget: UUID?
+    /// Bumped with every scroll request; the scroll task is keyed on it (and never changes its own
+    /// key, which SwiftUI reports as "tried to update multiple times per frame").
+    @State private var scrollSerial = 0
+    @State private var handledScrollSerial = 0
     /// A deep-linked security that still has to be revealed once the rows are known.
     @State private var pendingReveal: UUID?
     /// Width of the list chosen by dragging the divider; 0 = automatic.
@@ -87,6 +91,10 @@ public struct SecuritiesScreen: View {
         .onChange(of: store.revision) { _, _ in
             let valid = selection.filter { store.security($0) != nil }
             if valid.count != selection.count { selection = valid }
+            // Undo or a deletion elsewhere may have removed the watchlist that is filtered on or
+            // being renamed.
+            query.filter = query.filter.validated(in: store.file.watchlists)
+            if let id = watchlistEdit?.id, !store.file.watchlists.contains(where: { $0.id == id }) { watchlistEdit = nil }
         }
     }
 
@@ -150,7 +158,7 @@ public struct SecuritiesScreen: View {
     private func select(_ id: UUID) {
         didAutoSelect = true
         selection = [id]
-        scrollTarget = id
+        requestScroll(to: id)
     }
 
     /// A deep link names a security: select it, and drop filters that would hide it.
@@ -164,7 +172,7 @@ public struct SecuritiesScreen: View {
             pendingReveal = id
         }
         selection = [id]
-        scrollTarget = id
+        requestScroll(to: id)
     }
 
     private func showAll() {
@@ -175,7 +183,7 @@ public struct SecuritiesScreen: View {
     private func rowsChanged(_ ids: [UUID]) {
         if let id = pendingReveal, list.value != nil {
             pendingReveal = nil
-            if !ids.contains(id), query.filter != .all || !query.text.isEmpty { showAll() } else { scrollTarget = id }
+            if !ids.contains(id), query.filter != .all || !query.text.isEmpty { showAll() } else { requestScroll(to: id) }
         }
         guard !ids.isEmpty else { return }
         if !didAutoSelect {
@@ -311,7 +319,7 @@ public struct SecuritiesScreen: View {
             .id(list.value?.query)
             .opacity(list.isRefreshing ? 0.7 : 1)
             .contextMenu(forSelectionType: UUID.self) { ids in
-                SecurityContextMenu(ids: ids, filter: query.filter) { name in
+                SecurityContextMenu(store: store, ids: ids, filter: query.filter) { name in
                     watchlistEdit = WatchlistNameEdit(id: nil, name: name, adding: ids)
                 } selectNew: { id in
                     select(id)
@@ -322,19 +330,29 @@ public struct SecuritiesScreen: View {
             .onDeleteCommand { store.confirmDeleteSecurities(selection) }
             .onCopyCommand { [NSItemProvider(object: store.securitiesTSV(selection) as NSString)] }
             .accessibilityLabel("Securities")
-            .task(id: ScrollRequest(target: scrollTarget, query: list.value?.query)) {
-                // Scroll once the rows that contain the target are on screen.
-                guard let target = scrollTarget, rows.contains(where: { $0.id == target }) else { return }
-                await Task.yield()
-                proxy.scrollTo(target, anchor: .center)
-                scrollTarget = nil
-            }
+            // Scroll once the rows that contain the target are on screen: when a scroll is requested
+            // and again when a new list arrives. Two observers, one value each — a combined key that
+            // changes twice in a frame (request + new query) makes SwiftUI drop one of the updates.
+            .onChange(of: scrollSerial, initial: true) { _, _ in scrollToTarget(with: proxy) }
+            .onChange(of: list.value?.query) { _, _ in scrollToTarget(with: proxy) }
         }
     }
 
-    private struct ScrollRequest: Hashable {
-        var target: UUID?
-        var query: SecurityListQuery?
+    private func scrollToTarget(with proxy: ScrollViewProxy) {
+        guard handledScrollSerial != scrollSerial, let target = scrollTarget, rows.contains(where: { $0.id == target }) else { return }
+        let serial = scrollSerial
+        Task { @MainActor in
+            // One turn later: the list may only just have received these rows.
+            await Task.yield()
+            guard handledScrollSerial != serial else { return }
+            proxy.scrollTo(target, anchor: .center)
+            handledScrollSerial = serial
+        }
+    }
+
+    private func requestScroll(to id: UUID) {
+        scrollTarget = id
+        scrollSerial += 1
     }
 
     /// Dragging a selected row drags the whole selection (one UUID per line).
@@ -347,8 +365,9 @@ public struct SecuritiesScreen: View {
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         watchlistEdit = nil
         guard !name.isEmpty else { return }
-        if let id = edit.id, var list = store.file.watchlists.first(where: { $0.id == id }) {
-            guard list.name != name else { return }
+        if let id = edit.id {
+            // A rename of a watchlist that is gone by now does nothing (it must not create a new one).
+            guard var list = store.file.watchlists.first(where: { $0.id == id }), list.name != name else { return }
             list.name = name
             store.mutate("Rename Watchlist") { file in
                 if let index = file.watchlists.firstIndex(where: { $0.id == id }) { file.watchlists[index] = list }
@@ -464,9 +483,9 @@ struct SecurityRowView: View {
         HStack(spacing: DS.Spacing.s) {
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: DS.Spacing.xs) {
-                    Text(row.name)
+                    Text(row.displayName)
                         .lineLimit(1)
-                        .foregroundStyle(row.isRetired ? .secondary : .primary)
+                        .foregroundStyle(row.isRetired || row.name.isEmpty ? .secondary : .primary)
                     if row.isBenchmark {
                         Image(systemName: "flag")
                             .imageScale(.small)
@@ -513,10 +532,24 @@ struct SecurityRowView: View {
             .frame(width: compact ? 82 : 88, alignment: .trailing)
 
             VStack(alignment: .trailing, spacing: 1) {
-                Text(row.value.map { Fmt.moneyRounded($0) } ?? Fmt.missing)
-                    .numeric()
+                if let problem = row.valuationProblem {
+                    // Held, but without a quote or exchange rate: unknown, not zero.
+                    HStack(spacing: 3) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .imageScale(.small)
+                            .foregroundStyle(DS.Colors.warning)
+                        Text(Fmt.missing).foregroundStyle(.secondary)
+                    }
                     .lineLimit(1)
-                    .foregroundStyle(row.value == nil ? .tertiary : .primary)
+                    .help("\(problem) — this holding cannot be valued and is left out of the total.")
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Not valued: \(problem)")
+                } else {
+                    Text(row.value.map { Fmt.moneyRounded($0) } ?? Fmt.missing)
+                        .numeric()
+                        .lineLimit(1)
+                        .foregroundStyle(row.value == nil ? .tertiary : .primary)
+                }
                 Group {
                     if let change = row.periodChange {
                         GainText(percent: change)
@@ -534,7 +567,7 @@ struct SecurityRowView: View {
 
     /// Full name plus where the quotes come from and how fresh they are.
     private var tooltip: String {
-        var lines = [row.name]
+        var lines = [row.displayName]
         let source = row.feedName.isEmpty ? "No data source" : (row.hasAutomaticFeed ? "Quotes from \(row.feedName)" : "Data source: \(row.feedName)")
         if let day = row.latestDay {
             lines.append("\(source) · latest quote \(Fmt.day(day, style: .medium))")
@@ -585,9 +618,9 @@ private struct ListColumnHeader: View {
             }
             .frame(width: compact ? 82 : 88, alignment: .trailing)
             HStack(spacing: 3) {
-                caption("Value", .value)
+                caption("Value", .value, help: "Market value of your holding today — click to sort")
                 Text("·")
-                caption(periodTitle, .period)
+                caption(periodTitle, .period, help: "Price change over the reporting period (\(periodTitle)) — click to sort")
             }
             .frame(width: compact ? 70 : 76, alignment: .trailing)
         }
@@ -597,7 +630,7 @@ private struct ListColumnHeader: View {
         .padding(.vertical, 5)
     }
 
-    private func caption(_ title: String, _ sort: SecuritySort) -> some View {
+    private func caption(_ title: String, _ sort: SecuritySort, help: String? = nil) -> some View {
         Button {
             if query.sort == sort { query.ascending.toggle() } else { query.sort = sort; query.ascending = sort.defaultAscending }
         } label: {
@@ -611,7 +644,7 @@ private struct ListColumnHeader: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help("Sort by \(sort.title.lowercased())")
+        .help(help ?? "Sort by \(sort.title.lowercased())")
         .accessibilityLabel("Sort by \(sort.title)")
     }
 }
@@ -626,9 +659,11 @@ private struct ListFooter: View {
         HStack(spacing: DS.Spacing.m) {
             Text(text(count))
             Spacer(minLength: DS.Spacing.s)
-            if let model, model.totalValue != 0 {
-                Text("Held \(Fmt.moneyRounded(Money(minor: model.totalValue, currency: model.currency)))")
-                    .help("Market value of the listed holdings")
+            if let model, model.totalValue != 0 || model.unvaluedCount > 0 {
+                Text(heldText(model))
+                    .help(model.unvaluedCount == 0
+                          ? "Market value today of the listed holdings"
+                          : "Market value today of the listed holdings. \(Fmt.integer(model.unvaluedCount)) of them cannot be valued (missing quote or exchange rate) and are left out.")
             }
         }
         .font(.callout)
@@ -645,6 +680,13 @@ private struct ListFooter: View {
         var parts = ["\(Fmt.integer(count)) \(count == 1 ? "security" : "securities")"]
         if total != count { parts[0] += " of \(Fmt.integer(total))" }
         if selected > 1 { parts.append("\(Fmt.integer(selected)) selected") }
+        return parts.joined(separator: " · ")
+    }
+
+    private func heldText(_ model: SecurityListModel) -> String {
+        var parts = [String]()
+        if model.totalValue != 0 { parts.append("Held \(Fmt.moneyRounded(Money(minor: model.totalValue, currency: model.currency)))") }
+        if model.unvaluedCount > 0 { parts.append("\(Fmt.integer(model.unvaluedCount)) not valued") }
         return parts.joined(separator: " · ")
     }
 }

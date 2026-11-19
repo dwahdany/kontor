@@ -209,7 +209,9 @@ currency, grossAmount, grossCurrency, exchangeRate, account, counterAccount, dep
   `Gross Amount` + `Currency Gross Amount` in another currency → `securityGross`
   (cash transfers: `counterAmount`, also in the same currency if the credited amount differs).
   Values beyond 10^15 currency units are row errors.
-* **Currency** — currency column → the account's currency → `options.defaultCurrency` → base currency.
+* **Currency** — currency column → a symbol or ISO code written in the amount cell (`$181.18`,
+  `12,50 EUR`; `CSVImporter.currencyWritten(in:context:)`) → the account's currency →
+  `options.defaultCurrency` → base currency.
   A row whose currency differs from the currency of its (existing) cash account is converted when
   it says what it is worth there — `Gross Amount` with `Currency Gross Amount` = the account's
   currency, or an `Exchange Rate` (row currency → account currency); value, fees and taxes are
@@ -265,7 +267,11 @@ CSVExporter.securities(file)                                   // Security Name,
 ```
 
 `transactions` → CSV → `CSVImporter` reproduces the ledger (ids and `source` aside; verified on
-randomly generated documents in both presets). Pass the same language to the table and the format:
+randomly generated documents in both presets), including the depot of dividends, fees and taxes on
+a security. Not carried: a security's currency when it differs from the booking's, and a
+dividend's ex-date (the export has no columns for them). A trade that names a depot but no cash
+account settles on that depot's reference account; `defaultAccountID` only covers rows that name
+neither. Pass the same language to the table and the format:
 `CSVExporter.data(CSVExporter.transactions(file, language: format.language), format: format)`.
 
 ---

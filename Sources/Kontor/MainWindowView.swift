@@ -105,7 +105,7 @@ struct MainToolbar: ToolbarContent {
         }
 
         ToolbarItem(placement: .primaryAction) {
-            PeriodPicker()
+            PeriodPicker(store: store)
         }
 
         ToolbarSpacer(.fixed, placement: .primaryAction)

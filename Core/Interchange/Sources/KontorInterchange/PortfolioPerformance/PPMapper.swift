@@ -433,6 +433,10 @@ struct PPMapper {
             if newest.map({ day.rawValue > $0 }) ?? true {
                 days.append(day.rawValue)
                 values.append(quote.value)
+            } else if newest == day.rawValue, let index = days.lastIndex(of: day.rawValue) {
+                // Same day as the newest historic price: Portfolio Performance values the position
+                // with the latest quote then, so it wins here as well.
+                values[index] = quote.value
             }
         }
         if invalid > 0 {

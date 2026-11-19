@@ -63,16 +63,29 @@ struct CSVWizardView: View {
                     StatusChip(status: .error, count: output.counts.error)
                     StatusChip(status: .duplicate, count: output.counts.duplicate)
                 }
+                // The counts never wrap or shrink; the reason next to them gives way instead.
+                .fixedSize()
                 .opacity(wizard.isComputing ? 0.5 : 1)
                 .help("Ready and warning rows are imported; errors cannot be, duplicates are skipped unless you tick them in the review.")
             }
             if wizard.isComputing { ProgressView().controlSize(.small) }
             Spacer(minLength: DS.Spacing.s)
             if wizard.step == .review, let reason = wizard.blockingReason {
-                Text(reason)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                // What stands in the way — and, where another step resolves it, the way there.
+                if let step = wizard.blockingStep {
+                    Button(reason) { wizard.step = step }
+                        .buttonStyle(.link)
+                        .font(.callout)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.trailing)
+                        .help("Go to step “\(step.title)”")
+                } else {
+                    Text(reason)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.trailing)
+                }
             }
             Button("Cancel") { store.dismissSheet() }
                 .keyboardShortcut(.cancelAction)
@@ -302,9 +315,10 @@ private struct CSVContentStep: View {
                 } header: {
                     Text("Defaults")
                 } footer: {
-                    Text("Used for rows that do not name a cash account or depot. A purchase without an account settles against the depot's reference account.")
+                    Text("For rows that name no cash account or no depot.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             case .quotes:
                 Section {
@@ -316,9 +330,10 @@ private struct CSVContentStep: View {
                 } footer: {
                     Text(store.file.securities.isEmpty
                         ? "This portfolio has no securities yet. Add the security first, then import its quotes."
-                        : "Days that already have the same quote are skipped; other days are added or updated.")
+                        : "New days are added; a day with the same quote is skipped. A day whose quote differs is replaced — the review marks it.")
                         .font(.caption)
                         .foregroundStyle(store.file.securities.isEmpty ? AnyShapeStyle(DS.Colors.warning) : AnyShapeStyle(.secondary))
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             case .securities:
                 Section {
@@ -380,7 +395,9 @@ private struct CSVMappingStep: View {
         VStack(spacing: 0) {
             ForEach(Array(output.header.enumerated()), id: \.offset) { column, title in
                 if column > 0 { Divider() }
-                columnRow(column, title: title, sample: output.columnSamples[column], field: output.mapping.columns[column], target: output.target)
+                columnRow(
+                    column, title: title, sample: output.columnSamples[column],
+                    field: wizard.isMappingPending ? output.mapping.columns[column] : wizard.field(forColumn: column), target: output.target)
             }
         }
         .cardBackground(radius: DS.Radius.control)
@@ -444,6 +461,7 @@ private struct CSVMappingStep: View {
             .labelsHidden()
             .frame(width: 150)
             .foregroundStyle(field == nil ? .secondary : .primary)
+            .disabled(wizard.isMappingPending)
         }
         .padding(.horizontal, DS.Spacing.m)
         .padding(.vertical, DS.Spacing.s)
@@ -467,7 +485,7 @@ private struct CSVMappingStep: View {
                     .numeric()
             }
             Spacer(minLength: DS.Spacing.s)
-            Picker(value.text, selection: Binding(get: { value.alias }, set: { wizard.setAlias($0, for: value.text) })) {
+            Picker(value.text, selection: Binding(get: { wizard.alias(for: value.text) }, set: { wizard.setAlias($0, for: value.text) })) {
                 Text(value.automatic.map { "Automatic: \($0.displayName)" } ?? "Not recognized").tag(CSVTransactionType?.none)
                 Divider()
                 ForEach(CSVTransactionType.allCases, id: \.self) { type in
@@ -536,6 +554,7 @@ private struct CSVPreviewPane: View {
 
     private func caption(_ output: CSVPipelineOutput) -> String {
         let shown = min(output.rowCount, output.sampleRows.count)
+        if shown == 1, output.rowCount == 1 { return "The only row, as Kontor reads it" }
         if shown == output.rowCount { return "All \(Fmt.integer(shown)) rows, as Kontor reads them" }
         return "First \(Fmt.integer(shown)) of \(Fmt.integer(output.rowCount)) rows, as Kontor reads them"
     }

@@ -218,7 +218,7 @@ public struct FeaturePlaceholder: View {
         .accessibilityElement(children: .combine)
         .analysisTask($value, id: "kontorui.placeholder.value") { analysis in analysis.snapshot.totalValue }
         .toolbar {
-            ToolbarItem { ScopePicker() }
+            ToolbarItem { ScopePicker(store: store) }
         }
     }
 

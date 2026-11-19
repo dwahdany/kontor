@@ -379,12 +379,19 @@ public struct Ledger: Sendable {
         self.transactionsByDepot = byDepot
     }
 
-    /// Resolves the order of bookings that share a day *and* a time of day (typically untimed
-    /// imports), where only the transaction id decides the sequence: if a booking would take more
-    /// shares out of a holding than it holds while a later booking of the same moment adds shares
-    /// to that holding, the adding booking is processed first. Otherwise a purchase and its sale
-    /// on the same day would show up as a short sale half of the time. Nothing else is reordered,
-    /// and `transactions` keeps the order of `Transaction.chronological`.
+    /// Resolves the order of bookings whose sequence the data does not really tell:
+    ///
+    /// - bookings that share a day *and* a time of day (typically untimed imports), where only the
+    ///   transaction id decides the sequence, and
+    /// - **untimed** bookings against timed ones of the same day. "No time" sorts first, but it
+    ///   means "some time that day": a transfer or sale entered by hand without a time on the day
+    ///   of a purchase that carries one (a broker statement) happened after the purchase.
+    ///
+    /// If such a booking would take more shares out of a holding than it holds while a later
+    /// booking it may float past adds shares to that holding, the adding booking is processed
+    /// first. Otherwise a purchase and its sale (or transfer) on the same day would show up as a
+    /// short sale with a wrong cost basis. Nothing else is reordered, timed bookings keep their
+    /// order among themselves, and `transactions` keeps the order of `Transaction.chronological`.
     private static func deferOverdraws(_ entries: inout [Entry], transactions: [Transaction], holdingCount: Int) {
         guard entries.count > 1 else { return }
         var shares = [Int64](repeating: 0, count: holdingCount)
@@ -399,19 +406,28 @@ public struct Ledger: Sendable {
         }
         var i = 0
         while i < entries.count {
-            var j = i + 1
-            let day = entries[i].day, minute = moment(entries[i])
-            while j < entries.count, entries[j].day == day, moment(entries[j]) == minute { j += 1 }
-            if j - i > 1 {
+            // [i, dayEnd): one day.
+            var dayEnd = i + 1
+            let day = entries[i].day
+            while dayEnd < entries.count, entries[dayEnd].day == day { dayEnd += 1 }
+            if dayEnd - i > 1 {
                 var k = i
-                while k < j {
+                while k < dayEnd {
                     let e = entries[k]
                     if e.holding >= 0, e.sharesDelta < 0, e.counterHolding != e.holding {
                         let h = e.holding
+                        // How far later additions may be pulled forward from: the whole day for an
+                        // untimed removal, the same moment for a timed one.
+                        let minute = moment(e)
+                        var limit = dayEnd
+                        if minute >= 0 {
+                            limit = k + 1
+                            while limit < dayEnd, moment(entries[limit]) == minute { limit += 1 }
+                        }
                         // Pull later additions forward until the position covers the removal.
                         var held = shares[Int(h)]
                         var next = k + 1
-                        while held >= 0, held &+ e.sharesDelta < 0, next < j {
+                        while held >= 0, held &+ e.sharesDelta < 0, next < limit {
                             if adds(entries[next], to: h) {
                                 let moved = entries.remove(at: next)
                                 entries.insert(moved, at: k)
@@ -428,7 +444,7 @@ public struct Ledger: Sendable {
             } else {
                 book(entries[i])
             }
-            i = j
+            i = dayEnd
         }
     }
 

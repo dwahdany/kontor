@@ -6,8 +6,9 @@ import KontorUI
 /// with price, value, weight, cost, gains and the period's return figures — as a sortable,
 /// groupable table with an optional treemap or concentration chart above it.
 ///
-/// Follows the window's scope (`ScopePicker`) and reporting period (`PeriodPicker`). The period
-/// always ends on the statement day: for a past day the same period is resolved relative to it.
+/// Follows the window's scope (`ScopePicker`) and reporting period (`PeriodPicker`). The statement
+/// day decides what is held; the period decides which stretch the return figures cover — rolling
+/// periods end on the statement day, fixed ones keep their dates (see `HoldingsStatementPeriod`).
 ///
 /// Launch state (`--state key=value`, screenshot mode):
 ///
@@ -24,7 +25,11 @@ import KontorUI
 /// | `hover` | part of a row name — pins the chart tooltip of `view=treemap` / highlights the segment of `view=concentration` |
 /// | `collapse` | `all` — collapse every group |
 ///
-/// `--route security:<uuid>` / `account:<uuid>` selects the matching row.
+/// `--route security:<uuid>` / `account:<uuid>` selects the matching row, expands its group and
+/// scrolls to it.
+///
+/// Shortcuts for the selected row: ⌃⌘B buy · ⇧⌃⌘S sell (⌃⌘S is the system's sidebar toggle) ·
+/// ⌃⌘D record dividend · ⌃⌘T show transactions · ⌘T statement for today.
 public struct HoldingsScreen: View {
     @Environment(PortfolioStore.self) private var store
     @State private var base = Loadable<HoldingsBase>()
@@ -56,7 +61,7 @@ public struct HoldingsScreen: View {
         .analysisTask($base, id: "holdings.base", interval: state.interval(in: store), variant: query) { analysis in
             HoldingsBase(analysis, query: query)
         }
-        .toolbar { ToolbarItem { ScopePicker() } }
+        .toolbar { ToolbarItem { ScopePicker(store: store) } }
         .background { HoldingsShortcuts(state: state) }
         .onAppear { seed(state) }
         .onChange(of: base.value?.stamp, initial: true) { rebuild(state) }
@@ -74,8 +79,9 @@ public struct HoldingsScreen: View {
     @ViewBuilder private func content(_ state: HoldingsViewState) -> some View {
         let display = state.display
         let currency = base.value?.currency ?? store.baseCurrency
+        let period = state.statementPeriod(in: store)
         if let model = base.value, !model.isEmpty {
-            HoldingsSummary(model: model, periodTitle: store.period.shortTitle, isRefreshing: base.isRefreshing)
+            HoldingsSummary(model: model, periodTitle: period.shortTitle(of: store.period), isRefreshing: base.isRefreshing)
                 .padding(.horizontal, DS.Spacing.l)
                 .padding(.bottom, DS.Spacing.m)
         }
@@ -85,7 +91,7 @@ public struct HoldingsScreen: View {
                 EmptyView()
             case .treemap:
                 HoldingsTreemapCard(
-                    display: display, currency: currency, periodTitle: store.period.title.lowercased(), isLoading: base.isRefreshing,
+                    display: display, currency: currency, periodTitle: period.title(of: store.period).lowercased(), isLoading: base.isRefreshing,
                     pinnedID: pinnedHover, state: state)
                     .padding(.horizontal, DS.Spacing.l)
                     .padding(.bottom, DS.Spacing.m)
@@ -123,20 +129,66 @@ state.display.structureKey
             filteredFrom: display.unfilteredCount
         ) {
             if let model = base.value {
-                if !model.unvalued.isEmpty {
-                    Label("\(Fmt.integer(model.unvalued.count)) without a value", systemImage: "exclamationmark.triangle.fill")
-                        .foregroundStyle(DS.Colors.warning)
-                        .help("Cannot be valued (price or exchange rate missing) and count as zero: \(model.unvalued.joined(separator: ", "))")
+                // The total line is the last row of the table and scrolls away with it; its
+                // figures that appear nowhere else stay visible here, room permitting.
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: DS.Spacing.m) {
+                        footerTotals(display.total, currency: model.currency)
+                        footerStatus(model, state)
+                    }
+                    footerStatus(model, state)
                 }
-                if model.staleCount > 0 {
-                    Label("\(Fmt.integer(model.staleCount)) stale \(model.staleCount == 1 ? "price" : "prices")", systemImage: "clock.badge.exclamationmark")
-                        .foregroundStyle(DS.Colors.warning)
-                        .help("The latest quote of these positions is more than \(HoldingsBase.staleAfterDays) days older than the statement day.")
-                }
-                Text("Period: \(Fmt.interval(model.interval))")
-                    .help("TTWROR, IRR and dividends refer to this period. Change it with the period picker in the toolbar.")
             }
             if base.isRefreshing { ProgressView().controlSize(.mini) }
+        }
+    }
+
+    @ViewBuilder private func footerTotals(_ total: HoldingRow?, currency: CurrencyCode) -> some View {
+        if let total {
+            if let change = total.dayChange, let amount = total.dayChangeAmount {
+                HStack(spacing: DS.Spacing.xs) {
+                    Text("Day")
+                    GainText(percent: change)
+                    GainText(money: Money(minor: amount, currency: currency))
+                }
+                .help("Change in value of the lines shown since the previous quotes, exchange-rate moves included.")
+                .accessibilityElement(children: .combine)
+            }
+            if let dividends = total.dividends, dividends != 0 {
+                Text("Dividends \(Fmt.money(minor: dividends, currency: currency))")
+                    .help("Dividends of the lines shown in the period (gross).")
+            }
+        }
+    }
+
+    @ViewBuilder private func footerStatus(_ model: HoldingsBase, _ state: HoldingsViewState) -> some View {
+        let period = state.statementPeriod(in: store)
+        if !model.unvalued.isEmpty {
+            Button {
+                store.present(.consistencyReport)
+            } label: {
+                Label("\(Fmt.integer(model.unvalued.count)) without a value", systemImage: "exclamationmark.triangle.fill")
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(DS.Colors.warning)
+            .help("Cannot be valued (price or exchange rate missing) and count as zero: \(model.unvalued.joined(separator: ", ")). Click to check consistency and see what is missing.")
+        }
+        if model.staleCount > 0 {
+            Label("\(Fmt.integer(model.staleCount)) stale \(model.staleCount == 1 ? "price" : "prices")", systemImage: "clock.badge.exclamationmark")
+                .foregroundStyle(DS.Colors.warning)
+                .help("The latest quote of these positions is more than \(HoldingsBase.staleAfterDays) days older than the statement day.")
+        }
+        if model.hasPeriodFigures {
+            let text = period.coverage == .ended && model.interval.end != model.day
+                ? "Period: \(Fmt.interval(model.interval)), ended before the statement day"
+                : "Period: \(Fmt.interval(model.interval))"
+            Text(text)
+                .lineLimit(1)
+                .help(period.note(of: store.period) ?? "TTWROR, IRR and dividends refer to this period. Change it with the period picker in the toolbar.")
+        } else {
+            Label("No period figures", systemImage: "calendar.badge.exclamationmark")
+                .lineLimit(1)
+                .help(period.note(of: store.period) ?? "The period has no figures for this statement day.")
         }
     }
 
@@ -163,7 +215,7 @@ state.display.structureKey
                 Button("Clear Filter") { state.options.filter = "" }
             }
         } else if !state.options.showsCash, model.cashCount > 0, model.positionCount == 0 {
-            EmptyState("Only Cash on \(day)", symbol: "banknote", message: "There are no securities in \(store.scopeTitle) on that day, and cash accounts are hidden.") {
+            EmptyState("Only Cash on \(day)", symbol: "banknote", message: "\(store.isWholePortfolioScope ? "The portfolio" : store.scopeTitle) holds no securities on that day, and cash accounts are hidden.") {
                 Button("Show Cash Accounts") { state.options.showsCash = true }
             }
         } else {
@@ -191,7 +243,6 @@ state.display.structureKey
     /// Applies stored settings and the screenshot mode's launch state — once per window.
     private func seed(_ state: HoldingsViewState) {
         guard !state.isSeeded else { return }
-        state.isSeeded = true
         state.grouping = HoldingsGrouping(key: storedGrouping, taxonomies: store.file.taxonomies) ?? .none
         state.visual = HoldingsVisual(rawValue: storedVisual) ?? .table
         state.options.includesClosed = storedClosed
@@ -209,6 +260,8 @@ state.display.structureKey
         launchSelection = store.launchValue("select")
         launchHover = store.launchValue("hover")
         collapsesAllAtLaunch = store.launchValue("collapse")?.lowercased() == "all"
+        // Last: changes a palette command asked for before this window showed the screen.
+        state.finishSeeding()
     }
 
     private static func sortOrder(_ text: String) -> [KeyPathComparator<HoldingRow>]? {
@@ -252,7 +305,7 @@ state.display.structureKey
         }
         if let text = launchSelection, let row = Self.match(text, in: display) {
             launchSelection = nil
-            state.selection = [row.id]
+            state.reveal(row.id)
         }
         if let text = launchHover, let row = Self.match(text, in: display) {
             launchHover = nil
@@ -267,7 +320,8 @@ state.display.structureKey
         return entities.first { $0.name.localizedCaseInsensitiveContains(text) }
     }
 
-    /// Routing contract: a focused security or account is selected if the table shows it.
+    /// Routing contract: a focused security or account is selected and scrolled to if the table
+    /// shows it (its group is expanded).
     private func revealRouteFocus(_ state: HoldingsViewState) {
         let display = state.display
         let target: HoldingRow?
@@ -281,8 +335,7 @@ state.display.structureKey
             return
         }
         guard let target else { return }
-        if let group = display.groups.first(where: { $0.rows.contains { $0.id == target.id } }) { state.collapsed.remove(group.id) }
-        state.selection = [target.id]
+        state.reveal(target.id)
     }
 
     /// Selection → focus, so the inspector follows.
@@ -384,8 +437,14 @@ private struct HoldingsControlBar: View {
         .fixedSize()
     }
 
+    /// Bound to the grouping in effect, so the picker never shows an empty selection while the
+    /// table has fallen back to "No Grouping" (the grouped-by taxonomy was deleted).
+    private var grouping: Binding<HoldingsGrouping> {
+        Binding(get: { state.resolvedGrouping(in: store) }, set: { state.grouping = $0 })
+    }
+
     private var groupingPicker: some View {
-        Picker("Group by", selection: $state.grouping) {
+        Picker("Group by", selection: grouping) {
             Text("No Grouping").tag(HoldingsGrouping.none)
             Text("Depot & Account").tag(HoldingsGrouping.depot)
             Text("Currency").tag(HoldingsGrouping.currency)
@@ -493,12 +552,12 @@ private struct HoldingsSummary: View {
             }
         case .ttwror:
             tile("TTWROR · \(periodTitle)", topic: .ttwror,
-                 footnote: Fmt.money(minor: model.absolutePerformance, currency: currency, signed: true)) {
-                GainText(percent: model.ttwror)
+                 footnote: model.absolutePerformance.map { Fmt.money(minor: $0, currency: currency, signed: true) } ?? "period begins later") {
+                if let ttwror = model.ttwror { ReturnText(value: ttwror) } else { Text(Fmt.missing) }
             }
         case .irr:
-            tile("IRR · \(periodTitle)", topic: .irr, footnote: "per year") {
-                if let irr = model.irr { GainText(percent: irr) } else { Text(Fmt.missing) }
+            tile("IRR · \(periodTitle)", topic: .irr, footnote: model.hasPeriodFigures ? "per year" : "period begins later") {
+                if let irr = model.irr { ReturnText(value: irr) } else { Text(Fmt.missing) }
             }
         }
     }
@@ -525,29 +584,64 @@ private struct HoldingsSummary: View {
 
 // MARK: - Keyboard shortcuts
 
+/// The key equivalents of the row actions — declared once, used by the hidden shortcut buttons and
+/// shown in the context menu.
+///
+/// Sell is ⇧⌃⌘S: ⌃⌘S is the system's Show/Hide Sidebar (View menu, `SidebarCommands`).
+enum HoldingsShortcut {
+    case buy, sell, dividend, transactions
+
+    var key: KeyEquivalent {
+        switch self {
+        case .buy: "b"
+        case .sell: "s"
+        case .dividend: "d"
+        case .transactions: "t"
+        }
+    }
+
+    var modifiers: EventModifiers {
+        self == .sell ? [.command, .control, .shift] : [.command, .control]
+    }
+
+    func applies(to row: HoldingRow) -> Bool {
+        switch self {
+        case .buy, .dividend: row.securityID != nil
+        case .sell: row.kind == .position
+        case .transactions: row.isEntity
+        }
+    }
+}
+
 /// Shortcuts for the selected row; hidden buttons so they work wherever the focus is on the screen.
+/// A button is disabled — and its key passes on to the menus — unless exactly one row it applies
+/// to is selected.
 private struct HoldingsShortcuts: View {
     @Environment(PortfolioStore.self) private var store
     let state: HoldingsViewState
 
     var body: some View {
+        let rows = state.selectedRows
+        let row = rows.count == 1 ? rows.first : nil
         Group {
-            shortcut("Buy", "b") { $0.securityID != nil } action: { HoldingsActions.buy($0, in: store) }
-            shortcut("Sell", "s") { $0.kind == .position } action: { HoldingsActions.sell($0, in: store) }
-            shortcut("Record Dividend", "d") { $0.securityID != nil } action: { HoldingsActions.recordDividend($0, in: store) }
-            shortcut("Show Transactions", "t") { _ in true } action: { HoldingsActions.showTransactions($0, in: store) }
+            shortcut("Buy", .buy, row) { HoldingsActions.buy($0, in: store) }
+            shortcut("Sell", .sell, row) { HoldingsActions.sell($0, in: store) }
+            shortcut("Record Dividend", .dividend, row) { HoldingsActions.recordDividend($0, in: store) }
+            shortcut("Show Transactions", .transactions, row) { HoldingsActions.showTransactions($0, in: store) }
             Button("Statement for Today") { state.day = nil }
                 .keyboardShortcut("t", modifiers: .command)
+                .disabled(state.day == nil)
         }
         .hidden()
         .accessibilityHidden(true)
     }
 
-    private func shortcut(_ title: String, _ key: KeyEquivalent, when: @escaping (HoldingRow) -> Bool, action: @escaping (HoldingRow) -> Void) -> some View {
-        Button(title) {
-            let rows = state.selectedRows
-            if rows.count == 1, let row = rows.first, when(row) { action(row) }
+    private func shortcut(_ title: String, _ shortcut: HoldingsShortcut, _ row: HoldingRow?, action: @escaping (HoldingRow) -> Void) -> some View {
+        let target = row.flatMap { shortcut.applies(to: $0) ? $0 : nil }
+        return Button(title) {
+            if let target { action(target) }
         }
-        .keyboardShortcut(key, modifiers: [.command, .control])
+        .keyboardShortcut(shortcut.key, modifiers: shortcut.modifiers)
+        .disabled(target == nil)
     }
 }

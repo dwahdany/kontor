@@ -17,14 +17,17 @@ import KontorUI
 /// | `expand` | `all` · `none` | disclosure state of the tree tables (default: sub-classifications visible) |
 /// | `hover` | a classification name | pins the chart's hover/tooltip on that classification |
 /// | `select` | a classification name | Edit tab: the selected classification |
+/// | `pool` | `all` | Edit tab: the right-hand list shows every security and account, not only those to assign |
 /// | `mode` | `classes` · `orders` | Rebalancing: proposal by classification or by security |
 /// | `cash` | an amount, e.g. `5000` or `-2500` | Rebalancing: cash to invest (negative: withdraw) |
 /// | `buyonly` | `on` · `off` | Rebalancing: never sell |
 /// | `whole` | `on` · `off` | Rebalancing: whole shares |
 /// | `exclude` | comma-separated classification names | Rebalancing: classifications left untouched |
+/// | `excludevehicle` | comma-separated security / account names | Rebalancing: positions left untouched |
 ///
-/// Routes: `taxonomy:<uuid>` selects the taxonomy, `classification:<taxonomy>/<id>` also selects and
-/// reveals the classification. Sheets: `custom:allocation.split?taxonomy=<uuid>&vehicle=s:<uuid>`,
+/// Routes: `taxonomy:<uuid>` selects the taxonomy (the tab stays), `classification:<taxonomy>/<id>`
+/// also selects and reveals the classification — a deep link from another screen switches to the
+/// Allocation tab for that (see `AllocationSession.adopt`). Sheets: `custom:allocation.split?taxonomy=<uuid>&vehicle=s:<uuid>`,
 /// `custom:allocation.rebalance-review?taxonomy=<uuid>&amount=<minor units>&direction=invest|withdraw&buyOnly=0|1&wholeShares=0|1`.
 public struct AllocationScreen: View {
     @Environment(PortfolioStore.self) private var store
@@ -56,12 +59,10 @@ public struct AllocationScreen: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .toolbar {
-            ToolbarItem { ScopePicker() }
+            ToolbarItem { ScopePicker(store: store) }
         }
         .onAppear { seed(session) }
-        .onChange(of: store.route.taxonomyID, initial: true) { _, id in
-            if let id, store.file.taxonomies.contains(where: { $0.id == id }), session.taxonomyID != id { session.taxonomyID = id }
-        }
+        .onChange(of: store.route.focus) { _, focus in session.adopt(route: focus, in: store.file) }
         .onChange(of: session.tab) { _, tab in storedTab = tab.rawValue }
         .onChange(of: session.visual) { _, visual in storedVisual = visual.rawValue }
         .onChange(of: session.taxonomyID) { _, id in storedTaxonomy = id?.uuidString ?? "" }
@@ -151,7 +152,7 @@ public struct AllocationScreen: View {
 
     private func select(_ id: UUID, session: AllocationSession) {
         session.taxonomyID = id
-        store.setFocus(.taxonomy(id))
+        session.setFocus(.taxonomy(id), in: store)
     }
 
     private func create(_ template: TaxonomyTemplate, session: AllocationSession) {
@@ -165,9 +166,25 @@ public struct AllocationScreen: View {
     private func seed(_ session: AllocationSession) {
         guard !didSeed else { return }
         didSeed = true
-        if session.taxonomyID == nil, let id = UUID(uuidString: storedTaxonomy) { session.taxonomyID = id }
-        if let tab = AllocationSession.Tab(rawValue: storedTab), store.launchState.isEmpty, session.tab == .allocation { session.tab = tab }
-        if let visual = AllocationSession.Visual(rawValue: storedVisual) { session.visual = visual }
+        // The window's stored state applies once per session. The screen is recreated on every
+        // visit, so restoring again would undo what the user (or a command) chose since.
+        if !session.isRestored {
+            session.isRestored = true
+            if session.taxonomyID == nil, let id = UUID(uuidString: storedTaxonomy) { session.taxonomyID = id }
+            if let tab = AllocationSession.Tab(rawValue: storedTab), store.launchState.isEmpty, !session.hasExplicitTab { session.tab = tab }
+            if let visual = AllocationSession.Visual(rawValue: storedVisual) { session.visual = visual }
+            // A focus that was restored with the window (no history yet) is this screen's own
+            // selection from last time, not a deep link.
+            if !store.canGoBack { session.setFocus(store.route.focus, in: store) }
+        }
+        session.hasExplicitTab = false
+        // Deep links: `taxonomy:<id>` selects the taxonomy, `classification:<t>/<id>` also shows the
+        // Allocation tab, which selects and reveals it.
+        session.adopt(route: store.route.focus, in: store.file)
+        if store.launchState.isEmpty {
+            if storedTab != session.tab.rawValue { storedTab = session.tab.rawValue }
+            if let id = session.taxonomyID, storedTaxonomy != id.uuidString { storedTaxonomy = id.uuidString }
+        }
 
         if let tab = store.launchValue("tab", as: AllocationSession.Tab.self) { session.tab = tab }
         if let visual = store.launchValue("view", as: AllocationSession.Visual.self) { session.visual = visual }
@@ -176,18 +193,27 @@ public struct AllocationScreen: View {
             let match = store.file.taxonomies.first { $0.name.caseInsensitiveCompare(text) == .orderedSame || $0.id.uuidString.caseInsensitiveCompare(text) == .orderedSame }
             if let match { session.taxonomyID = match.id }
         }
-        if let id = store.route.taxonomyID { session.taxonomyID = id }
+        guard let taxonomy = session.taxonomy(in: store.file) else { return }
+        var inputs = session.inputs(for: taxonomy.id)
         if let cash = store.launchValue("cash").flatMap(Fmt.parseMinor) {
-            session.rebalancing.amount = abs(cash)
-            session.rebalancing.direction = cash < 0 ? .withdraw : .invest
+            inputs.amount = abs(cash)
+            inputs.direction = cash < 0 ? .withdraw : .invest
         }
-        if let value = store.launchValue("buyonly") { session.rebalancing.buyOnly = value == "on" }
-        if let value = store.launchValue("whole") { session.rebalancing.wholeShares = value != "off" }
-        if let names = store.launchValue("exclude"), let taxonomy = session.taxonomy(in: store.file) {
-            let wanted = names.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces).lowercased() }
-            session.rebalancing.excludedClassifications = Set(
+        if let value = store.launchValue("buyonly") { inputs.buyOnly = value == "on" }
+        if let value = store.launchValue("whole") { inputs.wholeShares = value != "off" }
+        func names(_ key: String) -> [String]? {
+            store.launchValue(key)?.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces).lowercased() }
+        }
+        if let wanted = names("exclude") {
+            inputs.excludedClassifications = Set(
                 taxonomy.flattened.filter { wanted.contains($0.classification.name.lowercased()) }.map(\.classification.id))
         }
+        if let wanted = names("excludevehicle") {
+            let securities = store.file.securities.filter { wanted.contains($0.name.lowercased()) }.map { AllocationVehicle.security($0.id) }
+            let accounts = store.file.accounts.filter { wanted.contains($0.name.lowercased()) }.map { AllocationVehicle.account($0.id) }
+            inputs.excludedVehicles = Set(securities + accounts)
+        }
+        session.setInputs(inputs, for: taxonomy.id)
     }
 }
 

@@ -30,6 +30,15 @@ enum SecurityFilter: Hashable, Sendable {
     }
 }
 
+extension SecurityFilter {
+    /// The filter itself — or `.all` when it names a watchlist that no longer exists (deleted, or
+    /// its creation undone), which would otherwise leave an empty list under no chip.
+    func validated(in watchlists: [Watchlist]) -> SecurityFilter {
+        if case .watchlist(let id) = self, !watchlists.contains(where: { $0.id == id }) { return .all }
+        return self
+    }
+}
+
 /// Sort keys of the master list (`--state sort=name|price|day|period|value|updated`).
 enum SecuritySort: String, CaseIterable, Sendable, Identifiable {
     case name, price, day, period, value, updated
@@ -89,8 +98,10 @@ struct SecurityRow: Identifiable, Sendable, Hashable {
     /// About one year of closes, thinned for the sparkline.
     var spark: [Double]
     var shares: Shares
-    /// Market value in the reporting currency; nil when not held.
+    /// Market value today in the reporting currency; nil when not held or when it cannot be valued.
     var value: Money?
+    /// Why a held position has no value ("No quote", "No GBP → EUR exchange rate"); nil otherwise.
+    var valuationProblem: String?
     var quoteCount: Int
     var health: QuoteHealth
     /// Display name of the quote feed ("Yahoo Finance", "Manual"), empty without one.
@@ -98,6 +109,9 @@ struct SecurityRow: Identifiable, Sendable, Hashable {
     var hasAutomaticFeed: Bool
 
     var isHeld: Bool { !shares.isZero }
+
+    /// What the list shows as the name (a security without a name is still a row one can pick).
+    var displayName: String { name.isEmpty ? Security.untitledName : name }
 
     /// "VWCE · IE00BK5BQT80" — whatever identifiers exist.
     var identifiers: String {
@@ -118,8 +132,12 @@ struct SecurityListModel: Sendable {
     var counts = Counts()
     /// Reporting currency of the holding values.
     var currency: CurrencyCode = "EUR"
-    /// Sum of the holding values of the listed rows.
+    /// Sum of the holding values of the listed rows that can be valued.
     var totalValue: Int64 = 0
+    /// Listed holdings that are left out of `totalValue` because a quote or exchange rate is missing.
+    var unvaluedCount = 0
+    /// The day the holdings are valued on (today — not the end of the reporting period).
+    var valuationDay = Day(rawValue: 0)
 
     /// A quote older than this many days counts as stale for a security that is still active.
     static let staleAfterDays = 10
@@ -136,8 +154,11 @@ struct SecurityListModel: Sendable {
     init(_ analysis: Analysis, query: SecurityListQuery, watchlists: [Watchlist], providerNames: [String: String],
          automaticProviders: Set<String>) {
         let ledger = analysis.ledger
-        let snapshot = analysis.snapshot
         let interval = analysis.interval
+        // Shares, "Held" and the values are today's — like the price next to them. Only the
+        // percentage follows the window's reporting period (which may have ended years ago).
+        let snapshot = interval.end == query.today ? analysis.snapshot : ledger.snapshot(on: query.today)
+        valuationDay = query.today
         self.query = query
         currency = analysis.currency
         let benchmarks = Set(ledger.settings.benchmarkSecurityIDs)
@@ -171,11 +192,14 @@ struct SecurityListModel: Sendable {
                 health = .missing
             }
             let position = snapshot.position(security.id)
+            // The engine reports an unvalued position with a value of 0; that is "unknown", not zero.
+            let problem = position.flatMap { ValuationProblem($0, security: security, reportingCurrency: analysis.currency) }
             let row = SecurityRow(
                 id: security.id, name: security.name, ticker: security.ticker, isin: security.isin, wkn: security.wkn,
                 currency: security.currency, isRetired: security.isRetired, isBenchmark: benchmarks.contains(security.id),
                 latest: latest?.price, latestDay: latest?.day, dayChange: dayChange, periodChange: periodChange,
-                spark: Self.spark(prices, through: query.today), shares: position?.shares ?? .zero, value: position?.value,
+                spark: Self.spark(prices, through: query.today), shares: position?.shares ?? .zero,
+                value: problem == nil ? position?.value : nil, valuationProblem: problem?.message,
                 quoteCount: prices.count, health: health,
                 feedName: Self.feedName(security.feed, names: providerNames),
                 hasAutomaticFeed: security.feed.map { automaticProviders.contains($0.provider) } ?? false
@@ -212,6 +236,7 @@ struct SecurityListModel: Sendable {
         }
         rows = filtered
         totalValue = filtered.reduce(0) { $0 + ($1.value?.minor ?? 0) }
+        unvaluedCount = filtered.count { $0.valuationProblem != nil }
     }
 
     /// nil = equal on the key (the caller falls back to the name). Missing values always sort last.
@@ -260,4 +285,30 @@ struct SecurityListModel: Sendable {
         if (endIndex - 1 - lower) % step != 0 { values.append(Double(prices.values[endIndex - 1])) }
         return values
     }
+}
+
+/// Why the engine could not value a held position.
+enum ValuationProblem: Hashable, Sendable {
+    case noQuote
+    case noExchangeRate(from: CurrencyCode, to: CurrencyCode)
+
+    /// Nil when the position is valued.
+    init?(_ position: Snapshot.Position, security: Security, reportingCurrency: CurrencyCode) {
+        guard !position.isValued else { return nil }
+        self = position.price == nil ? .noQuote : .noExchangeRate(from: security.currency, to: reportingCurrency)
+    }
+
+    var message: String {
+        switch self {
+        case .noQuote: "No quote"
+        case .noExchangeRate(let from, let to): "No \(from) → \(to) exchange rate"
+        }
+    }
+}
+
+extension Security {
+    /// Shown wherever a security without a name appears.
+    static let untitledName = "Untitled Security"
+    /// The name, or the placeholder for a security that has none yet.
+    var displayName: String { name.isEmpty ? Self.untitledName : name }
 }

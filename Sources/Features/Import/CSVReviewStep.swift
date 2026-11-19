@@ -30,7 +30,7 @@ struct CSVReviewStep: View {
             Divider()
             if let output = wizard.output {
                 if output.rowCount == 0 {
-                    EmptyState("No Data Rows", symbol: "tablecells", message: "The file has no rows to import. Go back to step 1 and check the format.") {
+                    EmptyState("No Data Rows", symbol: "tablecells", message: "The file has column titles but no rows to import. Go back to step 1 and check the format.") {
                         Button("Check the Format") { wizard.step = .file }
                     }
                 } else if wizard.filter != nil, count(wizard.filter, output) == 0 {
@@ -157,6 +157,10 @@ struct CSVReviewStep: View {
 
     // MARK: Table
 
+    // Column widths: a Table lays its columns out at their ideal width (plus about 17 pt of cell
+    // padding each) and scrolls sideways when they do not fit, so for the ten columns of a
+    // transactions file the ideal widths must add up to at most ~775 pt in the 980 pt sheet
+    // (which leaves room for an always-visible vertical scroller).
     private func table(_ output: CSVPipelineOutput) -> some View {
         Table(rows, selection: $highlighted, sortOrder: $sortOrder) {
             TableColumn("") { row in
@@ -177,47 +181,55 @@ struct CSVReviewStep: View {
                 }
                 .help(row.message)
             }
-            .width(min: 78, ideal: 80, max: 100)
+            .width(min: 76, ideal: 76, max: 90)
             TableColumn("Line", value: \.line) { row in
                 Text("\(row.line)").numeric().foregroundStyle(.secondary)
             }
-            .width(min: 30, ideal: 36, max: 56)
+            .width(min: 28, ideal: 32, max: 50)
             .alignment(.trailing)
             if output.target != .securities {
                 TableColumn("Date", value: \.dayValue) { row in
                     Text(row.day.map { Fmt.day($0) } ?? Fmt.missing).numeric()
                 }
-                .width(min: 74, ideal: 80, max: 100)
+                .width(min: 72, ideal: 76, max: 90)
             }
             if output.target == .transactions {
                 TableColumn("Type", value: \.kind) { row in
                     Text(row.kind.isEmpty ? Fmt.missing : row.kind).lineLimit(1)
                 }
-                .width(min: 64, ideal: 78, max: 150)
+                .width(min: 60, ideal: 66, max: 130)
             }
             TableColumn("Security", value: \.security) { row in
                 Text(row.security).lineLimit(1).help(row.security)
             }
-            .width(min: 100, ideal: output.target == .transactions ? 116 : 220)
+            .width(min: 90, ideal: output.target == .transactions ? 104 : 220, max: 320)
             if output.target == .transactions {
+                // Wide enough for fractional shares ("77,32214568"): a cut-off number is worse than none.
                 TableColumn("Shares", value: \.sharesValue) { row in
-                    Text(row.shares.map { Fmt.shares($0) } ?? "").numeric()
+                    Text(row.shares.map { Fmt.shares($0) } ?? "")
+                        .numeric()
+                        .lineLimit(1)
+                        .help(row.shares.map { Fmt.shares($0) } ?? "")
                 }
-                .width(min: 48, ideal: 58, max: 110)
+                .width(min: 64, ideal: 86, max: 120)
                 .alignment(.trailing)
             }
             if output.target != .securities {
                 TableColumn(output.target == .quotes ? "Quote" : "Amount", value: \.amountValue) { row in
-                    Text(amountText(row, currency: output.quoteCurrency)).numeric()
+                    Text(amountText(row, currency: output.quoteCurrency))
+                        .numeric()
+                        .lineLimit(1)
+                        .foregroundStyle(row.status == .error ? .secondary : .primary)
+                        .help(amountText(row, currency: output.quoteCurrency))
                 }
-                .width(min: 76, ideal: 90, max: 150)
+                .width(min: 76, ideal: 92, max: 130)
                 .alignment(.trailing)
             }
             if output.target != .quotes {
                 TableColumn(output.target == .securities ? "Currency" : "Account", value: \.account) { row in
                     Text(row.account).lineLimit(1).help(row.account)
                 }
-                .width(min: 60, ideal: 82, max: 200)
+                .width(min: 60, ideal: 80, max: 180)
             }
             TableColumn("Details", value: \.message) { row in
                 Text(row.message.isEmpty ? row.note : row.message)
@@ -225,7 +237,8 @@ struct CSVReviewStep: View {
                     .foregroundStyle(row.message.isEmpty ? AnyShapeStyle(.secondary) : AnyShapeStyle(row.status == .error ? DS.Colors.red : Color.primary))
                     .help(row.message.isEmpty ? row.note : row.message)
             }
-            .width(min: 110, ideal: 150)
+            // No maximum: Details takes whatever width the other columns leave (more for quotes and securities).
+            .width(min: 110, ideal: output.target == .transactions ? 132 : 260)
         }
         .onKeyPress(.space) {
             guard !highlighted.isEmpty else { return .ignored }
@@ -289,7 +302,7 @@ struct CSVReviewStep: View {
                     .help(creationText(proposal))
                 Spacer(minLength: DS.Spacing.s)
                 if !proposal.newSecurities.isEmpty {
-                    Button("Show All \(Fmt.integer(proposal.newSecurities.count))…") { showsNewSecurities = true }
+                    Button(proposal.newSecurities.count == 1 ? "Details…" : "Show All \(Fmt.integer(proposal.newSecurities.count))…") { showsNewSecurities = true }
                         .buttonStyle(.link)
                         .font(.callout)
                         .popover(isPresented: $showsNewSecurities, arrowEdge: .top) { newSecurities(proposal.newSecurities) }

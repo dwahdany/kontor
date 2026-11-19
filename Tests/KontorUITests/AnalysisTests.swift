@@ -107,9 +107,11 @@ private func demoStore() -> PortfolioStore {
     }
 
     @Test func cancelledRequestDoesNotStartItsWork() async throws {
-        // A file big enough that building the ledger takes a moment: the work is still queued
-        // behind it when the only requester goes away.
-        let file = SampleData.stressPortfolio(securities: 40, years: 10, transactions: 20_000)
+        // A file big enough that building the ledger takes a while: the work is still queued
+        // behind it when the only requester goes away. (With a smaller file the ledger could be
+        // ready before the cancellation arrived when the machine was busy, and the test failed
+        // once in about ten runs.)
+        let file = SampleData.stressPortfolio(securities: 200, years: 25, transactions: 50_000)
         let store = PortfolioStore(file: file, today: SampleData.stressEndDay)
         let runs = Counter()
         let task = Task { try await store.compute("never") { _ in
@@ -428,6 +430,31 @@ private func quoteStore(delay: Duration = .zero, undoable: Bool = false) -> (Por
         // Restricting to selected securities.
         let only = try #require(await store.updateQuotes(only: [store.file.securities[2].id])?.value)
         #expect(only.targetCount == 1 && only.failures.count == 1 && only.newPrices == 0)
+    }
+
+    /// An automatic update must not take over ⌘Z or wipe the redo stack; it only marks the
+    /// document as edited. And an update that finds nothing leaves the document untouched.
+    @Test func automaticUpdateBypassesUndoAndAnEmptyOneChangesNothing() async throws {
+        let (store, undo) = quoteStore(undoable: true)
+        var dirtied = 0
+        store.onNonUndoableChange = { dirtied += 1 }
+        // A user edit, undone: there is something to redo.
+        undo.beginUndoGrouping()
+        store.mutate("Rename") { $0.name = "Renamed" }
+        undo.endUndoGrouping()
+        undo.undo()
+        #expect(undo.canRedo && !undo.canUndo)
+
+        let report = try #require(await store.updateQuotes(interactive: false)?.value)
+        #expect(report.newPrices == 4 && store.file.securities[0].prices.count == 3)
+        #expect(dirtied == 1)
+        #expect(!undo.canUndo, "an automatic update is not an undo step")
+        #expect(undo.canRedo, "an automatic update must not clear the redo stack")
+
+        // Everything is up to date now: nothing may change, not even "last checked" time stamps.
+        let before = store.file, revision = store.revision
+        _ = await store.updateQuotes(only: [store.file.securities[0].id], interactive: false)?.value
+        #expect(store.file == before && store.revision == revision && dirtied == 1)
     }
 
     @Test func nothingToDoAndNoUpdater() async {

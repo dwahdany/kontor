@@ -15,6 +15,7 @@ struct AllocationTab: View {
 
     var body: some View {
         let taxonomy = taxonomy
+        let key = store.allocationKey(for: taxonomy)
         Group {
             if taxonomy.root.isEmpty {
                 EmptyState(
@@ -45,8 +46,8 @@ struct AllocationTab: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .loadingOverlay(model.isInitialLoad && !taxonomy.root.isEmpty)
-        .analysisTask($model, id: "allocation.model", variant: taxonomy.id) { analysis in
-            AllocationModel(analysis, taxonomy: taxonomy)
+        .analysisTask($model, id: "allocation.model", variant: key) { analysis in
+            AllocationModel(analysis, taxonomy: taxonomy, scopeRoot: key.scopeRoot)
         }
         .analysisTask($returns, id: "allocation.returns", variant: taxonomy.id) { analysis in
             ClassificationReturns(analysis, taxonomy: taxonomy)
@@ -54,9 +55,9 @@ struct AllocationTab: View {
         .onChange(of: store.route.classificationID, initial: true) { _, id in reveal(id) }
         .onChange(of: selection) { _, ids in
             if ids.count == 1, let id = ids.first.flatMap(UUID.init(uuidString:)), taxonomy.contains(id) {
-                store.setFocus(.classification(taxonomy: taxonomy.id, id: id))
+                session.setFocus(.classification(taxonomy: taxonomy.id, id: id), in: store)
             } else {
-                store.setFocus(.taxonomy(taxonomy.id))
+                session.setFocus(.taxonomy(taxonomy.id), in: store)
             }
         }
     }
@@ -68,7 +69,10 @@ struct AllocationTab: View {
         GeometryReader { proxy in
             if proxy.size.width >= 1_040 {
                 HStack(spacing: 0) {
-                    table(model, compact: false)
+                    VStack(spacing: 0) {
+                        scopeBanner(model)
+                        table(model, compact: false)
+                    }
                     Divider()
                     ScrollView {
                         VStack(spacing: DS.Spacing.l) {
@@ -94,9 +98,33 @@ struct AllocationTab: View {
                     }
                     .padding(DS.Spacing.m)
                     Divider()
+                    scopeBanner(model)
                     table(model, compact: true)
                 }
             }
+        }
+    }
+
+    /// Shown while the scope is a classification of this very taxonomy: the whole-portfolio targets
+    /// do not apply to such a scope, so targets are relative to that classification.
+    @ViewBuilder
+    private func scopeBanner(_ model: AllocationModel) -> some View {
+        if let name = model.scopeRootName {
+            HStack(spacing: DS.Spacing.s) {
+                Image(systemName: "scope")
+                    .foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
+                Text("Showing only “\(name)”. Targets are relative to it; the rest of “\(taxonomy.name)” is outside the scope.")
+                    .lineLimit(2)
+                Spacer(minLength: DS.Spacing.s)
+                Button("Show Whole Portfolio") { store.scopeSelection = .portfolio }
+                    .controlSize(.small)
+            }
+            .font(.callout)
+            .padding(.horizontal, DS.Spacing.l)
+            .padding(.vertical, DS.Spacing.s)
+            .background(.quaternary.opacity(0.5))
+            Divider()
         }
     }
 
@@ -306,29 +334,36 @@ struct AllocationTab: View {
                     AllocationNameCell(row: row)
                 }
             }
-            .width(min: 160, ideal: compact ? 240 : 300)
+            .width(min: 160, ideal: compact ? 220 : 260)
             TableColumn("Value") { row in
                 Text(Fmt.money(minor: row.value, currency: model.currency))
-                    .numeric()
+                    .numericCell()
                     .foregroundStyle(row.isItem ? .secondary : .primary)
             }
-            .width(min: 96, ideal: compact ? 104 : 122, max: 160)
+            .width(min: 100, ideal: compact ? 110 : 140, max: 190)
             .alignment(.trailing)
             TableColumn("Actual") { row in
-                Text(Fmt.percent(row.share))
-                    .numeric()
-                    .foregroundStyle(row.isItem ? .secondary : .primary)
+                if row.share != nil || model.classifiedValue <= 0 {
+                    Text(Fmt.percent(row.share))
+                        .numericCell()
+                        .foregroundStyle(row.isItem ? .secondary : .primary)
+                } else {
+                    // The unassigned bucket is outside the base of the shares.
+                    Text(Fmt.missing)
+                        .foregroundStyle(.tertiary)
+                        .help("Not classified: shares and targets refer to the classified value")
+                }
             }
-            .width(min: 60, ideal: 64, max: 90)
+            .width(min: 62, ideal: 76, max: 96)
             .alignment(.trailing)
             TableColumn("Target") { row in
                 if row.classificationID != nil {
                     Text(Fmt.percent(row.targetShare))
-                        .numeric()
+                        .numericCell()
                         .foregroundStyle(row.targetShare == nil ? .tertiary : .primary)
                 }
             }
-            .width(min: 60, ideal: 64, max: 90)
+            .width(min: 62, ideal: 76, max: 96)
             .alignment(.trailing)
             TableColumn("Δ Target") { row in
                 if let delta = row.deltaShare {
@@ -340,11 +375,11 @@ struct AllocationTab: View {
             TableColumn("Δ Value") { row in
                 if let delta = row.deltaValue {
                     Text(Fmt.money(minor: delta, currency: model.currency, signed: true))
-                        .numeric()
+                        .numericCell()
                         .foregroundStyle(.secondary)
                 }
             }
-            .width(min: 96, ideal: compact ? 104 : 122, max: 160)
+            .width(min: 100, ideal: compact ? 110 : 140, max: 190)
             .alignment(.trailing)
             TableColumn("Return") { row in
                 if let id = row.classificationID {
@@ -374,6 +409,10 @@ struct AllocationTab: View {
         .safeAreaInset(edge: .bottom, spacing: 0) {
             TableFooter(count: model.classificationCount, noun: "classification", selected: selection.count) {
                 HStack(spacing: DS.Spacing.m) {
+                    if model.unassignedValue != 0 {
+                        Text("Actual and Target: share of the classified value")
+                            .help("\(Fmt.money(minor: model.unassignedValue, currency: model.currency)) is not assigned in this taxonomy. It is listed as “Unassigned” and is outside the base of the shares — the same base the Rebalancing tab uses.")
+                    }
                     HelpLabel("Target", topic: .targetWeight)
                     HStack(spacing: DS.Spacing.xs) {
                         Text("Return: TTWROR, \(store.period.shortTitle)")

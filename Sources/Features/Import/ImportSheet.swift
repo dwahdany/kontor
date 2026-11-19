@@ -6,15 +6,21 @@ import KontorUI
 /// The sheet behind `SheetRequest.importFile(url)`: identifies the file off the main actor, then
 /// shows the Portfolio Performance summary, the CSV wizard, or specific guidance for files that
 /// cannot be read. With no URL it asks for a file (button or drop — never a panel on its own).
+/// `expectedTarget` says what the entry point expects `url` to contain (a CSV with transactions,
+/// quotes or securities); it applies to that file only.
 ///
 /// Launch state (screenshots): `step=file|content|mapping|review|done`, `target=transactions|quotes|securities`,
-/// `filter=ok|warning|error|duplicate`, `line=<n>`, `remembered=on` (CSV wizard); `notes=collapsed` (Portfolio Performance summary).
+/// `filter=ok|warning|error|duplicate`, `line=<n>`, `remembered=on` (CSV wizard); `notes=collapsed`,
+/// `matches=expanded|collapsed` (Portfolio Performance summary).
 struct ImportSheet: View {
     let url: URL?
+    var expectedTarget: CSVImportTarget?
 
     @Environment(PortfolioStore.self) private var store
     @State private var phase = Phase.choose
     @State private var isDropTargeted = false
+    /// Counts the files this sheet started reading: only the latest one may set the phase.
+    @State private var loadGeneration = 0
 
     enum Phase {
         case choose
@@ -59,12 +65,15 @@ struct ImportSheet: View {
             }
         }
         .dropDestination(for: URL.self) { urls, _ in
-            guard let url = urls.first(where: \.isFileURL) else { return false }
+            let files = urls.filter(\.isFileURL)
+            guard let url = files.first else { return false }
             load(url)
+            // Further files follow one after another, once this sheet is done.
+            for other in files.dropFirst() { store.present(.importFile(other)) }
             return true
         } isTargeted: { isDropTargeted = $0 }
         .task {
-            if let url, case .choose = phase { load(url) }
+            if let url, case .choose = phase { load(url, expecting: expectedTarget) }
         }
     }
 
@@ -161,7 +170,9 @@ struct ImportSheet: View {
         if let url = ImportPanels.chooseFile() { load(url) }
     }
 
-    private func load(_ url: URL) {
+    private func load(_ url: URL, expecting expected: CSVImportTarget? = nil) {
+        loadGeneration += 1
+        let run = loadGeneration
         phase = .loading(fileName: url.lastPathComponent)
         let current = store.file
         let today = store.today
@@ -169,19 +180,22 @@ struct ImportSheet: View {
             let loaded = await store.whileBusy {
                 await Background.run { ImportLoader.load(url, into: current, today: today) }
             }
+            // Another file was chosen or dropped meanwhile: that one decides what the sheet shows.
+            guard run == loadGeneration else { return }
             switch loaded {
             case .portfolioPerformance(let result):
                 phase = .portfolioPerformance(result)
             case .csv(let data, let fileName):
                 // Screenshots must not read or write the user's remembered layouts.
                 let memory = store.launchState.isEmpty ? MappingMemory() : MappingMemory.ephemeral()
-                let hint = store.launchValue("target", as: CSVImportTarget.self) ?? ImportHints.takeTarget()
+                let hint = store.launchValue("target", as: CSVImportTarget.self) ?? expected
                 if store.launchValue("remembered") == "on" {
                     // Pretend this layout was imported before: remember what the automatic run produces.
                     var input = CSVPipelineInput(data: data, file: current)
-                    input.target = hint
+                    input.targetHint = hint
                     let seed = input
                     let first = await store.whileBusy { await Background.run { CSVPipeline.run(seed) } }
+                    guard run == loadGeneration else { return }
                     memory.remember(
                         RememberedMapping(
                             target: first.target, columns: first.mapping.columns, typeAliases: [:], dialect: first.dialect,
@@ -192,7 +206,7 @@ struct ImportSheet: View {
                 wizard.launch(
                     step: store.launchValue("step", as: CSVWizard.Step.self),
                     filter: store.launchValue("filter", as: ReviewStatus.self))
-                wizard.start(target: store.launchValue("remembered") == "on" ? nil : hint)
+                wizard.start(target: hint)
                 phase = .csv(wizard)
             case .kontorDocument:
                 phase = .kontorDocument(url)

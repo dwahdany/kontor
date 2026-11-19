@@ -58,8 +58,13 @@ struct RiskTab: View {
                     MetricTile("Downside Volatility", topic: .semiVolatility, value: m.map { Fmt.percent($0.semiVolatility) } ?? Fmt.missing,
                                footnote: "only the below-average days")
                 case 2:
-                    MetricTile("Sharpe Ratio", topic: .sharpeRatio, value: m.map { Fmt.ratio($0.sharpeRatio) } ?? Fmt.missing,
-                               footnote: m.map { "\(Fmt.percent($0.annualizedReturn, signed: true)) per year vs. \(Fmt.percent($0.riskFreeRate)) risk-free" })
+                    MetricTile("Sharpe Ratio", topic: .sharpeRatio,
+                               value: m.map { $0.showsSharpeRatio ? Fmt.ratio($0.sharpeRatio) : Fmt.missing } ?? Fmt.missing,
+                               footnote: m.map {
+                                   $0.showsSharpeRatio
+                                       ? "\(Fmt.percent($0.annualizedReturn, signed: true)) per year vs. \(Fmt.percent($0.riskFreeRate)) risk-free"
+                                       : "needs a period of at least a year"
+                               })
                 case 3:
                     MetricTile("Max Drawdown", topic: .maxDrawdown,
                                value: m.map { Fmt.percent(-($0.maxDrawdown?.depth ?? 0)) } ?? Fmt.missing,
@@ -127,9 +132,10 @@ struct RiskTab: View {
                                   title: "\(distribution.title) returns")
                     .markers(mean: true, median: true)
                     .loading(model.isLoading)
-                    .emptyMessage(distribution == .daily ? "No daily returns in this period" : "No complete month in this period")
+                    .emptyMessage(distribution == .daily ? "Not enough trading days for a distribution" : "Not enough complete months for a distribution")
                     .frame(height: 250)
-                Text(caption)
+                // A blank line keeps the card's height when there is nothing to describe.
+                Text(caption ?? " ")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
             }
@@ -149,11 +155,12 @@ struct RiskTab: View {
         return distribution == .daily ? m.dailyHistogram : m.monthlyHistogram
     }
 
-    private var caption: String {
-        guard let m = model.value else { return " " }
+    /// Describes the histogram; nil while the chart shows its empty state (fewer than two values).
+    private var caption: String? {
+        guard let m = model.value, currentHistogram.total >= 2 else { return nil }
         return distribution == .daily
-            ? "\(Fmt.integer(m.dailyCount)) trading days. A wide spread means a bumpy ride."
-            : "\(Fmt.integer(m.monthlyCount)) months. A wide spread means a bumpy ride."
+            ? "\(Plural.count(m.dailyCount, "trading day", "trading days")). A wide spread means a bumpy ride."
+            : "\(Plural.count(m.monthlyCount, "complete month", "complete months")). A wide spread means a bumpy ride."
     }
 }
 

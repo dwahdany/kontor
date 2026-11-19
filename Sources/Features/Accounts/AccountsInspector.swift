@@ -6,6 +6,13 @@ import KontorUI
 struct AccountsInspector: View {
     @Environment(PortfolioStore.self) private var store
     @State private var model = Loadable<AccountsOverview>()
+    /// What refers to the open entity; computed once per document revision and entity, not per body.
+    @State private var references = EntityReferences()
+
+    private struct ReferencesKey: Equatable {
+        var revision: Int
+        var focus: Route.Focus?
+    }
 
     var body: some View {
         let today = store.today
@@ -23,13 +30,18 @@ struct AccountsInspector: View {
         .analysisTask($model, id: "accounts.overview", scope: .portfolio, variant: today) { analysis in
             AccountsOverview(analysis, today: today)
         }
+        .onChange(of: ReferencesKey(revision: store.revision, focus: store.route.focus), initial: true) { _, key in
+            switch key.focus {
+            case .account(let id): references = .account(id, in: store.file)
+            case .depot(let id): references = .depot(id, in: store.file)
+            default: references = EntityReferences()
+            }
+        }
     }
 
     @ViewBuilder
     private func accountSections(_ account: Account) -> some View {
         let row = model.value?.accounts.first { $0.id == account.id }
-        let transactions = store.transactions(forAccount: account.id)
-        let usage = store.usage(ofAccounts: [account.id])
         Section("Cash Account") {
             KeyValueRow("Name", account.name)
             KeyValueRow("Currency", "\(account.currency) – \(Currencies.name(account.currency))")
@@ -51,11 +63,11 @@ struct AccountsInspector: View {
                 }
             }
         }
-        activitySection(count: transactions.count, first: transactions.map(\.date).min(), last: transactions.map(\.date).max())
+        activitySection(count: row?.transactionCount, first: row?.firstActivity, last: row?.lastActivity)
         Section("Used By") {
-            KeyValueRow("Depots", usage.depots == 0 ? "None" : store.file.depots.filter { $0.referenceAccountID == account.id }.map(\.name).joined(separator: ", "))
-            KeyValueRow("Investment Plans", Fmt.integer(usage.plans))
-            KeyValueRow("Classifications", Fmt.integer(usage.classifications))
+            KeyValueRow("Depots", references.depots.isEmpty ? "None" : references.depots.joined(separator: ", "))
+            KeyValueRow("Investment Plans", Fmt.integer(references.plans))
+            KeyValueRow("Classifications", Fmt.integer(references.classifications))
         }
         actions(.account(account.id))
     }
@@ -63,8 +75,6 @@ struct AccountsInspector: View {
     @ViewBuilder
     private func depotSections(_ depot: Depot) -> some View {
         let row = model.value?.depots.first { $0.id == depot.id }
-        let transactions = store.transactions(forDepot: depot.id)
-        let usage = store.usage(ofDepots: [depot.id])
         Section("Depot") {
             KeyValueRow("Name", depot.name)
             KeyValueRow("Reference Account") {
@@ -80,6 +90,9 @@ struct AccountsInspector: View {
         Section("Today") {
             KeyValueRow("Market Value", Fmt.money(row?.value))
             KeyValueRow("Positions", row.map { Fmt.integer($0.positionCount) } ?? Fmt.missing)
+            if let row, row.unvaluedPositions > 0 {
+                gapNote("\(Fmt.integer(row.unvaluedPositions)) position\(row.unvaluedPositions == 1 ? "" : "s") without a price or exchange rate count\(row.unvaluedPositions == 1 ? "s" : "") as zero.")
+            }
         }
         Section("Period · \(store.period.shortTitle)") {
             KeyValueRow("TTWROR") {
@@ -92,9 +105,9 @@ struct AccountsInspector: View {
                 if let row, row.ttwror != nil { GainText(money: row.gain) } else { Text(Fmt.missing).foregroundStyle(.secondary) }
             }
         }
-        activitySection(count: transactions.count, first: transactions.map(\.date).min(), last: transactions.map(\.date).max())
+        activitySection(count: row?.transactionCount, first: row?.firstActivity, last: row?.lastActivity)
         Section("Used By") {
-            KeyValueRow("Investment Plans", Fmt.integer(usage.plans))
+            KeyValueRow("Investment Plans", Fmt.integer(references.plans))
         }
         actions(.depot(depot.id))
     }
@@ -112,6 +125,9 @@ struct AccountsInspector: View {
             KeyValueRow("Cash", Fmt.money(model.value?.cashTotal))
             KeyValueRow("Securities", Fmt.money(model.value?.depotTotal))
             KeyValueRow("Net Worth", Fmt.money(model.value?.netWorth))
+            if let note = model.value?.gaps.note {
+                gapNote("Incomplete: \(note).")
+            }
         }
         Section {
             Text("Open an account or depot to see its details here.")
@@ -120,9 +136,20 @@ struct AccountsInspector: View {
         }
     }
 
-    private func activitySection(count: Int, first: Day?, last: Day?) -> some View {
+    /// A total that leaves something out says so, in the warning color and with its glyph.
+    private func gapNote(_ text: String) -> some View {
+        Label {
+            Text(text).fixedSize(horizontal: false, vertical: true)
+        } icon: {
+            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(DS.Colors.warning)
+        }
+        .font(.callout)
+        .foregroundStyle(.secondary)
+    }
+
+    private func activitySection(count: Int?, first: Day?, last: Day?) -> some View {
         Section("Activity") {
-            KeyValueRow("Transactions", Fmt.integer(count))
+            KeyValueRow("Transactions", count.map { Fmt.integer($0) } ?? Fmt.missing)
             KeyValueRow("First", first.map { Fmt.day($0, style: .medium) } ?? "")
             KeyValueRow("Last", last.map { Fmt.day($0, style: .medium) } ?? "")
         }
@@ -137,6 +164,7 @@ struct AccountsInspector: View {
                 case .depot(let id): store.present(.editDepot(id))
                 }
             }
+            Button("Show in Transactions") { AccountsActions.showTransactions(entity, in: store) }
             Button(retired ? "Reactivate" : "Retire") { AccountsActions.setRetired(!retired, entity, in: store) }
         }
     }

@@ -13,6 +13,8 @@ import KontorUI
 /// | `plan` | `first`, `last`, a 1-based index, a plan UUID, `none` | the selected plan (default: the first; `--route plan:<uuid>` works too) |
 /// | `sheet` | `generate` | opens "Generate Due Transactions…" for all plans (also `--sheet custom:plans.generate[?plan=<uuid>]`) |
 /// | `choice` | `skip`, `later` | in the generate sheet: pre-sets the last row to that action |
+/// | `shares` | a number | in the generate sheet: enters that share count in the first purchase row |
+/// | `start`, `interval`, `history` | a date, months, `due`/`keep` | with `--sheet edit-plan:<uuid>`: changes the schedule in the editor and answers its question about past dates |
 /// | `hover` | `on`, or a date `YYYY-MM-DD` | pins the tooltip of the chart on the visible tab |
 /// | `return`, `spread` | percent, e.g. `6`, `2.5` | projection: expected annual return and ± spread |
 /// | `years` | 1…50 | projection: horizon |
@@ -62,6 +64,10 @@ public struct PlansScreen: View {
                 .help("Show the plans or a projection of where they lead")
             }
             ToolbarItem {
+                Menu("New Plan", systemImage: "plus.rectangle.on.rectangle") { newPlanButtons }
+                    .help("Add a savings, deposit or withdrawal plan")
+            }
+            ToolbarItem {
                 Button("Generate…", systemImage: "calendar.badge.plus") { PlanActions.generate(in: store) }
                     .disabled((model.value?.dueCount ?? 0) == 0)
                     .help("Review and add the plan executions that are due (⇧⌘G)")
@@ -106,6 +112,12 @@ public struct PlansScreen: View {
             }
             .loadingOverlay(model.isInitialLoad)
         }
+    }
+
+    @ViewBuilder private var newPlanButtons: some View {
+        Button("New Savings Plan…") { store.present(.newPlan(PlanPrefill(kind: .purchase))) }
+        Button("New Deposit Plan…") { store.present(.newPlan(PlanPrefill(kind: .deposit))) }
+        Button("New Withdrawal Plan…") { store.present(.newPlan(PlanPrefill(kind: .withdrawal))) }
     }
 
     private var tableHeight: CGFloat {
@@ -197,17 +209,21 @@ public struct PlansScreen: View {
         .opacity(model.isRefreshing ? 0.85 : 1)
     }
 
-    /// "Buying €500.00 and depositing €1,500.00 per month".
+    /// "Buying €500.00 and depositing €1,500.00 per month" — what the plans running today move.
     static func cadence(_ model: PlansModel) -> String {
         var parts: [String] = []
         if model.monthlyPurchases > 0 { parts.append("buying \(Fmt.money(minor: model.monthlyPurchases, currency: model.currency))") }
         if model.monthlyDeposits > 0 { parts.append("depositing \(Fmt.money(minor: model.monthlyDeposits, currency: model.currency))") }
         if model.monthlyWithdrawals > 0 { parts.append("withdrawing \(Fmt.money(minor: model.monthlyWithdrawals, currency: model.currency))") }
-        guard !parts.isEmpty else { return "No active plans" }
+        let unconverted = model.unconvertedCount == 0 ? nil
+            : "\(model.unconvertedCount == 1 ? "1 plan" : "\(Fmt.integer(model.unconvertedCount)) plans") not included (no exchange rate to \(model.currency))"
+        guard !parts.isEmpty else {
+            return unconverted ?? (model.activeCount > 0 ? "No plan is running yet" : "No active plans")
+        }
         let sentence = parts.count > 1
             ? parts.dropLast().joined(separator: ", ") + " and " + parts[parts.count - 1]
             : parts[0]
-        return sentence.prefix(1).uppercased() + sentence.dropFirst() + " per month"
+        return sentence.prefix(1).uppercased() + sentence.dropFirst() + " per month" + (unconverted.map { " · " + $0 } ?? "")
     }
 
     private var selectedRows: [PlanRow] { rows.filter { selection.contains($0.id) } }
@@ -223,8 +239,9 @@ public struct PlansScreen: View {
                 Button("Resume") { PlanActions.resume(single.id, in: store) }
             } else {
                 Button("Pause") { PlanActions.pause(single.id, in: store) }
+                    .disabled(!PlanActions.canPause(single, today: store.today))
             }
-            Button("Duplicate") { PlanActions.duplicate(single.id, in: store) }
+            Button("Duplicate…") { PlanActions.duplicate(single.id, in: store) }
             Divider()
             if let securityID = single.securityID {
                 Button("Show Security") { store.navigate(to: .security(securityID)) }
@@ -240,6 +257,8 @@ public struct PlansScreen: View {
             PlanActions.delete(ids, in: store)
         }
         .disabled(ids.isEmpty)
+        Divider()
+        newPlanButtons
     }
 
     @ViewBuilder private var detail: some View {
